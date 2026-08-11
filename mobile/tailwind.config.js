@@ -1,0 +1,46 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./app/**/*.{ts,tsx}', './src/**/*.{ts,tsx}'],
+  presets: [require('nativewind/preset')],
+  theme: {
+    extend: {
+      colors: {
+        deepspace: '#0A0E17',
+        elevated: '#141A28',
+        surface2: '#1C2434',
+        sidebar: 'rgba(15, 20, 33, 0.92)',
+        glass: '#141A28',
+        'glass-strong': '#1C2434',
+        accent: '#4C82F7',
+        'accent-light': '#9CBBFF',
+        'accent-soft': 'rgba(76, 130, 247, 0.15)',
+        cyan: '#4C82F7',
+        coral: '#F0655E',
+        matrix: '#3FCF8E',
+        amber: '#E3B341',
+        purple: '#9CBBFF',
+        'text-primary': '#EEF2F9',
+        'text-secondary': '#9EABC6',
+        'text-tertiary': '#647192',
+        'border-default': 'rgba(255, 255, 255, 0.07)',
+        'border-active': 'rgba(76, 130, 247, 0.55)',
+        'border-top': 'rgba(255, 255, 255, 0.10)',
+      },
+      fontFamily: {
+        display: ['BarlowCondensed_700Bold'],
+        'display-extra': ['BarlowCondensed_800ExtraBold'],
+        body: ['Inter_400Regular'],
+        'body-medium': ['Inter_500Medium'],
+        'body-semi': ['Inter_600SemiBold'],
+        mono: ['JetBrainsMono_700Bold'],
+      },
+      borderRadius: {
+        sm: '8px',
+        md: '14px',
+        lg: '20px',
+        xl: '28px',
+      },
+    },
+  },
+  plugins: [],
+};

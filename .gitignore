@@ -1,0 +1,47 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# expo
+.expo/
+dist/
+web-build/
+.metro-health-check*
+
+# generated native folders
+ios/
+android/
+
+# builds & artifacts
+*.ipa
+*.apk
+*.aab
+*.tsbuildinfo
+coverage/
+
+# credentials & secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# editors & os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
