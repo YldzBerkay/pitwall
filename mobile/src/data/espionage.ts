@@ -39,9 +39,9 @@ export const agentProfiles: Record<AgentKind, AgentProfile> = {
  * Sonuç tohumu hâlâ `startedRound` üzerinden üretilir: oyuncu cihaz saatini
  * ileri alarak sonucu çeviremez, yalnızca bekleme süresini kısaltabilir.
  */
-export const SPY_RESOLVE_MS = 24 * 60 * 60 * 1000;
+export const SPY_RESOLVE_MS = 22 * 60 * 60 * 1000;
 /** Biten görevden sonra bu kadar süre yeni görev açılmaz. */
-export const SPY_COOLDOWN_MS = 48 * 60 * 60 * 1000;
+export const SPY_COOLDOWN_MS = 22 * 60 * 60 * 1000;
 /** Multiplier on the next upgrade of the spied stat. */
 export const SPY_BOOST = 1.5;
 /** Multiplier when the intelligence was wrong. */

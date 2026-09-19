@@ -74,12 +74,12 @@ Her stat (MOTOR, AERO, GRIP) **kendi** sayaçını tutar. O stat için `n`'inci
 geliştirme:
 
 **Süre tarafı zaten kodda** (`carCustomisation.upgradeDurationMs`):
-`6 sa × 1.5^done`, 72 saat tavanlı. Para tarafı aynı çarpanı kullanır, böylece
+`6 sa × 1.5^done`, **22 saat** tavanlı. Para tarafı aynı çarpanı kullanır, böylece
 tek bir kavram olur — *"her yükseltme bir öncekinin bir buçuk katı"*:
 
 ```
 maliyet(n) = round(750 × 1.5^(n−1) × üretimİndirimi)     ← YENİ
-süre(n)    = min(72 sa, 6 sa × 1.5^(n−1)) × üretimSüreKatsayısı   ← MEVCUT
+süre(n)    = min(22 sa, 6 sa × 1.5^(n−1)) × üretimSüreKatsayısı   ← MEVCUT
 kazanç     = 6 + staffEffects.upgradeBonus + rüzgarTüneliBonusu
 atlama     = ceil(kalanSaat) × 5 Altın
 ```
@@ -90,13 +90,22 @@ atlama     = ceil(kalanSaat) × 5 Altın
 | 2 | 1.125 | 9,0 sa | 45 |
 | 3 | 1.688 | 13,5 sa | 70 |
 | 4 | 2.531 | 20,3 sa | 105 |
-| 5 | 3.797 | 30,4 sa | 155 |
-| 6 | 5.695 | 45,6 sa | 230 |
-| 7 | 8.543 | 68,3 sa | 345 |
-| 8+ | 12.814 | 72 sa (tavan) | 360 |
+| 5+ | 3.797 → | 22 sa (tavan) | 110 |
+| 6 | 5.695 | 22 sa | 110 |
+| 7 | 8.543 | 22 sa | 110 |
+| 8 | 12.814 | 22 sa | 110 |
 
-Süre 72 saatte tavan yapar ama **fiyat tavanlanmaz** — geç sezonda fren parasal
-olur, takvimsel değil. Kazanç bugün `2 + upgradeBonus`; **6**'ya çıkacak.
+**Hiçbir iş 22 saati aşmaz.** Oyun tek sezonluk ve OSM tarzı: oyuncunun her
+yarıştan önce oyuna girmesi isteniyor. 22 saat, "yattım kalktım hâlâ bitmemiş"
+hissini vermeden günlük döngüye oturan en uzun süre — yatmadan başlatılan iş
+ertesi akşam yarıştan önce hazır olur. Aynı tavan antrenmana (6 sa) ve casus
+görevine (22 sa rapor, 22 sa bekleme) da uygulanır.
+
+Süre tavan yapar ama **fiyat tavanlanmaz** — geç sezonda fren tamamen parasal
+olur, takvimsel değil. Ölçüldü: süre tavanını 72'den 22 saate indirmek sezon
+temposunu hiç değiştirmedi (89,7 ort · P3 · 12 geliştirme, aynı), çünkü orta
+oyunda bağlayıcı kısıt zaten paraydı. Değişen tek şey, geç sezonda tek bir
+geliştirmenin iki yarış arasına sığmaması sorunu — artık her iş sığıyor. Kazanç bugün `2 + upgradeBonus`; **6**'ya çıkacak.
 
 Stat 100'de tavanlanır. Kesirli kazanç `upgradeCarry` ile taşınmaya devam eder
 (mevcut davranış korunur).
@@ -274,9 +283,9 @@ bir kural işletir:
 
 | Grup | Kapsadığı işler | Süre | Atlama |
 |---|---|---|---|
-| **Araç** (fabrika tezgahı) | MOTOR, AERO, GRIP geliştirmeleri | 6-72 sa (§3.1) | 5 Altın/saat |
+| **Araç** (fabrika tezgahı) | MOTOR, AERO, GRIP geliştirmeleri | 6-22 sa (§3.1) | 5 Altın/saat |
 | **Sürücü** (antrenman koltuğu) | kadrodaki **her** sürücünün **her** statı | 6 sa (`TRAINING_MS`) | 30 Altın |
-| **İstihbarat** | casus görevi | **24 sa** | 120 Altın |
+| **İstihbarat** | casus görevi | **22 sa** | 110 Altın |
 
 Yani:
 
@@ -332,7 +341,7 @@ Arayüz tarafı: her grubun kendi kartı ve geri sayımı olur. Grup doluyken o
 grubun "başlat" düğmeleri kilitlenir ve kilidin sebebi yazılır ("Fabrika dolu:
 AERO 4 sa 12 dk"), yoksa oyuncu neden başlatamadığını anlayamaz.
 
-### İstihbarat 24 saate geçiyor
+### İstihbarat 22 saate geçiyor
 
 Bugün casusluk **round** cinsinden çalışıyor (`SPY_COOLDOWN_ROUNDS = 3`,
 `resolvesRound`): rapor bir round sonra gelir. Yeni kuralda gerçek zamana
@@ -342,15 +351,15 @@ bağlanır:
 interface SpyMission {
   target: string; stat: StatKey; professional: boolean;
   startedAt: number;
-  endsAt: number;     // startedAt + 24 sa
+  endsAt: number;     // startedAt + 22 sa
 }
 ```
 
-- Rapor **24 gerçek saat** sonra düşer; `resolvesRound` alanı kaldırılır.
+- Rapor **22 gerçek saat** sonra düşer; `resolvesRound` alanı kaldırılır.
 - Bekleme süresi (`SPY_COOLDOWN_ROUNDS`) da gerçek zamana çevrilir: görev
-  bittikten sonra **48 saat** yeni görev açılmaz. Böylece "3 raunda bir" ile
+  bittikten sonra **22 saat** yeni görev açılmaz. Böylece "3 raunda bir" ile
   aynı seyreklik korunur ama takvimden bağımsızlaşır.
-- 120 Altın ile atlanabilir. Pahalıdır ve öyle olmalıdır: istihbaratın değeri
+- 110 Altın ile atlanabilir. Pahalıdır ve öyle olmalıdır: istihbaratın değeri
   **zamanında** gelmesidir; bir sonraki geliştirmeyi yönlendiremeyecek kadar geç
   gelen rapor işe yaramaz. Atlama, yarışa yetişmeyecek bir raporu kurtarır.
 - Sonuç, tohumu `startedAt`'ten değil mevcut `round + season + target`
@@ -425,7 +434,7 @@ hiçbir şey yoktur**:
 | Harcama | Altın | RP alternatifi |
 |---|---|---|
 | Geliştirme / antrenman atlama | 5 / saat | — (beklemek bedava) |
-| Casus raporunu atlama (24 sa) | 120 | — (beklemek bedava) |
+| Casus raporunu atlama (22 sa) | 110 | — (beklemek bedava) |
 | İkinci antrenman koltuğu (1 sezon) | 40 | 2.500 |
 | Profesyonel casus | 15 | 900 |
 | Garaj gizleme 1 / 3 / 7 gün | 3 / 8 / 20 | 200 / 500 / 1.200 |
@@ -467,7 +476,7 @@ Bu, playtest sonrası ilk ayarlanacak knob'dur.
 | `src/data/season.ts` | değişir | sezon ödülü formülü, kış reseti (`regressCar`) |
 | `src/data/staff.ts` | değişir | `wageFor` yeni formül |
 | `src/data/driverMarket.ts` | değişir | `driverFee` üstel, `driverWage` yeni ölçek, `saleValue` (%20 komisyon) |
-| `src/data/espionage.ts` | değişir | görev round yerine gerçek zamanlı: `endsAt`, 24 sa rapor, 48 sa bekleme, atlama |
+| `src/data/espionage.ts` | değişir | görev round yerine gerçek zamanlı: `endsAt`, 22 sa rapor, 22 sa bekleme, atlama |
 | `src/data/factory.ts` | **yeni** | departman seviye maliyeti + `factoryEffects` (mock'tan taşınır) |
 | `src/data/raceEngine.ts` | değişir | yarış günü kilidi: pişen stat yarı değerde, DNF ×2 |
 | `src/store/gameStore.ts` | değişir | `upgradeStat` → `startBuild`/`collectBuild`/`skipBuild`, merdiven sayacı, kış reseti |
@@ -510,7 +519,7 @@ ile koşulur, **silinir**. Ölçülecekler:
 7. **Altın enflasyonu:** günlük tavanla bedava RP, yarış döngüsü gelirinin
    **%30'unu geçmemeli**.
 8. **Belirlenimcilik:** aynı tohumla iki koşu birebir aynı sonucu vermeli.
-9. **İstihbarat zamanlaması:** görev 24 sa sonra çözülmeli, 48 sa geçmeden
+9. **İstihbarat zamanlaması:** görev 22 sa sonra çözülmeli, 22 sa geçmeden
    yenisi açılmamalı ve sonuç aynı tohumla iki koşuda birebir aynı çıkmalı.
 10. `npm run typecheck` ve `npm run lint` temiz.
 

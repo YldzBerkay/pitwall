@@ -17,7 +17,10 @@ import { aiStrength } from '../src/data/raceEngine';
 import { teams } from '../src/data/teams';
 import { wageFor } from '../src/data/staff';
 import { SQUAD_MAX, SQUAD_MIN, TRAINING_MS, driverFee, driverWage, saleValue, trainingGain } from '../src/data/driverMarket';
-import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
+import { UPGRADE_GAIN, UPGRADE_MAX_MS, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
+
+/** Yarışlar arası gerçek süre, ~2,5 gün. */
+const RACE_GAP_MS = 60 * 3600_000;
 
 let failed = 0;
 export const check = (name: string, ok: boolean, detail = ''): void => {
@@ -59,7 +62,14 @@ check('1. yükseltme 750 RP', upgradeCostFor(0) === 750, String(upgradeCostFor(0
 check('2. yükseltme 1125 RP', upgradeCostFor(1) === 1125, String(upgradeCostFor(1)));
 check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor(4)));
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
-check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
+check('süre 22 sa tavanlı', upgradeDurationMs(9) === UPGRADE_MAX_MS, `${upgradeDurationMs(9) / 3600_000} sa`);
+// OSM tarzı günlük döngü: yatmadan başlatılan iş ertesi akşam yarıştan önce
+// hazır olmalı. HİÇBİR iş 22 saati aşmaz.
+const ALL_JOBS_MS = [UPGRADE_MAX_MS, TRAINING_MS, SPY_RESOLVE_MS, SPY_COOLDOWN_MS];
+check('hiçbir iş 22 saati aşmaz', ALL_JOBS_MS.every((ms) => ms <= 22 * 3600_000),
+  ALL_JOBS_MS.map((ms) => `${ms / 3600_000}sa`).join(' '));
+check('en uzun iş bir yarış arasına sığar', UPGRADE_MAX_MS < RACE_GAP_MS,
+  `${UPGRADE_MAX_MS / 3600_000} sa < ${RACE_GAP_MS / 3600_000} sa`);
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
 
 console.log('\n── Kış reseti ──');
@@ -98,9 +108,9 @@ const fullFactory = 5 * [1, 2, 3, 4].reduce((a, l) => a + departmentCost(l), 0);
 check('tam fabrika >= 1 sezon geliri', fullFactory >= 23 * 1100, `${fullFactory} RP`);
 
 console.log('\n── İstihbarat ──');
-check('rapor 24 sa', SPY_RESOLVE_MS === 24 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);
-check('bekleme 48 sa', SPY_COOLDOWN_MS === 48 * 3600_000, `${SPY_COOLDOWN_MS / 3600_000} sa`);
-check('rapor atlama 120 Altın', skipCostGold(SPY_RESOLVE_MS) === 120, String(skipCostGold(SPY_RESOLVE_MS)));
+check('rapor 22 sa', SPY_RESOLVE_MS === 22 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);
+check('bekleme 22 sa', SPY_COOLDOWN_MS === 22 * 3600_000, `${SPY_COOLDOWN_MS / 3600_000} sa`);
+check('rapor atlama 110 Altın', skipCostGold(SPY_RESOLVE_MS) === 110, String(skipCostGold(SPY_RESOLVE_MS)));
 
 console.log('\n── Kadro ──');
 check('kadro tabanı 2', SQUAD_MIN === 2, String(SQUAD_MIN));
@@ -152,7 +162,6 @@ check('DNF katsayısı 2', CRIPPLED_DNF_SCALE === 2, String(CRIPPLED_DNF_SCALE))
 // oyuncuyu nereye götürüyor.
 interface SimOut { stats: number[]; bought: number[]; builds: number; pos: number; rp: number }
 
-const RACE_GAP_MS = 60 * 3600_000;  // yarışlar arası ~2,5 gün
 const PADDOCK_RESERVE = 1200;       // transfer ve personel için ayrılan
 const START_RP = 3000;
 

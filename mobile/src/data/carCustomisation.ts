@@ -301,10 +301,15 @@ export const UPGRADE_BASE_MS = 6 * 60 * 60 * 1000;
 /** Her tamamlanmış yükseltmeden sonraki katlanma çarpanı. */
 export const UPGRADE_STEP = 1.5;
 /**
- * Tavan: katlanma 1,5 kat olunca 10. yükseltme tek başına 9 güne çıkıyordu.
- * Üç gün, bir yarış haftası içinde hâlâ bir parça çıkarılabilen en uzun süre.
+ * Tavan: hiçbir iş 22 saatten uzun sürmez.
+ *
+ * Oyun tek sezonluk ve OSM tarzı: oyuncunun her yarıştan önce oyuna girmesi
+ * isteniyor. 22 saat, "yattım kalktım hâlâ bitmemiş" hissini vermeden bir
+ * günlük döngüye oturan en uzun süre — yatmadan başlatılan iş ertesi akşam
+ * yarıştan önce hazır olur. Fiyat merdiveni tavanlanmaz; tavana çarptıktan
+ * sonra fren tamamen parasal olur.
  */
-export const UPGRADE_MAX_MS = 72 * 60 * 60 * 1000;
+export const UPGRADE_MAX_MS = 22 * 60 * 60 * 1000;
 
 /** `done` = o değer için tamamlanmış yükseltme sayısı. 6sa, 9sa, 13,5sa… en çok 72sa. */
 export function upgradeDurationMs(done: number): number {

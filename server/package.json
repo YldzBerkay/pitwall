@@ -1,0 +1,21 @@
+{
+  "name": "pit-wall-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pit Wall league server: runs the shared race engine on a fixed clock and broadcasts every lap.",
+  "scripts": {
+    "dev": "RACE_IN_SECONDS=20 CHECKIN_SECONDS=15 npx tsx watch src/index.ts",
+    "start": "npx tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "~5.9.0"
+  }
+}

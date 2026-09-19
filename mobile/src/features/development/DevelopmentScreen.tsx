@@ -70,10 +70,10 @@ export function DevelopmentScreen() {
    * Not: store'da henüz gerçek bir yarış başlangıç zaman damgası yok
    * (`mock.raceStartsInMs` sabit bir görüntü değeri), o yüzden "yarıştan X
    * saat sonra biter" diyemiyoruz. Yarış saati geldiğinde bu eşik oraya
-   * bağlanmalı; şimdilik uyarı, bir yarış hafta sonundan uzun süren
-   * geliştirmelerde çıkıyor.
+   * bağlanmalı; şimdilik uyarı, yarım günden uzun süren geliştirmelerde
+   * çıkıyor. (Hiçbir iş 22 saati aşmaz — `UPGRADE_MAX_MS`.)
    */
-  const LONG_BUILD_MS = 24 * 60 * 60 * 1000;
+  const LONG_BUILD_MS = 12 * 60 * 60 * 1000;
 
   const confirmLongBuild = (label: string, onConfirm: () => void) => {
     const ms = buildTimeFor(label);
