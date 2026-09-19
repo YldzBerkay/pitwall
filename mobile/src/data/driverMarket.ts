@@ -31,8 +31,18 @@ export const driverStatKeys: { key: DriverStatKey; label: string }[] = [
 /** Training takes this long in real time. */
 export const TRAINING_MS = 6 * 60 * 60 * 1000;
 
+/** Kadro tabanı: iki araç için iki sürücü şarttır, altına inilemez. */
+export const SQUAD_MIN = 2;
+/** Kadro tavanı: iki asıl koltuk + dört yedek/yatırım. */
+export const SQUAD_MAX = 6;
+
+/**
+ * Antrenmandaki koltuk. 0-1 asıl koltuklar, 2+ kadro (squad[seat - 2]).
+ * Tek slot: sürücü grubunda aynı anda yalnızca bir iş yürür (spec §5A).
+ */
 export interface Training {
-  driverIdx: 0 | 1;
+  /** 0-1 asıl koltuk, 2+ kadro (squad[driverIdx - 2]). */
+  driverIdx: number;
   stat: DriverStatKey;
   /** Epoch ms when the session completes. */
   endsAt: number;

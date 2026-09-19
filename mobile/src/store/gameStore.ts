@@ -739,7 +739,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (car?.injured && state.injuries[idx] === 0) {
         const out = INJURY_ROUNDS[0] + (w.seed % 2 === 0 ? INJURY_ROUNDS[1] - INJURY_ROUNDS[0] : 0);
         injuries[idx] = out;
-        paddockNews.push(`${state.drivers[idx].name} ağır kazadan sonra ${out} yarış dışında; ${state.reserve ? `${state.reserve.name} koltuğa geçiyor` : 'yedek yok, geçici sürücü koşacak'}.`);
+        paddockNews.push(`${state.drivers[idx].name} ağır kazadan sonra ${out} yarış dışında; ${state.squad[0] ? `${state.squad[0].driver.name} koltuğa geçiyor` : 'yedek yok, geçici sürücü koşacak'}.`);
       }
     }
     const achievements = scoreWeekend({

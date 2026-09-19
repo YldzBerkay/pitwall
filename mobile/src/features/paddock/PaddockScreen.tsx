@@ -17,6 +17,9 @@ import {
   renewalCost,
   signingCost,
   trainingGain,
+  saleValue,
+  SQUAD_MIN,
+  SQUAD_MAX,
   type DriverStatKey,
   type StatKey,
 } from '@/data/driverMarket';
@@ -52,10 +55,10 @@ export function PaddockScreen() {
   const gold = useGameStore((s) => s.gold);
   const news = useGameStore((s) => s.paddockNews);
   const staff = useGameStore((s) => s.staff);
-  const reserve = useGameStore((s) => s.reserve);
+  const squad = useGameStore((s) => s.squad);
   const eyebrowFor: Record<Section, string> = {
     staff: `3 kadro · ${(['mechanic', 'strategist', 'pitCrew'] as const).filter((r) => staff[r]).length} dolu`,
-    drivers: `2 sürücü · ${reserve ? 'yedek var' : 'yedek yok'}`,
+    drivers: `${2 + squad.length} sürücü · ${squad.length ? `${squad.length} yedek` : 'yedek yok'}`,
     intel: 'Casusluk ve garaj gizleme',
     gold: `${gold} Altın`,
   };
@@ -235,7 +238,7 @@ function StaffSection() {
 function DriversSection() {
   const rp = useGameStore((s) => s.rp);
   const drivers = useGameStore((s) => s.drivers);
-  const reserve = useGameStore((s) => s.reserve);
+  const squad = useGameStore((s) => s.squad);
   const injuries = useGameStore((s) => s.injuries);
   const training = useGameStore((s) => s.training);
   const startTraining = useGameStore((s) => s.startTraining);
@@ -243,7 +246,8 @@ function DriversSection() {
   const marketFn = useGameStore((s) => s.driverMarket);
   const signDriver = useGameStore((s) => s.signDriver);
   const renewDriver = useGameStore((s) => s.renewDriver);
-  const releaseReserve = useGameStore((s) => s.releaseReserve);
+  const sellDriver = useGameStore((s) => s.sellDriver);
+  const squadSize = useGameStore((s) => s.squadSize);
   const contracts = useGameStore((s) => s.contracts);
   const rumoursFn = useGameStore((s) => s.transferRumours);
   const transferNews = useGameStore((s) => s.transferNews);
@@ -383,25 +387,37 @@ function DriversSection() {
 
         <GlassCard className="flex-1" contentStyle={{ gap: spacing.xs }}>
           <AppText variant="cardTitle" color={colors.textPrimary}>
-            Yedek sürücü
+            Kadro · {squadSize()}/{SQUAD_MAX}
           </AppText>
-          {reserve ? (
+          {squad.length ? (
             <>
-              <AppText variant="labelSmall" color={colors.textPrimary}>
-                #{reserve.number} {reserve.name} · {overallOf(reserve.stats)} · {reserve.age} yaş
-              </AppText>
+              {squad.map((m) => (
+                <View key={m.driver.number} style={{ gap: 2 }}>
+                  <AppText variant="labelSmall" color={colors.textPrimary}>
+                    #{m.driver.number} {m.driver.name} · {overallOf(m.driver.stats)} · {m.driver.age} yaş · maaş {m.contract.wage}
+                  </AppText>
+                  <Pressable
+                    onPress={() => {
+                      if (squadSize() <= SQUAD_MIN) { haptic.warning(); return; }
+                      haptic.warning();
+                      sellDriver(m.driver.number);
+                    }}
+                    disabled={squadSize() <= SQUAD_MIN}
+                    className="mt-1 self-start rounded-sm border border-border-default px-2 py-1"
+                  >
+                    <AppText variant="labelSmall" color={squadSize() <= SQUAD_MIN ? colors.textTertiary : colors.neonCoral} uppercase>
+                      Sat · +{saleValue(m.driver)} RP
+                    </AppText>
+                  </Pressable>
+                </View>
+              ))}
               <AppText variant="labelSmall" color={colors.textTertiary}>
-                Ağır kazada sakatlanan sürücünün yerine geçer. Yarım ücret alır.
+                Yedekler sakatlanan ya da antrenmandaki sürücünün yerine geçer. Satışta %20 menajer komisyonu kesilir.
               </AppText>
-              <Pressable onPress={() => { haptic.warning(); releaseReserve(); }} className="mt-1 self-start rounded-sm border border-border-default px-2 py-1">
-                <AppText variant="labelSmall" color={colors.neonCoral} uppercase>
-                  Serbest bırak
-                </AppText>
-              </Pressable>
             </>
           ) : (
             <AppText variant="labelSmall" color={colors.textTertiary}>
-              Yedek yok. Sakatlıkta 55 seviyesinde geçici bir sürücü koşar. Pazardan yarı ücretle yedek alabilirsin.
+              Yedek yok. Sakatlıkta — ve asıl sürücülerinden biri antrenmandayken — 55 seviyesinde geçici bir sürücü koşar. Pazardan yarı ücretle yedek al.
             </AppText>
           )}
         </GlassCard>

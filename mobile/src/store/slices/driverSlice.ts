@@ -14,6 +14,9 @@ import {
   runTransferWindow,
   signingCost,
   trainingGain,
+  saleValue,
+  SQUAD_MIN,
+  SQUAD_MAX,
   transferHeadline,
   type Contract,
   type DriverStatKey,
@@ -22,7 +25,8 @@ import {
 } from '@/data/driverMarket';
 import type { SliceCreator } from './types';
 
-export type SignResult = 'ok' | 'noRp' | 'missing' | 'busy';
+/** `full` = kadro tavanı (6) dolu, önce biri satılmalı. */
+export type SignResult = 'ok' | 'noRp' | 'missing' | 'busy' | 'full';
 export type RenewResult = 'ok' | 'noRp' | 'notDue';
 
 /** Races a driver sits out after a heavy crash. */
@@ -48,7 +52,7 @@ export interface Rumour {
 }
 
 /**
- * The player's driver pair, a reserve, training, injuries, contracts and the
+ * The player's driver pair, a 0-4 strong squad, training, injuries, contracts and the
  * market.
  *
  * Training is six real hours per session, one stat, gains scaled by age and
@@ -58,14 +62,23 @@ export interface Rumour {
  * a driver whose deal ran out walks — into the transfer window, where the
  * rest of the grid is reshuffling its own expiries and will happily take him.
  */
+/** Asıl koltuk dışındaki bir sürücü ve sözleşmesi. */
+export interface SquadMember {
+  driver: Driver;
+  contract: Contract;
+}
+
 export interface DriverSlice {
   /** Every team's live driver pair; the player's is also `drivers`. */
   rosters: Rosters;
   drivers: [Driver, Driver];
   /** The player's two deals, lead driver first. */
   contracts: [Contract, Contract];
-  reserve?: Driver;
-  reserveContract?: Contract;
+  /**
+   * İki asıl koltuğun dışındaki sürücüler: yedekler ve yatırım. Toplam kadro
+   * `2 + squad.length` ve 2-6 arasında tutulur (SQUAD_MIN / SQUAD_MAX).
+   */
+  squad: SquadMember[];
   /** Every rival team's deals, by team key. */
   rosterContracts: Record<string, [Contract, Contract]>;
   /** What the winter did to the grid, newest season first. */
@@ -78,13 +91,23 @@ export interface DriverSlice {
   driverMarket: () => MarketDriver[];
   /** Everyone on the grid whose contract runs out this winter. */
   transferRumours: () => Rumour[];
-  startTraining: (driverIdx: 0 | 1, stat: DriverStatKey) => boolean;
+  /** Kadrodaki toplam sürücü sayısı: 2 + squad.length. */
+  squadSize: () => number;
+  /** Koltuk numarasından sürücü: 0-1 asıl, 2+ kadro. */
+  driverAt: (seat: number) => Driver | undefined;
+  /**
+   * Bir kadro sürücüsünü satar; eline `saleValue` (%20 komisyon düşülmüş)
+   * geçer. Asıl koltuktaki sürücü satılamaz ve kadro tabana inmişken satış
+   * yapılamaz — iki araç için iki sürücü şarttır.
+   */
+  sellDriver: (driverNumber: number) => boolean;
+  startTraining: (driverIdx: number, stat: DriverStatKey) => boolean;
   /** Applies a finished session. Returns the gain, or undefined if still running / none. */
-  collectTraining: () => { driverIdx: 0 | 1; stat: DriverStatKey; gain: number } | undefined;
+  collectTraining: () => { driverIdx: number; stat: DriverStatKey; gain: number } | undefined;
   signDriver: (marketId: string, seat: 0 | 1 | 'reserve', seasons?: number) => SignResult;
   /** Extends a driver already in the seat; only in his final year. */
   renewDriver: (seat: 0 | 1, seasons: number) => RenewResult;
-  releaseReserve: () => void;
+
   /** RP owed to the drivers each race — what their contracts say, not what they are worth. */
   driverWages: () => number;
   /** Season turnover: everyone a year older, contracts tick, the grid reshuffles. */
@@ -104,15 +127,46 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
   ],
   rosterContracts: Object.fromEntries(rivalTeams.map((t) => [t.key, initialContracts(t.key, [t.drivers[0], t.drivers[1]])])),
   transferNews: [],
-  reserve: undefined,
-  reserveContract: undefined,
+  squad: [],
   injuries: [0, 0],
   training: undefined,
 
   raceDrivers: () => {
-    const { drivers, reserve, injuries } = get();
-    const seat = (i: 0 | 1): Driver => (injuries[i] > 0 ? reserve ?? stopgapDriver(i) : drivers[i]);
+    const { drivers, squad, injuries, training } = get();
+    // Yarış günü kilidi (spec §5A): antrenmandaki sürücü koltuğa oturamaz,
+    // tıpkı sakat gibi. Yerine kadronun en güçlüsü geçer; kadro tabana
+    // inmişse (tam 2 sürücü) yedek yoktur ve geçici sürücü koşar.
+    const busy = training && Date.now() < training.endsAt ? training.driverIdx : undefined;
+    const bench = [...squad].sort((a, b) => overallOf(b.driver.stats) - overallOf(a.driver.stats));
+    const seat = (i: 0 | 1): Driver => {
+      if (injuries[i] === 0 && busy !== i) return drivers[i];
+      return bench[0]?.driver ?? stopgapDriver(i);
+    };
     return [seat(0), seat(1)];
+  },
+
+  squadSize: () => 2 + get().squad.length,
+
+  driverAt: (seat) => {
+    const { drivers, squad } = get();
+    return seat < 2 ? drivers[seat as 0 | 1] : squad[seat - 2]?.driver;
+  },
+
+  sellDriver: (driverNumber) => {
+    const state = get();
+    const idx = state.squad.findIndex((m) => m.driver.number === driverNumber);
+    // Asıl koltuktaki sürücü satılamaz: önce yerine biri geçmeli.
+    if (idx < 0) return false;
+    if (state.squadSize() <= SQUAD_MIN) return false;
+    // Antrenmandaki sürücü satılamaz — iş yarıda kalır, para boşa gider.
+    if (state.training && Date.now() < state.training.endsAt && state.training.driverIdx === idx + 2) return false;
+    const { driver } = state.squad[idx];
+    const paid = saleValue(driver);
+    set((s) => ({
+      squad: s.squad.filter((_, i) => i !== idx),
+      rp: s.rp + paid,
+    }));
+    return true;
   },
 
   driverMarket: () => {
@@ -170,7 +224,9 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
       wage: seat === 'reserve' ? Math.round(contractWage(driver, seasons) / 2) : contractWage(driver, seasons),
     };
     if (seat === 'reserve') {
-      set({ rp: state.rp - fee, reserve: driver, reserveContract: contract });
+      // Kadro tavanı: yedinci sürücü alınamaz, önce biri satılmalı.
+      if (state.squadSize() >= SQUAD_MAX) return 'full';
+      set((s) => ({ rp: s.rp - fee, squad: [...s.squad, { driver, contract }] }));
     } else {
       const drivers: [Driver, Driver] = seat === 0 ? [driver, state.drivers[1]] : [state.drivers[0], driver];
       const contracts: [Contract, Contract] = seat === 0 ? [contract, state.contracts[1]] : [state.contracts[0], contract];
@@ -192,11 +248,11 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
     return 'ok';
   },
 
-  releaseReserve: () => set({ reserve: undefined, reserveContract: undefined }),
-
   driverWages: () => {
-    const { contracts, reserve, reserveContract } = get();
-    return contracts[0].wage + contracts[1].wage + (reserve ? reserveContract?.wage ?? 0 : 0);
+    // Asıl iki koltuk tam maaş, kadrodakiler yarı. Kalabalık kadro tutmak
+    // antrenman hızını artırmaz (tek koltuk) ama maaş yükünü artırır.
+    const { contracts, squad } = get();
+    return contracts[0].wage + contracts[1].wage + squad.reduce((sum, m) => sum + m.contract.wage, 0);
   },
 
   ageDrivers: () =>
@@ -249,7 +305,7 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
         drivers,
         contracts,
         transferNews: news,
-        reserve: state.reserve ? ageOneSeason(state.reserve) : undefined,
+        squad: state.squad.map((m) => ({ ...m, driver: ageOneSeason(m.driver) })),
       };
     }),
 });

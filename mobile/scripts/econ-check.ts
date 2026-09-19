@@ -12,7 +12,7 @@ import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
 import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
 import { wageFor } from '../src/data/staff';
-import { driverFee, driverWage, saleValue } from '../src/data/driverMarket';
+import { SQUAD_MAX, SQUAD_MIN, driverFee, driverWage, saleValue } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
 
 let failed = 0;
@@ -57,6 +57,23 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
+
+console.log('\n── Kadro ──');
+check('kadro tabanı 2', SQUAD_MIN === 2, String(SQUAD_MIN));
+check('kadro tavanı 6', SQUAD_MAX === 6, String(SQUAD_MAX));
+// Spec §7: elit 6'lı kadro P1 gelirinden geriye en ucuz geliştirmeyi
+// karşılayamayacak kadar az bırakmalı — tercih gerçekten acıtsın.
+// Asıl iki koltuk tam maaş; kadrodakiler imzada yarıya indirilmiş sözleşme
+// ücretiyle gelir (signDriver), o yüzden burada da yarı sayılır.
+const half = (ov: number) => Math.round(driverWage(drv(ov)) / 2);
+const eliteWages = driverWage(drv(95)) + driverWage(drv(92))
+  + half(85) + half(85) + half(82) + half(82)
+  + wageFor(90) * 3;
+check('elit kadro P1 gelirinden geriye < 750 RP bırakır',
+  1450 - eliteWages < upgradeCostFor(0) && 1450 - eliteWages > 0,
+  `${1450 - eliteWages} RP kalır (maaş ${eliteWages})`);
+const leanWages = driverWage(drv(70)) + driverWage(drv(68)) + wageFor(52);
+check('yalın kadro merdiveni fonlar', 1450 - leanWages > upgradeCostFor(0), `${1450 - leanWages} RP kalır (maaş ${leanWages})`);
 
 console.log('\n── Altın ──');
 check('kur 1 Altın = 50 RP', GOLD_TO_RP === 50, String(GOLD_TO_RP));
