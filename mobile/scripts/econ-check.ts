@@ -16,7 +16,7 @@ import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryEffects } from '../src/dat
 import { aiStrength } from '../src/data/raceEngine';
 import { teams } from '../src/data/teams';
 import { wageFor } from '../src/data/staff';
-import { SQUAD_MAX, SQUAD_MIN, driverFee, driverWage, saleValue } from '../src/data/driverMarket';
+import { SQUAD_MAX, SQUAD_MIN, TRAINING_MS, driverFee, driverWage, saleValue, trainingGain } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
 
 let failed = 0;
@@ -145,6 +145,82 @@ check('diğer statlar bozulmaz', hurt.motor === 80 && hurt.grip === 76);
 check('kilit yoksa setup aynı nesne', crippleSetup(baseSetup, undefined) === baseSetup);
 check('bilinmeyen etiket ceza vermez', crippleSetup(baseSetup, 'ZZZ') === baseSetup);
 check('DNF katsayısı 2', CRIPPLED_DNF_SCALE === 2, String(CRIPPLED_DNF_SCALE));
+
+// ── Sezon simülasyonu ──────────────────────────────────────────────────────
+// Gerçek fiyat ve süre fonksiyonlarını kullanır, yarış motorunu değil (o ayrı
+// bir iş). Amaç ekonominin TEMPOSUNU ölçmek: para ve takvim bir sezonda
+// oyuncuyu nereye götürüyor.
+interface SimOut { stats: number[]; bought: number[]; builds: number; pos: number; rp: number }
+
+const RACE_GAP_MS = 60 * 3600_000;  // yarışlar arası ~2,5 gün
+const PADDOCK_RESERVE = 1200;       // transfer ve personel için ayrılan
+const START_RP = 3000;
+
+function simulateSeason(wagePerRace: number): SimOut {
+  let rp = START_RP, pos = 6, builds = 0;
+  const stats = [67, 58, 72], bought = [0, 0, 0];
+  for (let r = 1; r <= 23; r++) {
+    rp += Math.round(1450 - 70 * (pos - 1)) - wagePerRace;
+    let ms = RACE_GAP_MS;
+    // Tek tezgah: yarış arasına sığdığı ve rezerv bozulmadığı sürece en
+    // düşük stat'a yatır.
+    for (;;) {
+      const i = stats.indexOf(Math.min(...stats));
+      const cost = upgradeCostFor(bought[i]);
+      const dur = upgradeDurationMs(bought[i]);
+      if (rp - cost < PADDOCK_RESERVE || dur > ms) break;
+      rp -= cost; ms -= dur; builds++;
+      stats[i] = Math.min(100, stats[i] + UPGRADE_GAIN); bought[i]++;
+    }
+    const avg = stats.reduce((a, b) => a + b, 0) / 3;
+    pos = Math.max(1, Math.min(11, Math.round(11 - (avg - 55) / 4.2)));
+  }
+  return { stats, bought, builds, pos, rp };
+}
+
+console.log('\n── Sezon simülasyonu ──');
+const lean = simulateSeason(leanWages);
+const leanAvg = lean.stats.reduce((a, b) => a + b, 0) / 3;
+console.log(`     yalın kadro: araç ${lean.stats.join('/')} (ort ${leanAvg.toFixed(1)}) · P${lean.pos} · ${lean.builds} geliştirme ${lean.bought.join('/')} · ${lean.rp} RP kaldı`);
+check('§11.1 sezon sonu araç 88-92', near(leanAvg, 88, 92), leanAvg.toFixed(1));
+check('§11.1 sezon sonu P1-P4', lean.pos <= 4, `P${lean.pos}`);
+check('§11.2 stat başına <= 6 yükseltme', Math.max(...lean.bought) <= 6, lean.bought.join('/'));
+check('§11.3 sezon boyu 10-14 geliştirme', near(lean.builds, 10, 14), String(lean.builds));
+
+const elite = simulateSeason(eliteWages);
+const eliteAvg = elite.stats.reduce((a, b) => a + b, 0) / 3;
+console.log(`     elit kadro:  araç ${elite.stats.join('/')} (ort ${eliteAvg.toFixed(1)}) · P${elite.pos} · ${elite.builds} geliştirme`);
+check('§11.4 elit kadro >= 8 puan geride', leanAvg - eliteAvg >= 8, `${(leanAvg - eliteAvg).toFixed(1)} puan`);
+
+// §11.5: ticaret kârlı olmalı ama baskın olmamalı.
+//
+// Kaç sürücü çevrilebileceğini uydurmak yerine ölçüyoruz: antrenman koltuğu
+// TEK ve seans 6 saat, yani sezonun kârını belirleyen şey para değil ZAMAN.
+// Bir genci 62'den 76'ya çıkarmak kaç seans sürüyorsa, sezona o kadar
+// çevirme sığar.
+function sessionsToRaise(from: number, to: number, potential: number, age: number): number {
+  const stats = { pace: from, consistency: from, racecraft: from, wet: from, reaction: from, dev: from };
+  const keys = Object.keys(stats) as (keyof typeof stats)[];
+  let sessions = 0;
+  while (keys.reduce((a, k) => a + stats[k], 0) / 6 < to && sessions < 5000) {
+    // En düşük stat'a çalış — oyuncunun yapacağı da bu.
+    const k = keys.reduce((lo, cur) => (stats[cur] < stats[lo] ? cur : lo), keys[0]);
+    stats[k] += trainingGain({ stats, age, potential } as Parameters<typeof trainingGain>[0], k);
+    sessions++;
+  }
+  return sessions;
+}
+
+const SEASON_MS = 23 * RACE_GAP_MS;
+const sessionsPerFlip = sessionsToRaise(62, 76, 88, 21);
+const flipsPerSeason = Math.floor(SEASON_MS / (sessionsPerFlip * TRAINING_MS));
+const perFlip = saleValue(drv(76, 88)) - driverFee(drv(62, 88));
+const tradeProfit = flipsPerSeason * perFlip;
+const seasonIncome = 23 * 1100;
+console.log(`     çevirme başına ${sessionsPerFlip} seans (${Math.round(sessionsPerFlip * TRAINING_MS / 86_400_000)} gün) · sezona ${flipsPerSeason} çevirme sığar`);
+check('§11.5 ticaret kârlı', tradeProfit > 0, `${tradeProfit} RP`);
+check('§11.5 ticaret kârı < sezon gelirinin %15\'i', tradeProfit < seasonIncome * 0.15,
+  `${tradeProfit} / ${Math.round(seasonIncome * 0.15)} RP`);
 
 console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
 process.exit(failed === 0 ? 0 : 1);
