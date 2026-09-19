@@ -73,43 +73,60 @@ Sezon ödülü formülü: `9000 − 650 × (pozisyon − 1)`, taban 2.500. Şamp
 Her stat (MOTOR, AERO, GRIP) **kendi** sayaçını tutar. O stat için `n`'inci
 geliştirme:
 
+**Süre tarafı zaten kodda** (`carCustomisation.upgradeDurationMs`):
+`6 sa × 1.5^done`, 72 saat tavanlı. Para tarafı aynı çarpanı kullanır, böylece
+tek bir kavram olur — *"her yükseltme bir öncekinin bir buçuk katı"*:
+
 ```
-maliyet(n) = round(750 × 1.5^(n−1) × üretimİndirimi)
-kazanç      = 6 + staffEffects.upgradeBonus + rüzgarTüneliBonusu
-süre(n)     = [6, 8, 12, 18, 24, 36, 48, 72][min(n−1, 7)] saat × üretimSüreKatsayısı
+maliyet(n) = round(750 × 1.5^(n−1) × üretimİndirimi)     ← YENİ
+süre(n)    = min(72 sa, 6 sa × 1.5^(n−1)) × üretimSüreKatsayısı   ← MEVCUT
+kazanç     = 6 + staffEffects.upgradeBonus + rüzgarTüneliBonusu
+atlama     = ceil(kalanSaat) × 5 Altın
 ```
 
-| # | Fiyat | Süre | Altın atlama |
+| # | Fiyat | Süre | Dolu atlama |
 |---|---|---|---|
-| 1 | 750 | 6 sa | 30 |
-| 2 | 1.125 | 8 sa | 40 |
-| 3 | 1.688 | 12 sa | 60 |
-| 4 | 2.531 | 18 sa | 90 |
-| 5 | 3.797 | 24 sa | 120 |
-| 6 | 5.695 | 36 sa | 180 |
-| 7 | 8.543 | 48 sa | 240 |
-| 8+ | 12.814 | 72 sa | 360 |
+| 1 | 750 | 6,0 sa | 30 Altın |
+| 2 | 1.125 | 9,0 sa | 45 |
+| 3 | 1.688 | 13,5 sa | 70 |
+| 4 | 2.531 | 20,3 sa | 105 |
+| 5 | 3.797 | 30,4 sa | 155 |
+| 6 | 5.695 | 45,6 sa | 230 |
+| 7 | 8.543 | 68,3 sa | 345 |
+| 8+ | 12.814 | 72 sa (tavan) | 360 |
+
+Süre 72 saatte tavan yapar ama **fiyat tavanlanmaz** — geç sezonda fren parasal
+olur, takvimsel değil. Kazanç bugün `2 + upgradeBonus`; **6**'ya çıkacak.
 
 Stat 100'de tavanlanır. Kesirli kazanç `upgradeCarry` ile taşınmaya devam eder
 (mevcut davranış korunur).
 
 ### 3.2 Tek tezgah
 
-Araç grubu aynı anda **tek** geliştirme alır (§5A): AERO pişerken ne ikinci bir
-AERO ne de MOTOR başlatılabilir. Durum:
+**Bu bölümün büyük kısmı zaten uygulanmış.** `gameStore` bugün `build`,
+`upgradesDone`, `buildTimeFor`, `startBuild` ve `collectBuild`'i tutuyor ve
+`startBuild` ikinci bir işi `'busy'` ile reddediyor — araç grubunun tek-tezgah
+kuralı yerinde. Mevcut tip korunur:
 
 ```ts
-interface CarBuild {
-  stat: 'MOTOR' | 'AERO' | 'GRIP';
-  gain: number;        // başlatıldığında sabitlenir
-  startedAt: number;
+export interface CarBuild {
+  label: string;      // 'MOTOR' | 'AERO' | 'GRIP'
   endsAt: number;
+  durationMs: number;
 }
 ```
 
-Para başlatma anında düşer, stat **bitişte** işlenir. Oyuncu `endsAt`'e kadar
-kalan saat başına 5 Altın ödeyerek atlayabilir (yukarı yuvarlanır, en az 5).
-Başlatılmış bir geliştirme iptal edilemez — para geri gelmez.
+Eksik olan üç şey:
+
+1. **Para merdiveni.** Bugün `stat.cost` sabit 15-18 RP kesiyor; §3.1'deki
+   `750 × 1.5^done` gelecek. Para başlatma anında düşer, stat **bitişte**
+   işlenir (mevcut davranış).
+2. **Hızlandırma.** `skipBuild()` yok. Kalan saat yukarı yuvarlanır, saat
+   başına 5 Altın alınır, `build.endsAt` şimdiye çekilir ve `collectBuild`
+   çağrılır.
+3. **Yarış günü kilidi** (aşağıda §5A).
+
+Başlatılmış bir geliştirme iptal edilemez — para geri gelmez (tek istisna §4).
 
 Bu, "üç stat'tan hangisini başlatayım, yarışa yetişir mi" kararını doğurur:
 araç grubunda tek tezgah olduğu için sezonun geliştirme sayısını para değil
@@ -429,7 +446,7 @@ Bu, playtest sonrası ilk ayarlanacak knob'dur.
 | Dosya | Durum | İş |
 |---|---|---|
 | `src/data/economy.ts` | büyür | `ECONOMY_SCALE`, Altın kuru, paketler, tüm RP/Altın fiyat tablosu, dönüşüm tavanı |
-| `src/data/upgrades.ts` | **yeni** | merdiven maliyeti/süresi/kazancı, `CarBuild` tipi, atlama fiyatı |
+| `src/data/carCustomisation.ts` | küçük | `upgradeCostFor(done)` ve `skipCostGold(remainingMs)` eklenir; `upgradeDurationMs` olduğu gibi kalır |
 | `src/data/sponsors.ts` | küçük | `ECONOMY_SCALE` 0.2 → 1.5 (yalnızca sabit) |
 | `src/data/season.ts` | değişir | sezon ödülü formülü, kış reseti (`regressCar`) |
 | `src/data/staff.ts` | değişir | `wageFor` yeni formül |
