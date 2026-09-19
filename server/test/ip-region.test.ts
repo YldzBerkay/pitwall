@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { regionForIp } from '../src/identity/ipRegion.ts';
+import { regionForIp, loadTable } from '../src/identity/ipRegion.ts';
 import { clientIpOf } from '../src/http/clientIp.ts';
 import { isRegion } from '../src/identity/region.ts';
 
@@ -31,6 +31,43 @@ describe('regionForIp', () => {
 
   it('is consistent across a /16 boundary', () => {
     assert.equal(regionForIp('8.8.0.1'), regionForIp('8.8.255.254'));
+  });
+});
+
+describe('loadTable', () => {
+  it('returns the real table unchanged when the file is present', () => {
+    const realPath = new URL('../src/identity/ip-region-v4.bin', import.meta.url).pathname;
+    const table = loadTable(realPath);
+    assert.equal(table.length, 65536);
+  });
+
+  it('degrades to an all-zero 65536-byte buffer when the file is missing, instead of throwing', () => {
+    const missingPath = new URL('../src/identity/does-not-exist.bin', import.meta.url).pathname;
+    const originalError = console.error;
+    let calls: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      calls.push(args);
+    };
+    let table: Buffer;
+    try {
+      assert.doesNotThrow(() => {
+        table = loadTable(missingPath);
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    table = table!;
+    assert.equal(table.length, 65536);
+    assert.ok(table.every((byte) => byte === 0), 'expected an all-zero fallback buffer');
+
+    // Exactly one console.error call for the failed load.
+    assert.equal(calls.length, 1);
+    const logged = calls[0]!.join(' ');
+    // No IP address may ever reach a log line — only the path and the error message.
+    assert.doesNotMatch(logged, /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+    assert.match(logged, /could not read region table/);
+    assert.match(logged, /does-not-exist\.bin/);
   });
 });
 
