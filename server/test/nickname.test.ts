@@ -7,6 +7,7 @@ import {
   suggestBases,
   formatNickname,
 } from '../src/identity/nickname.ts';
+import { isBlocked, normaliseForModeration } from '../src/identity/profanity.ts';
 
 describe('nickname pool', () => {
   it('holds exactly 30 distinct base names', () => {
@@ -74,7 +75,7 @@ describe('suggestBases', () => {
     const picks = suggestBases(4);
     assert.equal(picks.length, 4);
     assert.equal(new Set(picks).size, 4);
-    for (const p of picks) assert.ok(NICKNAME_POOL.includes(p));
+    for (const p of picks) assert.ok((NICKNAME_POOL as readonly string[]).includes(p));
   });
 
   it('is deterministic when given a seeded rng', () => {
@@ -86,5 +87,76 @@ describe('suggestBases', () => {
 describe('formatNickname', () => {
   it('joins base and tag with a hash', () => {
     assert.equal(formatNickname('TurboKral', '0417'), 'TurboKral#0417');
+  });
+});
+
+describe('normaliseForModeration — Turkish dotless-i bug (Finding 1)', () => {
+  it('folds tr-TR dotless ı (from ASCII I) to i', () => {
+    assert.equal(normaliseForModeration('ADMIN'), 'admin');
+    assert.equal(normaliseForModeration('Admin'), 'admin');
+    assert.equal(normaliseForModeration('AdMiN'), 'admin');
+    assert.equal(normaliseForModeration('OFFICIAL'), 'official');
+  });
+
+  it('folds a literal dotless ı typed directly to i', () => {
+    assert.equal(normaliseForModeration('Offıcial'), 'official');
+  });
+
+  it('still folds the digit-substitution and lowercase forms the same way', () => {
+    assert.equal(normaliseForModeration('ADM1N'), 'admin');
+    assert.equal(normaliseForModeration('4dmin'), 'admin');
+    assert.equal(normaliseForModeration('admin'), 'admin');
+  });
+
+  it('folds tr-TR dotted İ (from ASCII capital I with a dot) to i as well', () => {
+    assert.equal(normaliseForModeration('PİTWALL'), 'pitwall');
+  });
+
+  it('blocks the previously-bypassing all-caps and mixed-case forms', () => {
+    assert.equal(isBlocked('ADMIN'), true);
+    assert.equal(isBlocked('AdMiN'), true);
+    assert.equal(isBlocked('OFFICIAL'), true);
+    assert.equal(isBlocked('Offıcial'), true);
+    assert.equal(isBlocked('ADM1N'), true);
+    assert.equal(isBlocked('4dmin'), true);
+  });
+});
+
+describe('isBlocked — short-root tokenisation (Finding 2)', () => {
+  it('blocks short roots glued to another word via CamelCase/digit/underscore boundaries', () => {
+    assert.equal(isBlocked('TurboAmk'), true);
+    assert.equal(isBlocked('Amk_123'), true);
+    assert.equal(isBlocked('amk'), true);
+    assert.equal(isBlocked('AMK'), true);
+  });
+
+  it('does not reject innocent words that merely contain an ambiguous short root as a substring', () => {
+    assert.equal(isBlocked('epic'), false);
+    assert.equal(isBlocked('picture'), false);
+    assert.equal(isBlocked('tropical'), false);
+    assert.equal(isBlocked('rootbeer'), false);
+    assert.equal(isBlocked('uprooted'), false);
+    assert.equal(isBlocked('nullable'), false);
+    assert.equal(isBlocked('annulled'), false);
+    assert.equal(isBlocked('grape'), false);
+    assert.equal(isBlocked('drape'), false);
+    assert.equal(isBlocked('rapeseed'), false);
+    assert.equal(isBlocked('nazionale'), false);
+  });
+
+  it('still allows the collision that started this: SlipstreamKing', () => {
+    assert.equal(isBlocked('SlipstreamKing'), false);
+  });
+
+  it('still catches the unambiguous slur tier as a plain substring (not tokenised)', () => {
+    assert.equal(isBlocked('swiggnigg'), true);
+  });
+});
+
+describe('isBlocked — pool names never trip moderation', () => {
+  it('lets every pooled base name through', () => {
+    for (const base of NICKNAME_POOL) {
+      assert.equal(isBlocked(base), false, `pooled name blocked: ${base}`);
+    }
   });
 });

@@ -1,5 +1,5 @@
 /** Onboarding'de önerilen varsayılan taban adlar. Spec §2.2. */
-export const NICKNAME_POOL: readonly string[] = [
+export const NICKNAME_POOL = [
   'TurboKral',
   'ApexAvcısı',
   'PitStopUsta',
@@ -30,4 +30,4 @@ export const NICKNAME_POOL: readonly string[] = [
   'LightsOutGo',
   'MidfieldWolf',
   'ChampionshipRun',
-] as const;
+] as const satisfies readonly string[];
