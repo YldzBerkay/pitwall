@@ -7,14 +7,23 @@
   "scripts": {
     "dev": "RACE_IN_SECONDS=20 CHECKIN_SECONDS=15 npx tsx watch src/index.ts",
     "start": "npx tsx src/index.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "migrate": "npx tsx src/db/migrate.ts",
+    "gen:countries": "npx tsx scripts/gen-countries.ts",
+    "gen:ip-region": "npx tsx scripts/gen-ip-region.ts"
   },
   "dependencies": {
+    "jose": "^5.10.0",
+    "pg": "^8.23.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.5.12",
+    "cldr-core": "^46.1.0",
+    "cldr-localenames-full": "^46.1.0",
     "tsx": "^4.19.0",
     "typescript": "~5.9.0"
   }
