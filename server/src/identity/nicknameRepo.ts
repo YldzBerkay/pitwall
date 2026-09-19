@@ -24,19 +24,24 @@ const DEFAULT_MAX_WIDTH = 8;
  * O(10^width) in both time and memory (it materialises every possible tag at
  * that width to diff against the taken set). Measured on this machine:
  *
- *   width 6 (10^6 candidates):  ~34ms,  ~43MB heap
- *   width 7 (10^7 candidates): ~526ms, ~421MB heap
+ *   width 5 (10^5 candidates):   ~3.3ms,  ~4.5MB heap
+ *   width 6 (10^6 candidates): ~46-58ms,   ~46MB heap
+ *   width 7 (10^7 candidates):   ~526ms,  ~421MB heap
  *   width 8 (10^8 candidates): extrapolates to multi-second, multi-GB —
  *     enough to blow past default Node heap limits and stall the event loop
  *     for seconds, unacceptable on a server holding live race WebSockets.
  *
- * So the scan is only safe up to width 6. Above that we skip straight to
- * widening if the random attempts don't find a free slot — which is fine in
- * practice, since reaching a width that large would already mean a base has
- * on the order of tens of millions of accounts under it, a scale at which a
- * handful of extra widen-and-retry round trips is noise.
+ * width 6 is already 10-20x slower and 10x heavier than width 5 for a step
+ * that is synchronous and event-loop-blocking, and it fires precisely when
+ * contention is highest — the worst possible moment to hold up every other
+ * connection. So the scan is only safe up to width 5. Above that we skip
+ * straight to widening if the random attempts don't find a free slot. That's
+ * fine in practice: a base has to be nearly full at width 5 — on the order
+ * of 100,000 accounts sharing one base name — before the scan would even run,
+ * which is already an implausible amount of contention for a single base;
+ * beyond that, the random attempts plus widening to a wider tag are enough.
  */
-const SCAN_MAX_WIDTH = 6;
+const SCAN_MAX_WIDTH = 5;
 
 export class NicknameSpaceExhaustedError extends Error {
   constructor(base: string, maxWidth: number) {
@@ -67,6 +72,27 @@ const INSERT_SQL = `
   returning id
 `;
 
+/**
+ * ⚠️ ORPHAN-ROW HAZARD — read before calling this without `options.client`.
+ *
+ * Called without `options.client` (the default), this function commits the
+ * `users` row to the pool immediately and independently of anything the
+ * caller does next. If you are wiring up real account creation, the
+ * following `auth_identities` insert is a SEPARATE statement — and if it
+ * fails (crash, validation error, network fault) after this one has already
+ * committed, the `users` row it created is stranded: no auth identity, and
+ * nothing links it back to report or clean up. `auth_identities` cascades
+ * from `users`, not the other way round, so nothing deletes it for you.
+ *
+ * The `client` escape hatch exists exactly for this: pass an open
+ * `PoolClient` (e.g. from `withTransaction`) that is ALSO used for the
+ * `auth_identities` insert, so both succeed or both roll back together.
+ *
+ * Any caller creating a real account MUST pass `options.client` from a
+ * transaction shared with the `auth_identities` insert. Only skip it when a
+ * stranded `users` row with no identity attached would be harmless (e.g.
+ * throwaway/test data, or a flow with no `auth_identities` insert at all).
+ */
 export async function allocateNickname(
   base: string,
   options: AllocateOptions = {},
