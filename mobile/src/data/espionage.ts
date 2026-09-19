@@ -34,14 +34,21 @@ export const agentProfiles: Record<AgentKind, AgentProfile> = {
 /**
  * İstihbarat gerçek zamanlı çalışır — üçüncü tezgah (spec §5A).
  *
+ * Bu grup, araç ve sürücüyü bağlayan 22 saatlik tavanın DIŞINDADIR ve
+ * kasıtlı olarak öyle. O tavan, yarışa çıkmayı engelleyen işler için var:
+ * tezgahta parça varsa araç sökük yarışır, antrenmandaki sürücü koltuğa
+ * oturamaz. Casus görevi ise yarışa hiç dokunmaz — yalnızca bir sonraki
+ * geliştirmeye çarpan verir. Bekletmesinin bir bedeli olmadığı için daha
+ * uzun sürebilir ve seyrek kalması (48 sa bekleme) dengeyi korur.
+ *
  * Eskiden round cinsindendi, yani takvime bağlıydı; artık saate bağlı.
  * Bekleme, eski "3 raunda bir" seyrekliğini takvimden bağımsız korur.
  * Sonuç tohumu hâlâ `startedRound` üzerinden üretilir: oyuncu cihaz saatini
  * ileri alarak sonucu çeviremez, yalnızca bekleme süresini kısaltabilir.
  */
-export const SPY_RESOLVE_MS = 22 * 60 * 60 * 1000;
+export const SPY_RESOLVE_MS = 24 * 60 * 60 * 1000;
 /** Biten görevden sonra bu kadar süre yeni görev açılmaz. */
-export const SPY_COOLDOWN_MS = 22 * 60 * 60 * 1000;
+export const SPY_COOLDOWN_MS = 48 * 60 * 60 * 1000;
 /** Multiplier on the next upgrade of the spied stat. */
 export const SPY_BOOST = 1.5;
 /** Multiplier when the intelligence was wrong. */

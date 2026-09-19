@@ -64,10 +64,13 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 22 sa tavanlı', upgradeDurationMs(9) === UPGRADE_MAX_MS, `${upgradeDurationMs(9) / 3600_000} sa`);
 // OSM tarzı günlük döngü: yatmadan başlatılan iş ertesi akşam yarıştan önce
-// hazır olmalı. HİÇBİR iş 22 saati aşmaz.
-const ALL_JOBS_MS = [UPGRADE_MAX_MS, TRAINING_MS, SPY_RESOLVE_MS, SPY_COOLDOWN_MS];
-check('hiçbir iş 22 saati aşmaz', ALL_JOBS_MS.every((ms) => ms <= 22 * 3600_000),
-  ALL_JOBS_MS.map((ms) => `${ms / 3600_000}sa`).join(' '));
+// hazır olmalı. Tavan, YARIŞA ÇIKMAYI ENGELLEYEN işler için — tezgahtaki
+// parça aracı sökük bırakır, antrenmandaki sürücü koltuğa oturamaz.
+// Casus bu listede yok: yarışa dokunmaz, sadece geliştirmeye çarpan verir.
+const RACE_BLOCKING_MS = [UPGRADE_MAX_MS, TRAINING_MS];
+check('yarışı engelleyen hiçbir iş 22 saati aşmaz',
+  RACE_BLOCKING_MS.every((ms) => ms <= 22 * 3600_000),
+  RACE_BLOCKING_MS.map((ms) => `${ms / 3600_000}sa`).join(' '));
 check('en uzun iş bir yarış arasına sığar', UPGRADE_MAX_MS < RACE_GAP_MS,
   `${UPGRADE_MAX_MS / 3600_000} sa < ${RACE_GAP_MS / 3600_000} sa`);
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
@@ -108,9 +111,13 @@ const fullFactory = 5 * [1, 2, 3, 4].reduce((a, l) => a + departmentCost(l), 0);
 check('tam fabrika >= 1 sezon geliri', fullFactory >= 23 * 1100, `${fullFactory} RP`);
 
 console.log('\n── İstihbarat ──');
-check('rapor 22 sa', SPY_RESOLVE_MS === 22 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);
-check('bekleme 22 sa', SPY_COOLDOWN_MS === 22 * 3600_000, `${SPY_COOLDOWN_MS / 3600_000} sa`);
-check('rapor atlama 110 Altın', skipCostGold(SPY_RESOLVE_MS) === 110, String(skipCostGold(SPY_RESOLVE_MS)));
+check('rapor 24 sa', SPY_RESOLVE_MS === 24 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);
+check('bekleme 48 sa', SPY_COOLDOWN_MS === 48 * 3600_000, `${SPY_COOLDOWN_MS / 3600_000} sa`);
+check('rapor atlama 120 Altın', skipCostGold(SPY_RESOLVE_MS) === 120, String(skipCostGold(SPY_RESOLVE_MS)));
+// Casus 22 saatlik tavanın dışında: yarışa dokunmuyor, sadece geliştirmeye
+// çarpan veriyor. Tavan, yarışa çıkmayı engelleyen işler için.
+check('casus yarışı etkileyen gruplarda değil', SPY_RESOLVE_MS > 22 * 3600_000,
+  `${SPY_RESOLVE_MS / 3600_000} sa — kasıtlı`);
 
 console.log('\n── Kadro ──');
 check('kadro tabanı 2', SQUAD_MIN === 2, String(SQUAD_MIN));
