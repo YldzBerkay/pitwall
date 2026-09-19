@@ -58,7 +58,6 @@ export interface CarStat {
   value: number;
   color: string;
   next: string;
-  cost: number;
   fit: TrackFit;
 }
 
@@ -66,9 +65,9 @@ export interface CarStat {
 // colour. `fit` here is a placeholder: the store recomputes it against the
 // upcoming circuit (`withTrackFit`), it is never hand-set.
 export const carStats: CarStat[] = [
-  { label: 'MOTOR', value: 67, color: colors.accentLime, next: '+2', cost: 15, fit: 'yellow' },
-  { label: 'AERO', value: 58, color: colors.accentLime, next: '+2', cost: 15, fit: 'yellow' },
-  { label: 'GRIP', value: 72, color: colors.accentLime, next: '+2', cost: 18, fit: 'yellow' },
+  { label: 'MOTOR', value: 67, color: colors.accentLime, next: '+6', fit: 'yellow' },
+  { label: 'AERO', value: 58, color: colors.accentLime, next: '+6', fit: 'yellow' },
+  { label: 'GRIP', value: 72, color: colors.accentLime, next: '+6', fit: 'yellow' },
 ];
 
 export interface Driver {

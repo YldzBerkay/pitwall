@@ -12,6 +12,7 @@ import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
 import { wageFor } from '../src/data/staff';
 import { driverFee, driverWage, saleValue } from '../src/data/driverMarket';
+import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
 
 let failed = 0;
 export const check = (name: string, ok: boolean, detail = ''): void => {
@@ -47,6 +48,14 @@ check('yıldız >= 12 yarışlık gelir', driverFee(drv(95, 97)) >= 12 * 1100, S
 check('satış %20 komisyonlu', saleValue(drv(76, 88)) === Math.round(driverFee(drv(76, 88)) * 0.8));
 const kar = saleValue(drv(76, 88)) - driverFee(drv(62, 88));
 check('ticaret kârlı (62→76)', near(kar, 900, 1500), `${kar} RP`);
+
+console.log('\n── Araç merdiveni ──');
+check('1. yükseltme 750 RP', upgradeCostFor(0) === 750, String(upgradeCostFor(0)));
+check('2. yükseltme 1125 RP', upgradeCostFor(1) === 1125, String(upgradeCostFor(1)));
+check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor(4)));
+check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
+check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
+check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
 
 console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
 process.exit(failed === 0 ? 0 : 1);

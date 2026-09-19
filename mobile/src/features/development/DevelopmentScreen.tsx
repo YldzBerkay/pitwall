@@ -31,6 +31,7 @@ export function DevelopmentScreen() {
     departments,
     build,
     buildTimeFor,
+    buildCostFor,
     startUpgrade,
     collectUpgrade,
     upgradeDepartment,
@@ -170,8 +171,8 @@ export function DevelopmentScreen() {
                   key={s.label}
                   label={s.label}
                   value={s.value}
-                  cost={s.cost}
-                  affordable={rp >= s.cost}
+                  cost={buildCostFor(s.label)}
+                  affordable={rp >= buildCostFor(s.label)}
                   buildMs={buildTimeFor(s.label)}
                   building={build?.label === s.label}
                   busy={!!build && build.label !== s.label}

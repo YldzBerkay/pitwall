@@ -5,6 +5,8 @@
  * in-app car draws live.
  */
 
+import { ECONOMY_SCALE } from './economy';
+
 export interface Livery {
   key: string;
   label: string;
@@ -307,6 +309,32 @@ export const UPGRADE_MAX_MS = 72 * 60 * 60 * 1000;
 /** `done` = o değer için tamamlanmış yükseltme sayısı. 6sa, 9sa, 13,5sa… en çok 72sa. */
 export function upgradeDurationMs(done: number): number {
   return Math.min(UPGRADE_MAX_MS, Math.round(UPGRADE_BASE_MS * UPGRADE_STEP ** Math.max(0, done)));
+}
+
+// ── Yükseltme fiyatı ───────────────────────────────────────────────────────
+// Para merdiveni süreyle AYNI 1,5 çarpanını kullanır, böylece oyuncunun
+// aklında tek bir kural kalır: her yükseltme bir öncekinin bir buçuk katı.
+
+/** En ucuz geliştirme: orta sıra takımın bir yarışlık gelirinin (~1.100 RP) yaklaşık %68'i. */
+export const UPGRADE_BASE_RP = Math.round(500 * ECONOMY_SCALE);
+
+/**
+ * Bir geliştirmenin taban stat kazancı.
+ *
+ * Tek tezgah ve 1,5 katlanma bir sezona ~12 geliştirme sığdırıyor; +6 ile
+ * orta sıra bir araç (ort 66) sezon sonunda şampiyonluk bandına (ort ~90)
+ * tam çıkıyor. Baş mekanik ve rüzgar tüneli bunun üstüne biner.
+ */
+export const UPGRADE_GAIN = 6;
+
+/**
+ * `done` = o stat için tamamlanmış yükseltme sayısı.
+ *
+ * Süre 72 saatte tavan yapar ama fiyat YAPMAZ: geç sezonda fren parasal
+ * olsun, takvimsel değil. Yoksa oyuncu zamanla her şeyi alabilirdi.
+ */
+export function upgradeCostFor(done: number): number {
+  return Math.round(UPGRADE_BASE_RP * UPGRADE_STEP ** Math.max(0, done));
 }
 
 /** "6 sa", "13 sa 30 dk", "2 gün 6 sa" — geri sayım ve etiketler için. */

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { carStats, factoryDepartments, teamState, type CarStat, type FactoryDepartment } from '@/data/mock';
-import { tierOf, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
+import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
 import {
   generateOffers,
   racePrize,
@@ -251,6 +251,8 @@ interface CoreState {
   upgradesDone: Record<string, number>;
   /** How long the next build of this stat would take, in ms. */
   buildTimeFor: (label: string) => number;
+  /** Bu stat'ın sıradaki yükseltmesinin RP fiyatı — 750 × 1.5^tamamlanan. */
+  buildCostFor: (label: string) => number;
   /** Pay the RP and put a part on the bench. The gain lands on collect. */
   startUpgrade: (label: string) => StartUpgradeResult;
   /** Fit a finished part. Returns undefined while the build is still running. */
@@ -390,6 +392,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setSpokes: (key) => set({ spokes: key }),
 
   buildTimeFor: (label) => upgradeDurationMs(get().upgradesDone[label] ?? 0),
+  buildCostFor: (label) => upgradeCostFor(get().upgradesDone[label] ?? 0),
 
   startUpgrade: (label) => {
     const state = get();
@@ -397,10 +400,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!stat) return 'missing';
     // One bench, one part: the factory cannot build two things at once.
     if (state.build) return 'busy';
-    if (state.rp < stat.cost) return 'noRp';
+    const cost = state.buildCostFor(label);
+    if (state.rp < cost) return 'noRp';
     const durationMs = state.buildTimeFor(label);
     set({
-      rp: state.rp - stat.cost,
+      rp: state.rp - cost,
       build: { label, endsAt: Date.now() + durationMs, durationMs },
     });
     return 'ok';
@@ -415,12 +419,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({ build: undefined });
       return undefined;
     }
-    // Base +2, the chief mechanic's bonus on top, intelligence multiplies the
-    // lot; fractions carry to the next upgrade so a 0.5 is never lost. The
-    // espionage boost is spent here, on the part that actually gets fitted.
+    // Taban kazanç, baş mekanik bonusu üstüne, istihbarat hepsini çarpar;
+    // kesirler bir sonraki yükseltmeye taşınır, 0,5 hiç kaybolmaz. Casusluk
+    // boost'u burada harcanır — gerçekten takılan parçanın üstünde.
     const key = statKeyOf[build.label];
     const boost = key ? get().takeBoost(key) : 1;
-    const raw = (2 + state.effects().upgradeBonus) * boost + (state.upgradeCarry[build.label] ?? 0);
+    const raw = (UPGRADE_GAIN + state.effects().upgradeBonus) * boost + (state.upgradeCarry[build.label] ?? 0);
     const gain = Math.floor(raw);
     const carry = Math.round((raw - gain) * 100) / 100;
     const next = Math.min(100, stat.value + gain);

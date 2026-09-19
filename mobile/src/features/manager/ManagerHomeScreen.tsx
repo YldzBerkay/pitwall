@@ -50,6 +50,7 @@ export function ManagerHomeScreen() {
   const carStats = useGameStore((s) => s.carStats);
   const build = useGameStore((s) => s.build);
   const buildTimeFor = useGameStore((s) => s.buildTimeFor);
+  const buildCostFor = useGameStore((s) => s.buildCostFor);
   const startUpgrade = useGameStore((s) => s.startUpgrade);
   const collectUpgrade = useGameStore((s) => s.collectUpgrade);
   const livery = useGameStore((s) => s.livery);
@@ -118,7 +119,7 @@ export function ManagerHomeScreen() {
   } else if (build) {
     todos.push({ icon: 'development', title: `Fabrika üretimde · ${formatDuration(build.endsAt - now)} kaldı`, detail: 'Tek tezgâh var; bu parça bitene kadar yeni yükseltme başlatılamaz.', route: '/(tabs)/development' });
   } else {
-    const affordable = carStats.filter((s) => rp >= s.cost).length;
+    const affordable = carStats.filter((s) => rp >= buildCostFor(s.label)).length;
     if (affordable > 0) todos.push({ icon: 'development', title: `RP'n ${affordable} yükseltmeye yetiyor`, detail: 'İlk yükseltme 6 saat sürer, aynı değerin sonraki her yükseltmesi 1,5 kat uzun.', route: '/(tabs)/development' });
   }
 
@@ -254,6 +255,7 @@ export function ManagerHomeScreen() {
             <CarStatCard
               key={s.label}
               {...s}
+              cost={buildCostFor(s.label)}
               last={i === carStats.length - 1}
               building={build?.label === s.label}
               done={buildDone && build?.label === s.label}
