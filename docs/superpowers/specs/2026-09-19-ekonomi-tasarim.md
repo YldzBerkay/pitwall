@@ -163,8 +163,24 @@ fabrikaTabanBonusu = toplam fabrika seviyesi × 1.5
 
 Örnek: 91/88/90 araç, toplam fabrika seviyesi 4 (bonus 6) → **74/73/73**.
 
-Rakipler için aynı formül `Team.baseStrength` üzerinden, kendi yapay fabrika
-seviyeleriyle işler; yoksa oyuncu iki sezonda ligi terk eder.
+**Rakiplere gerileme UYGULANMAZ** — uygulamada bu maddeden kasıtlı olarak
+sapıldı. `raceEngine.aiStrength` rakip gücünü `round` üzerinden okuyor
+(`compressed + (round-1) * 0.1 * devRate`), yani rakipler zaten her sezon
+sıfırlanıyor ve sezonlar arası hiç büyümüyorlar. Onlara ayrıca gerileme
+uygulamak her yıl zayıflatırdı — istenenin tam tersi.
+
+Denge kendiliğinden kuruluyor ve `econ-check` bunu iki eşikle koruyor:
+
+| | Değer |
+|---|---|
+| Oyuncunun reset sonrası tabanı | 74 |
+| En güçlü rakibin sezon başı gücü | 82,3 |
+| Oyuncunun sezon sonu tavanı | ~90 |
+| En güçlü rakibin sezon sonu gücü | 84,4 |
+
+Yani oyuncu her kış en güçlü rakibin **altına** düşüyor, sezon boyunca
+tırmanıp **üstüne** çıkıyor. Bir sezonluk arkın tekrarlanabilir olmasını
+sağlayan şey bu.
 
 Reset sırasında:
 - Stat merdiveni sayaçları (`upgradeLadder`) sıfırlanır.

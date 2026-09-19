@@ -9,10 +9,12 @@
  */
 import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPacks, goldPrices, rpPrices, skipCostGold } from '../src/data/economy';
 import { racePrize } from '../src/data/sponsors';
-import { championshipPrize } from '../src/data/season';
+import { championshipPrize, regressCar, rivalFactoryLevel } from '../src/data/season';
 import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
 import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS } from '../src/data/espionage';
 import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryEffects } from '../src/data/factory';
+import { aiStrength } from '../src/data/raceEngine';
+import { teams } from '../src/data/teams';
 import { wageFor } from '../src/data/staff';
 import { SQUAD_MAX, SQUAD_MIN, driverFee, driverWage, saleValue } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
@@ -59,6 +61,27 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
+
+console.log('\n── Kış reseti ──');
+check('§11.6 91 stat + fabrika 6 → 74', regressCar(91, 6) === 74, String(regressCar(91, 6)));
+check('§11.6 reset 70-76 bandında',
+  [88, 90, 91].every((v) => near(regressCar(v, 6), 70, 76)),
+  [88, 90, 91].map((v) => regressCar(v, 6)).join('/'));
+check('fabrikasız reset tabana yakın', near(regressCar(90, 0), 66, 68), String(regressCar(90, 0)));
+check('reset merdiveni yeniden açar', regressCar(91, 6) < 91 - 6);
+check('rakip fabrika seviyesi 2-5', [41, 70, 93].every((b) => near(rivalFactoryLevel(b), 2, 5)),
+  [41, 70, 93].map(rivalFactoryLevel).join('/'));
+
+// Rakiplere gerileme UYGULANMAZ: aiStrength gücü `round` üzerinden okuyor,
+// yani rakipler zaten her sezon sıfırlanıyor ve sezonlar arası büyümüyorlar.
+// Onlara gerileme uygulamak her yıl zayıflatırdı. Asıl denge şu: oyuncunun
+// reset sonrası tabanı en güçlü rakibin ALTINDA, sezon sonu tavanı ÜSTÜNDE —
+// yani her sezon yeniden tırmanılacak gerçek bir rakip var.
+const topRival = Math.max(...teams.filter((t) => !t.isPlayer).map((t) => aiStrength(t, 1)));
+check('reset sonrası oyuncu en güçlü rakibin altında', regressCar(91, 6) < topRival,
+  `oyuncu ${regressCar(91, 6)} < rakip ${topRival.toFixed(1)}`);
+check('sezon sonu oyuncu en güçlü rakibin üstünde', 90 > aiStrength(teams.find((t) => !t.isPlayer && t.baseStrength === Math.max(...teams.filter((x) => !x.isPlayer).map((x) => x.baseStrength)))!, 23),
+  `90 > ${aiStrength(teams.filter((t) => !t.isPlayer).sort((a, b) => b.baseStrength - a.baseStrength)[0], 23).toFixed(1)}`);
 
 console.log('\n── Fabrika ──');
 check('L1→2 1500 RP', departmentCost(1) === 1500, String(departmentCost(1)));

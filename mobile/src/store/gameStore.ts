@@ -69,6 +69,7 @@ import {
   championshipPrize,
   freshStandings,
   summariseSeason,
+  regressCar,
   testReport,
   type SeasonSummary,
   type TestFocus,
@@ -830,8 +831,28 @@ export const useGameStore = create<GameState>((set, get) => ({
     // Whatever it did leads the paddock news the manager opens next.
     if (season) {
       get().ageDrivers();
-      const winter = get().transferNews;
-      if (winter.length > 0) set({ paddockNews: [...winter, ...paddockNews] });
+      // Kış reseti: sezon sonunda araç tavana yaklaştığı için herkes geriler;
+      // taşınan tek şey fabrika. Merdiven sayaçları sıfırlanır, yoksa ikinci
+      // sezon 12.814 RP'lik yükseltmelerle başlardı.
+      const floor = get().factory().winterFloorBonus;
+      const winterNews: string[] = [];
+      set((st) => {
+        const regressed = st.carStats.map((cs) => ({ ...cs, value: regressCar(cs.value, floor) }));
+        winterNews.push(
+          `Yeni teknik kurallar: araç ${st.carStats.map((c) => c.value).join('/')} → ${regressed.map((c) => c.value).join('/')} (fabrika +${floor}).`,
+        );
+        return {
+          carStats: withTrackFit(regressed, trackForRound(1)),
+          upgradesDone: {},
+          upgradeCarry: {},
+          // Sezon sınırı, "iptal yok, iade yok" kuralının tek istisnası:
+          // parçanın statını zaten reset silecek, para boşa gitmesin.
+          build: undefined,
+          rp: st.build ? st.rp + st.buildCostFor(st.build.label) : st.rp,
+        };
+      });
+      const winter = [...winterNews, ...get().transferNews];
+      set({ paddockNews: [...winter, ...paddockNews] });
     }
     return settlement;
   },

@@ -14,6 +14,35 @@ import type { Career } from './achievements';
 
 export const SEASON_ROUNDS = calendar.length;
 
+/** Sezonun araç tabanı: kışın herkes buraya doğru geriler. */
+export const CAR_BASELINE = 55;
+
+/** Kış resetinde eski statın korunan payı. */
+const CARRY_OVER = 0.35;
+
+/**
+ * Kış reseti.
+ *
+ * İlerleme temposu bir sezon olduğu için sezon sonunda araç tavana yaklaşır.
+ * Sezon ikinin yapacak bir işi kalsın diye herkesin aracı bu formülle geriler;
+ * taşınan tek şey fabrika bonusudur. Yani sezonluk ilerleme araçta, kalıcı
+ * ilerleme fabrikada. Aynı formül rakiplere de `baseStrength` üzerinden
+ * uygulanır — yoksa oyuncu iki sezonda ligi terk eder.
+ */
+export function regressCar(stat: number, factoryFloorBonus: number): number {
+  return Math.round(CAR_BASELINE + (stat - CAR_BASELINE) * CARRY_OVER + factoryFloorBonus);
+}
+
+/**
+ * Rakip takımın yapay fabrika seviyesi.
+ *
+ * Rakiplerin fabrikası yok; sezon öncesi güçleri onun yerine geçer, böylece
+ * güçlü takımlar kıştan daha az hasarla çıkar. 41-93 bandı 2-5 seviyeye
+ * düşer, yani oyuncununkiyle aynı bant.
+ */
+export const rivalFactoryLevel = (baseStrength: number): number =>
+  Math.round(baseStrength / 18);
+
 /**
  * Sezon ödülü.
  *
