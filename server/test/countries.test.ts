@@ -48,6 +48,7 @@ describe('countries', () => {
     assert.equal(countryByCode('JP')?.name, '日本');
     assert.equal(countryByCode('GR')?.name, 'Ελλάδα');
     assert.equal(countryByCode('IT')?.name, 'Italia');
+    assert.equal(countryByCode('HT')?.name, 'Haïti');
   });
 
   it('puts the obvious countries in the obvious buckets', () => {

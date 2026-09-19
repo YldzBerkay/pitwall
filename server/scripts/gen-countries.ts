@@ -111,21 +111,25 @@ function regionFor(code: string): Region {
  */
 const LOCALE_OVERRIDE: Record<string, string> = {};
 
-function bestLanguageFor(code: string): string | undefined {
+/**
+ * Territory's official (or de-facto-official) languages, ordered from most
+ * to least populous. Used to walk down the list when the top-ranked
+ * language turns out to have no CLDR territories.json to resolve an
+ * endonym from — rather than falling straight through to English.
+ */
+function officialLanguagesFor(code: string): string[] {
   const langs = territoryInfo[code]?.languagePopulation;
-  if (!langs) return undefined;
-  let best: string | undefined;
-  let bestPct = -1;
-  for (const [lang, info] of Object.entries(langs)) {
-    const status = info._officialStatus;
-    if (status !== 'official' && status !== 'de_facto_official') continue;
-    const pct = parseFloat(info._populationPercent ?? '0');
-    if (pct > bestPct) {
-      bestPct = pct;
-      best = lang;
-    }
-  }
-  return best;
+  if (!langs) return [];
+  return Object.entries(langs)
+    .filter(([, info]) => {
+      const status = info._officialStatus;
+      return status === 'official' || status === 'de_facto_official';
+    })
+    .sort(
+      ([, a], [, b]) =>
+        parseFloat(b._populationPercent ?? '0') - parseFloat(a._populationPercent ?? '0'),
+    )
+    .map(([lang]) => lang);
 }
 
 /** Convert a CLDR language tag (underscores) to a locale directory name (hyphens). */
@@ -173,11 +177,12 @@ const countries: Country[] = [];
 
 for (const code of Array.from(allLeafCodes).sort()) {
   const overrideLocale = LOCALE_OVERRIDE[code];
-  const langTag = overrideLocale ?? bestLanguageFor(code);
+  const langTags = overrideLocale ? [overrideLocale] : officialLanguagesFor(code);
 
   let name: string | undefined;
-  if (langTag) {
+  for (const langTag of langTags) {
     name = resolveEndonym(code, langTag);
+    if (name) break;
   }
   if (!name) {
     name = englishTerritories[code];

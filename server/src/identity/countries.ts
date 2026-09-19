@@ -118,7 +118,7 @@ export const COUNTRIES: readonly Country[] = [
   { code: "HM", name: "Heard & McDonald Islands", region: "OCE" },
   { code: "HN", name: "Honduras", region: "LATAM" },
   { code: "HR", name: "Hrvatska", region: "EU" },
-  { code: "HT", name: "Haiti", region: "LATAM" },
+  { code: "HT", name: "Haïti", region: "LATAM" },
   { code: "HU", name: "Magyarország", region: "EU" },
   { code: "IC", name: "Canarias", region: "EU" },
   { code: "ID", name: "Indonesia", region: "SEA" },
