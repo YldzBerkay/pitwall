@@ -12,6 +12,7 @@ import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
 import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
 import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS } from '../src/data/espionage';
+import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryEffects } from '../src/data/factory';
 import { wageFor } from '../src/data/staff';
 import { SQUAD_MAX, SQUAD_MIN, driverFee, driverWage, saleValue } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
@@ -58,6 +59,20 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
+
+console.log('\n── Fabrika ──');
+check('L1→2 1500 RP', departmentCost(1) === 1500, String(departmentCost(1)));
+check('L4→5 7369 RP', departmentCost(4) === 7369, String(departmentCost(4)));
+check('departman tavanı 5', DEPARTMENT_MAX_LEVEL === 5, String(DEPARTMENT_MAX_LEVEL));
+const fx = factoryEffects({ wind_tunnel: 3, data_center: 2, manufacturing: 2, engine_lab: 1, driver_academy: 3 });
+check('rüzgar tüneli +0,4/seviye', Math.abs(fx.upgradeGainBonus - 1.2) < 1e-9, String(fx.upgradeGainBonus));
+check('üretim maliyeti -%6/seviye', Math.abs(fx.upgradeCostScale - 0.88) < 1e-9, String(fx.upgradeCostScale));
+check('akademi +%8/seviye', Math.abs(fx.trainingScale - 1.24) < 1e-9, String(fx.trainingScale));
+check('kış tabanı +1,5/seviye', fx.winterFloorBonus === 16.5, String(fx.winterFloorBonus));
+check('tam fabrika indirimi tabanlı', factoryEffects({ manufacturing: 9 }).upgradeCostScale === 0.7);
+// Tam fabrika bir sezonun tamamından pahalı olmalı: 4 sezonluk hedef.
+const fullFactory = 5 * [1, 2, 3, 4].reduce((a, l) => a + departmentCost(l), 0);
+check('tam fabrika >= 1 sezon geliri', fullFactory >= 23 * 1100, `${fullFactory} RP`);
 
 console.log('\n── İstihbarat ──');
 check('rapor 24 sa', SPY_RESOLVE_MS === 24 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);

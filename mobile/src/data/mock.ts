@@ -105,25 +105,6 @@ export const drivers: Driver[] = playerTeam.drivers.map((d, i) => ({
   },
 }));
 
-export interface FactoryDepartment {
-  code: string;
-  icon: string;
-  name: string;
-  level: number;
-  current: string;
-  next: string;
-  cost: number;
-  upgradable: boolean;
-}
-
-export const factoryDepartments: FactoryDepartment[] = [
-  { code: 'wind_tunnel', icon: 'Wind', name: 'WIND TUNNEL', level: 3, current: 'Aero yükseltme +2 stat', next: '+3 stat + rakip aero görünür', cost: 250, upgradable: true },
-  { code: 'data_center', icon: 'Database', name: 'DATA CENTER', level: 2, current: 'Simülasyon +/-%10', next: 'Hava durumu tahmini açılır', cost: 120, upgradable: true },
-  { code: 'manufacturing', icon: 'Factory', name: 'MANUFACTURING', level: 2, current: 'Yükseltme maliyeti -%10', next: 'Daha hızlı parça montajı', cost: 120, upgradable: false },
-  { code: 'engine_lab', icon: 'Gauge', name: 'ENGINE LAB', level: 1, current: 'Motor jetonu temel oranı', next: 'Jeton bonusu +1', cost: 50, upgradable: true },
-  { code: 'driver_academy', icon: 'GraduationCap', name: 'DRIVER ACADEMY', level: 3, current: 'Yarış başına +3 XP', next: 'Rakip pist uyumu görünür', cost: 250, upgradable: false },
-];
-
 export interface Alert {
   id: string;
   title: string;

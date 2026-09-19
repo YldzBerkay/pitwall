@@ -202,7 +202,8 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
     const t = state.training;
     if (!t || Date.now() < t.endsAt) return undefined;
     const driver = state.drivers[t.driverIdx];
-    const gain = trainingGain(driver, t.stat);
+    // Sürücü akademisi antrenman kazancını çarpar (spec §6).
+    const gain = Math.round(trainingGain(driver, t.stat) * get().factory().trainingScale * 100) / 100;
     const stats = { ...driver.stats, [t.stat]: Math.min(99, Math.round((driver.stats[t.stat] + gain) * 100) / 100) };
     const updated: Driver = { ...driver, stats, skill: overallOf(stats) };
     const drivers: [Driver, Driver] = t.driverIdx === 0 ? [updated, state.drivers[1]] : [state.drivers[0], updated];

@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import { carStats, factoryDepartments, teamState, type CarStat, type FactoryDepartment } from '@/data/mock';
+import { carStats, teamState, type CarStat } from '@/data/mock';
+import {
+  DEPARTMENT_MAX_LEVEL,
+  departmentCost,
+  factoryDepartments,
+  factoryEffects,
+  type FactoryDepartment,
+  type FactoryEffects,
+} from '@/data/factory';
 import { skipCostGold } from '@/data/economy';
 import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
 import {
@@ -254,8 +262,12 @@ interface CoreState {
   upgradesDone: Record<string, number>;
   /** How long the next build of this stat would take, in ms. */
   buildTimeFor: (label: string) => number;
-  /** Bu stat'ın sıradaki yükseltmesinin RP fiyatı — 750 × 1.5^tamamlanan. */
+  /** Bu stat'ın sıradaki yükseltmesinin RP fiyatı — 750 × 1.5^tamamlanan, fabrika indirimli. */
   buildCostFor: (label: string) => number;
+  /** Departman seviyeleri, `factoryEffects` için. */
+  factoryLevels: () => Record<string, number>;
+  /** Fabrikanın türettiği etkiler — hiçbir yer seviyeye doğrudan bakmaz. */
+  factory: () => FactoryEffects;
   /** Tezgahtaki parçayı hemen bitirmenin Altın fiyatı; iş yoksa 0. */
   skipBuildCost: () => number;
   /** Kalan süreyi Altınla satın alır ve parçayı takar. */
@@ -378,7 +390,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   entries: () => {
     const state = get();
-    const levels = Object.fromEntries(state.departments.map((d) => [d.code, d.level]));
+    const levels = state.factoryLevels();
     const fx = state.effects();
     // Yarış günü kilidi: tezgahta parça varken araç sökük yarışır — pişen
     // stat yarı değerinde, güvenilirlik yarıya bölünmüş (yani DNF riski
@@ -408,8 +420,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   setRim: (key) => set({ rim: key }),
   setSpokes: (key) => set({ spokes: key }),
 
-  buildTimeFor: (label) => upgradeDurationMs(get().upgradesDone[label] ?? 0),
-  buildCostFor: (label) => upgradeCostFor(get().upgradesDone[label] ?? 0),
+  factoryLevels: () => Object.fromEntries(get().departments.map((d) => [d.code, d.level])),
+  factory: () => factoryEffects(get().factoryLevels()),
+
+  buildTimeFor: (label) =>
+    Math.round(upgradeDurationMs(get().upgradesDone[label] ?? 0) * get().factory().upgradeTimeScale),
+  buildCostFor: (label) =>
+    Math.round(upgradeCostFor(get().upgradesDone[label] ?? 0) * get().factory().upgradeCostScale),
 
   skipBuildCost: () => {
     const { build } = get();
@@ -457,7 +474,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     // boost'u burada harcanır — gerçekten takılan parçanın üstünde.
     const key = statKeyOf[build.label];
     const boost = key ? get().takeBoost(key) : 1;
-    const raw = (UPGRADE_GAIN + state.effects().upgradeBonus) * boost + (state.upgradeCarry[build.label] ?? 0);
+    const raw = (UPGRADE_GAIN + state.effects().upgradeBonus + state.factory().upgradeGainBonus) * boost
+      + (state.upgradeCarry[build.label] ?? 0);
     const gain = Math.floor(raw);
     const carry = Math.round((raw - gain) * 100) / 100;
     const next = Math.min(100, stat.value + gain);
@@ -474,11 +492,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   upgradeDepartment: (code) => {
     const dept = get().departments.find((d) => d.code === code);
-    if (!dept || !dept.upgradable || get().rp < dept.cost) {
-      return false;
-    }
+    if (!dept || dept.level >= DEPARTMENT_MAX_LEVEL) return false;
+    const cost = departmentCost(dept.level);
+    if (get().rp < cost) return false;
     set((state) => ({
-      rp: state.rp - dept.cost,
+      rp: state.rp - cost,
       departments: state.departments.map((d) =>
         d.code === code ? { ...d, level: d.level + 1 } : d,
       ),
@@ -492,7 +510,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   testReport: () => {
     const state = get();
     if (state.testing.day > TEST_DAYS) return undefined;
-    const levels = Object.fromEntries(state.departments.map((d) => [d.code, d.level]));
+    const levels = state.factoryLevels();
     return testReport(state.testing.day, state.setup(), reliabilityOf(levels));
   },
   runTestDay: (focus) => {

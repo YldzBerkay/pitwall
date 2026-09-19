@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import type { FactoryDepartment } from '@/data/mock';
+import { DEPARTMENT_MAX_LEVEL, departmentCost, type FactoryDepartment } from '@/data/factory';
 import { AppText, GlassCard, Cols, ScreenHeader, SegmentTabs } from '@/components/atoms';
 import { CarUpgradeStage, type CarUpgradeStageHandle, type UpgradeZone } from '@/components/organisms';
 import { UPGRADE_MAX_MS, describeSpec, formatDuration, tierOf, tierUnlocks } from '@/data/carCustomisation';
@@ -202,7 +202,7 @@ export function DevelopmentScreen() {
             <DepartmentCard
               key={dept.code}
               dept={dept}
-              affordable={rp >= dept.cost}
+              affordable={rp >= departmentCost(dept.level)}
               onUpgrade={() => onUpgradeDept(dept)}
             />
           ))}
@@ -338,7 +338,7 @@ function DepartmentCard({ dept, affordable, onUpgrade }: DepartmentCardProps) {
       className="rounded-md border bg-elevated px-4 py-3.5"
       style={{
         gap: spacing.sm,
-        borderColor: dept.upgradable ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
+        borderColor: dept.level < DEPARTMENT_MAX_LEVEL ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
       }}
     >
       <View className="flex-row items-center justify-between">
@@ -364,7 +364,7 @@ function DepartmentCard({ dept, affordable, onUpgrade }: DepartmentCardProps) {
             </AppText>
           </View>
         </View>
-        {dept.upgradable ? (
+        {dept.level < DEPARTMENT_MAX_LEVEL ? (
           <Pressable
             className="flex-row items-center gap-1 rounded-sm border px-2.5 py-1.5"
             style={{
@@ -375,7 +375,7 @@ function DepartmentCard({ dept, affordable, onUpgrade }: DepartmentCardProps) {
             onPress={onUpgrade}
           >
             <AppText variant="statSmall" color={colors.accentLime} style={{ fontSize: 12 }}>
-              {dept.cost}
+              {departmentCost(dept.level)}
             </AppText>
             <AppText variant="labelSmall" color={colors.textSecondary} uppercase style={{ fontSize: 10 }}>
               RP
