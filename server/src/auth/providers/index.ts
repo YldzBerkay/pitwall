@@ -29,6 +29,28 @@ import { verifyFacebookToken } from './facebook.ts';
  * response, or a JWKS body that fails to parse) and `JWKSTimeout` — both mean
  * the identity provider's infrastructure misbehaved, not that the token was
  * bad, and those must be logged (see `logProviderInfraFailure`).
+ *
+ * Also deliberately NOT included: `JWKSInvalid` and `JWKInvalid`. Read against
+ * jose 5.10.0's source (`src/jwks/local.ts` / dist `jwks/local.js`):
+ *   - `JWKSInvalid('JSON Web Key Set malformed')` is thrown by the
+ *     `LocalJWKSet` constructor when the fetched JWKS body itself is not
+ *     `{ keys: [...] }` — a property of the document the provider served,
+ *     never of the token.
+ *   - `JWKSInvalid('JSON Web Key Set members must be public keys')` is thrown
+ *     from `importWithAlgCache` while importing a *candidate* JWK that the
+ *     token's `alg`/`kid` merely selected from the provider's own key set —
+ *     the failure is that the provider published a private/malformed key,
+ *     not anything about the token. No attacker-controlled field of the
+ *     token can force this branch; at most a token's `alg`/`kid` pick which
+ *     already-fetched key gets imported.
+ *   - `JWKInvalid` is thrown only from `jwk/thumbprint.js` (computing a JWK
+ *     thumbprint), which the verify path used here (`createRemoteJWKSet` →
+ *     `jwtVerify` → `jwks/local.js`) never calls — `local.js` doesn't even
+ *     import `JWKInvalid`. It cannot fire from token or provider data on
+ *     this path today; the closest live analogue is `JWKSInvalid` above, so
+ *     it is grouped with it rather than left routine by omission.
+ * Both are therefore infrastructure-caused (a provider serving a broken or
+ * malformed key set), not attacker-caused, and must be logged.
  */
 export function isJwtTokenRejection(error: unknown): boolean {
   return (
@@ -37,8 +59,6 @@ export function isJwtTokenRejection(error: unknown): boolean {
     error instanceof joseErrors.JWSSignatureVerificationFailed ||
     error instanceof joseErrors.JWTInvalid ||
     error instanceof joseErrors.JWSInvalid ||
-    error instanceof joseErrors.JWKInvalid ||
-    error instanceof joseErrors.JWKSInvalid ||
     error instanceof joseErrors.JOSEAlgNotAllowed ||
     error instanceof joseErrors.JWKSNoMatchingKey ||
     error instanceof joseErrors.JWKSMultipleMatchingKeys ||

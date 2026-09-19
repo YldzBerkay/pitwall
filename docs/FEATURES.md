@@ -58,7 +58,18 @@
 - ✅ Garaj (kahraman yarış kartı, bugün yapılacaklar, araç, sürücüler), Yarış, Geliştirme, Padok, Sponsorluk, Şampiyona, Profil
 - ✅ **Dikey + yatay kabuk**: alt hap sekme çubuğu / yan kapsül, `Cols` ile uyarlanan düzen, açıklayıcı `ScreenHeader`; üç kalite ajanıyla incelenip düzeltildi (docs/design-system.md §7)
 
+## Kimlik (`server/src/auth/*`, `server/src/identity/*`) — Faz 1a
+- ✅ Postgres tabanlı hesap kimliği: `users` + `auth_identities`, sağlayıcı başına tek satır, hesap birleştirme e-posta özetinden
+- ✅ Dört giriş yöntemi: Google, Apple, Facebook (JWKS/Graph doğrulamalı, alg-confusion ve JWKS altyapı arızası ayrımlı loglama) ve e-posta+şifre (scrypt, 8-200 karakter)
+- ✅ Otomatik **`Takma Ad#1234`** ataması: profanity filtresi, taban önerileri, dolan etiket genişliği otomatik büyür
+- ✅ **Endonym ülke listesi** (CLDR'den üretilir, `gen:countries`) ve 7 bölge kovası (`EU/NA/LATAM/MENA/APAC/SEA/OCE`), her bölgenin kendi yarış saati
+- ✅ **Çevrimdışı IP→bölge önerisi**: RIR tahsis verisinden üretilen `/16` çözünürlüklü ikili tablo (`gen:ip-region`), üçüncü taraf çağrısı yok
+- ✅ Altı uç nokta: `GET /onboarding/bootstrap`, `POST /auth/social`, `POST /auth/password/register`, `POST /auth/password/login`, `GET /me`, `PATCH /me`
+- ✅ **Gizlilik sözleşmesi (KVKK/GDPR)**: istemci IP'si yalnızca bölge kovasına çevrilip atılır, ham e-posta/şifre asla saklanmaz — sadece `email_hash`/`password_hash`; sözleşme `server/test/privacy.test.ts` ile kaynak ağacı üzerinde denetlenir
+- ✅ 195 sunucu testi, `npm run typecheck` temiz
+- ⬜ Mobil onboarding ekranları (Faz 1b): giriş/kayıt akışı, takma ad seçimi, ülke/bölge seçim ekranı istemci tarafında henüz yok
+
 ## Kapsam dışı / sırada
-- ⬜ Sunucuda kalıcılık (Postgres), kimlik doğrulama, lig oluşturma/davet
+- ⬜ Lig oluşturma/davet, kimlik doğrulamasının mobil istemciye bağlanması
 - ⬜ Kayıt/yükleme (persist)
 - ⬜ Mağaza ürünleri ve üretim AdMob kimlikleri (kod hazır)

@@ -4,7 +4,8 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPair, exportJWK, exportSPKI, SignJWT, type KeyLike, type JWK } from 'jose';
 
-import { isSocialProvider, verifySocialToken } from '../src/auth/providers/index.ts';
+import { errors as joseErrors } from 'jose';
+import { isSocialProvider, verifySocialToken, isJwtTokenRejection } from '../src/auth/providers/index.ts';
 import { verifyGoogleToken, __setGoogleJwksUrl } from '../src/auth/providers/google.ts';
 import { verifyAppleToken, __setAppleJwksUrl } from '../src/auth/providers/apple.ts';
 import { verifyFacebookToken } from '../src/auth/providers/facebook.ts';
@@ -52,6 +53,22 @@ async function serveJwks(jwk: JWK): Promise<{ url: string; server: Server }> {
   return { url: `http://127.0.0.1:${port}/jwks`, server };
 }
 
+/**
+ * Serves a 200 response whose body is valid JSON but not JWKS-shaped
+ * (`{ keys: [...] }`) — this is what jose's `LocalJWKSet` rejects with
+ * `JWKSInvalid('JSON Web Key Set malformed')`, entirely from the provider's
+ * response body and independent of anything in the token.
+ */
+async function serveMalformedJwks(): Promise<{ url: string; server: Server }> {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ notKeys: 'oops' }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const { port } = server.address() as AddressInfo;
+  return { url: `http://127.0.0.1:${port}/jwks`, server };
+}
+
 describe('providers/index', () => {
   it('isSocialProvider accepts the three known providers', () => {
     assert.ok(isSocialProvider('google'));
@@ -64,6 +81,20 @@ describe('providers/index', () => {
     assert.ok(!isSocialProvider(42));
     assert.ok(!isSocialProvider(null));
     assert.ok(!isSocialProvider(undefined));
+  });
+
+  it('classifies JWKSInvalid as infrastructure, not a routine token rejection', () => {
+    // The provider served a JWKS body jose could not parse as a key set —
+    // that is the provider's fault, not the token's. Must be logged.
+    assert.equal(isJwtTokenRejection(new joseErrors.JWKSInvalid('JSON Web Key Set malformed')), false);
+  });
+
+  it('classifies JWKInvalid as infrastructure, not a routine token rejection', () => {
+    // Unreachable via our verify path today (see the comment above
+    // isJwtTokenRejection), but grouped with JWKSInvalid on purpose: if it
+    // ever fires, the key material came only from the pinned JWKS, never
+    // from the token, so it must not be silently swallowed as routine.
+    assert.equal(isJwtTokenRejection(new joseErrors.JWKInvalid('bad key')), false);
   });
 });
 
@@ -295,6 +326,25 @@ describe('google token verification', () => {
 
     assert.equal(result, null);
     assert.equal(errorLogs.length, 1);
+    assert.match(String(errorLogs[0]?.[0]), /google/);
+  });
+
+  it('logs to console.error when the provider serves a malformed JWKS body (JWKSInvalid)', async () => {
+    const token = await makeToken({}, CLIENT_A);
+    const { url: malformedUrl, server: malformedServer } = await serveMalformedJwks();
+    __setGoogleJwksUrl(malformedUrl);
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(token));
+
+    __setGoogleJwksUrl(goodJwksUrl);
+    await new Promise((resolve) => malformedServer.close(resolve));
+
+    assert.equal(result, null);
+    assert.equal(
+      errorLogs.length,
+      1,
+      'a malformed JWKS body is an infrastructure failure and must be logged, not swallowed as a routine token rejection',
+    );
     assert.match(String(errorLogs[0]?.[0]), /google/);
   });
 });
