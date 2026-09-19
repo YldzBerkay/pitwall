@@ -37,7 +37,7 @@ Mevcut ekonominin beş kırık yeri var:
 | Ekonominin rolü | Kıt kaynak paylaştırması **+** sürücü ticareti |
 | Yükseltme fiyatı | `×1.5` **sıradaki yükseltme** üstüne (stat başına bağımsız merdiven) |
 | Geliştirme süresi | Gerçek zaman. **Gruplar arası paralel, grup içinde tek** (araç / sürücü / istihbarat) |
-| Sürücü ticareti | Serbest, **%20 komisyon + 4 kişilik kadro limiti** ile frenli |
+| Sürücü ticareti | Serbest, **%20 komisyon + 2-6 kişilik kadro** ile frenli |
 | Altın | Orta agresiflik, **sabit kur 1 Altın = 50 RP**, sadece-Altın mekaniği yok |
 | Hızlandırma | **Saat başı 5 Altın** |
 
@@ -203,11 +203,17 @@ bir gelir kalemidir, ana gelir değil.
 
 ### 5.3 Sömürü frenleri
 
-- **Kadro limiti 4**: 2 asıl + 1 yedek + 1 yatırım koltuğu. Beşinci sürücü
-  alınamaz; alınmak isteniyorsa biri satılmalı.
-- Her sürücü, koltukta olmasa bile **maaş yer** (yedek ve yatırım yarı maaş).
-- **Antrenman koltuğu tek** ve seans 6 saat (`TRAINING_MS`). Sürücü çiftliği
-  zamanla sınırlıdır, parayla değil.
+- **Kadro 2-6 sürücü.** Taban 2'dir: iki araç için iki sürücü şarttır, ikiye
+  düşmüşken satış yapılamaz. Tavan 6'dır; yedinci sürücü alınamaz, alınmak
+  isteniyorsa biri satılmalı. Aradaki 4 koltuk yedek ve yatırım içindir.
+- Her sürücü, koltukta olmasa bile **maaş yer** (asıl iki koltuk tam, diğerleri
+  yarı maaş).
+- **Antrenman koltuğu tek** ve seans 6 saat (`TRAINING_MS`). Altı sürücü tutmak
+  geliştirme hızını artırmaz — sadece maaş yükünü. Sürücü çiftliği zamanla
+  sınırlıdır, parayla değil.
+- **Tabana yakın kadro risklidir:** antrenmandaki sürücü yarışamaz (§5A). Tam
+  2 sürücüyle oynayıp birini antrene edersen o araç yarışa çıkamaz. Üçüncü
+  sürücü bir lüks değil, antrenman yapabilmenin bedelidir.
 - Aynı sürücü alındığı **raunda** satılamaz (aynı gün al-sat arbitrajı kapalı).
 
 ### 5.4 Gelişim hızı — değişmiyor
@@ -243,10 +249,40 @@ Yani:
 
 - AERO pişerken **MOTOR başlatılamaz** — araç grubu dolu. (Aynı stat da olmaz.)
 - 1. sürücü antrenmandayken **2. sürücü antrene edilemez**, yedek de edilemez.
-  Kadro limiti 4'tür ama antrenman koltuğu birdir; kalabalık kadro tutmak
-  antrenman hızını artırmaz, sadece maaş yükünü artırır (§5.3 freni).
+  Kadro 6 kişiye kadar çıkabilir ama antrenman koltuğu birdir; kalabalık kadro
+  tutmak antrenman hızını artırmaz, sadece maaş yükünü artırır (§5.3 freni).
 - Buna karşılık **AERO + 2. sürücü + casus** aynı anda gayet yürür. Oyuncunun
   günlük ritmi budur: gir, üç grubu da doldur, çık.
+
+### Yarış günü kilidi
+
+Zamanın gerçek bedeli burada. **Işıklar söndüğü anda hâlâ çalışan bir iş,
+öznesini cezalandırır.** İptal yoktur: ya Altınla bitirilir, ya sonucuna
+katlanılır.
+
+| Grup | Yarış anında çalışıyorsa |
+|---|---|
+| **Araç** | Araç sökük yarışır: **geliştirilen stat yarı değerinde** sayılır (AERO 88 → 44) ve o araç için **DNF olasılığı iki katına** çıkar. |
+| **Sürücü** | O sürücü koltuğa oturamaz; **yedek geçer** (sakatlık mekaniğiyle aynı yol). Yedek yoksa o araç yarışa çıkamaz. |
+| **İstihbarat** | Ceza yok — casus görevi yarışı etkilemez, sadece raporu geç gelir. |
+
+Araç cezası yalnızca **pişen stat'a** uygulanır, üçüne birden değil; ama tek
+tezgah olduğu için zaten aynı anda bir stat pişebilir. Ceza yarış sonunda
+kalkar, geliştirme kaldığı yerden devam eder — kaybedilen yarıştır, yatırım
+değil.
+
+**Uyarı zorunlu.** Oyuncu yarışa yetişmeyecek bir iş başlatmak üzereyken onay
+istenir:
+
+> "Bu geliştirme yarıştan 14 sa sonra biter. Bakü'ye sökük AERO ile çıkacaksın
+> (88 → 44) ve DNF riskin iki katı olacak. Devam edilsin mi?"
+
+Bu bir tuzak değil, bilinçli bir tercih olmalıdır: oyuncu bir yarışı feda edip
+büyük yatırımı öne almayı seçebilmeli. Uyarı, hesabı önceden göstermekle
+yükümlüdür — kaç saat açık, hangi stat, hangi yarış, kaç Altın ile kurtulur.
+
+Hızlandırma fiyatı yarış gününde de aynıdır (5 Altın/saat); "yarış yaklaştı"
+diye pahalılaşmaz. Baskı takvimin kendisinden gelir, fiyat oyunundan değil.
 
 Durum modeli gruplara birebir oturur — her grup için en fazla bir kayıt:
 
@@ -321,11 +357,17 @@ sürücüMaaşı(ortalama)  = round(60 + (ortalama − 55) / 40 × 190)
 
 | Kadro | Yarış başına |
 |---|---|
-| Yalın (yetenek 52 mekanik + 2 × ort 70 sürücü) | **322 RP** |
-| Elit (3 × yetenek 90 + 2 × ort 95 + yedek) | **965 RP** |
+| Asgari (2 sürücü ort 70/68 + 1 mekanik y52) | **313 RP** |
+| Dengeli (2 + 1 yedek + 2 personel y65) | **522 RP** |
+| Tüccar (2 + 4 genç ort 62 + 2 personel y65) | **649 RP** |
+| Elit (2 yıldız + 4 iyi + 3 personel y90) | **1.235 RP** |
 
-P1 geliri ~1.450 RP. Yani **elit kadro kurarsan araca para kalmaz.** Bu,
-tasarımın merkezindeki acı verici tercihtir; yumuşatılmamalıdır.
+Gelir: P1 ~1.450 · P3 ~1.310 · P6 ~1.100 · P11 ~750 RP.
+
+Yani **elit kadro kurarsan araca para kalmaz** — P1'deyken bile geriye 215 RP
+kalır, en ucuz geliştirme 750'dir. Kadro tavanının 6'ya çıkması bu dengeyi
+bozmaz, çünkü fazladan her sürücü hem maaş yer hem de tek antrenman koltuğunu
+paylaşır. Tasarımın merkezindeki acı verici tercih budur; yumuşatılmamalıdır.
 
 Maaşlar mevcut davranıştaki gibi hafta sonu gelirinden düşer
 (`gameStore.settleRaceWeekend`). Gelir maaşı karşılamazsa RP 0'da tabanlanır
@@ -394,9 +436,10 @@ Bu, playtest sonrası ilk ayarlanacak knob'dur.
 | `src/data/driverMarket.ts` | değişir | `driverFee` üstel, `driverWage` yeni ölçek, `saleValue` (%20 komisyon) |
 | `src/data/espionage.ts` | değişir | görev round yerine gerçek zamanlı: `endsAt`, 24 sa rapor, 48 sa bekleme, atlama |
 | `src/data/factory.ts` | **yeni** | departman seviye maliyeti + `factoryEffects` (mock'tan taşınır) |
+| `src/data/raceEngine.ts` | değişir | yarış günü kilidi: pişen stat yarı değerde, DNF ×2 |
 | `src/store/gameStore.ts` | değişir | `upgradeStat` → `startBuild`/`collectBuild`/`skipBuild`, merdiven sayacı, kış reseti |
 | `src/store/slices/economySlice.ts` | değişir | `spendGold` + `convertGoldToRp` (günlük tavanlı), yeni paket boyları |
-| `src/store/slices/driverSlice.ts` | değişir | kadro limiti 4, `sellDriver`, aynı-raund satış kilidi |
+| `src/store/slices/driverSlice.ts` | değişir | kadro 2-6, `sellDriver`, aynı-raund satış kilidi, antrenmandaki sürücünün yarış kilidi |
 | `src/data/mock.ts` | temizlik | `carStats[].cost` ve `factoryDepartments[].cost`/`upgradable` kaldırılır, veriden türetilir |
 | `src/features/development/*` | değişir | tezgah arayüzü: pişen geliştirme, geri sayım, atlama düğmesi |
 | `src/features/paddock/*` | değişir | satış akışı, kadro limiti uyarısı |
@@ -418,6 +461,12 @@ ile koşulur, **silinir**. Ölçülecekler:
 3b. **Grup dışlayıcılığı:** araç grubu doluyken ikinci bir araç geliştirmesi,
    sürücü grubu doluyken ikinci bir antrenman başlatma denemesi reddedilmeli;
    buna karşılık araç + sürücü + casus üçlüsü aynı anda yürüyebilmeli.
+3c. **Yarış günü kilidi:** pişen stat'la yarışan araç, aynı tohumla pişmeden
+   yarışan araçtan ortalama **en az 4 sıra geride** bitmeli (ceza gerçekten
+   acıtıyor mu). Antrenmandaki sürücünün yerine yedeğin geçtiği, yedeksizken
+   aracın çıkmadığı doğrulanmalı.
+3d. **Kadro sınırları:** 2 sürücüyken satış reddedilmeli, 6 sürücüyken alım
+   reddedilmeli.
 4. **Kadro tercihi:** elit kadro senaryosu koşulduğunda sezon sonu araç
    ortalaması yalın kadro senaryosundan **en az 8 puan düşük** olmalı — tercih
    gerçekten acıtıyor mu.
