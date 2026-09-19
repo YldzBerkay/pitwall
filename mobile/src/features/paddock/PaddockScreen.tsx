@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassButton, GlassCard, NeonStatChip, Cols, ScreenHeader, SegmentTabs } from '@/components/atoms';
 import { useShellLayout } from '@/lib/useShellLayout';
@@ -248,6 +248,7 @@ function DriversSection() {
   const signDriver = useGameStore((s) => s.signDriver);
   const renewDriver = useGameStore((s) => s.renewDriver);
   const sellDriver = useGameStore((s) => s.sellDriver);
+  const driverAt = useGameStore((s) => s.driverAt);
   const squadSize = useGameStore((s) => s.squadSize);
   const contracts = useGameStore((s) => s.contracts);
   const rumoursFn = useGameStore((s) => s.transferRumours);
@@ -255,7 +256,10 @@ function DriversSection() {
   const setupFn = useGameStore((s) => s.setup);
   const round = useGameStore((s) => s.round);
   const [stat, setStat] = useState<DriverStatKey>('pace');
-  const [seat, setSeat] = useState<0 | 1 | 'reserve'>(0);
+  // Koltuk numarası: 0-1 asıl, 2+ kadro (squad[seat - 2]), 'reserve' = pazardan
+  // yedek olarak imzala.
+  const [seat, setSeat] = useState<number | 'reserve'>(0);
+  const trainingAt = typeof seat === 'number' ? driverAt(seat) : undefined;
   const [term, setTerm] = useState(2);
   const [now, setNow] = useState(() => Date.now());
   const market = marketFn();
@@ -359,9 +363,17 @@ function DriversSection() {
             </>
           ) : (
             <>
-              <View className="flex-row gap-1.5">
+              <View className="flex-row flex-wrap gap-1.5">
                 {drivers.map((d, i) => (
                   <Chip key={d.number} label={d.name.split(' ').pop() ?? d.name} selected={seat === i} onPress={() => setSeat(i as 0 | 1)} />
+                ))}
+                {squad.map((m, i) => (
+                  <Chip
+                    key={m.driver.number}
+                    label={`${m.driver.name.split(' ').pop() ?? m.driver.name} (yedek)`}
+                    selected={seat === i + 2}
+                    onPress={() => setSeat(i + 2)}
+                  />
                 ))}
               </View>
               <View className="flex-row flex-wrap gap-1.5">
@@ -370,13 +382,28 @@ function DriversSection() {
                 ))}
               </View>
               <AppText variant="bodySmall" color={colors.textTertiary}>
-                Beklenen kazanç +{seat === 'reserve' ? 0 : trainingGain(drivers[seat], stat)} · gençler ve potansiyeli yüksekler daha hızlı gelişir, 33+ gelişmez.
+                Beklenen kazanç +{trainingAt ? trainingGain(trainingAt, stat) : 0} · gençler ve potansiyeli yüksekler daha hızlı gelişir, 33+ gelişmez.
+              </AppText>
+              <AppText variant="labelSmall" color={colors.solarAmber}>
+                Antrenmandaki sürücü yarışamaz. Asıl koltuktakini çalıştırırsan yerine kadrodan biri geçer; kadron yoksa o araç 55 seviyesinde geçici bir sürücüyle çıkar.
               </AppText>
               <GlassButton
                 label="Antrenmanı Başlat"
                 onPress={() => {
-                  if (seat === 'reserve') return;
-                  if (startTraining(seat, stat)) {
+                  // Asıl koltuktaki sürücüyü çalıştırmak, yedek yoksa o aracı
+                  // yarıştan çıkarır. Bunu sormadan yapma.
+                  if (typeof seat === 'number' && seat < 2 && squad.length === 0) {
+                    Alert.alert(
+                      'Bu sürücü yarışamaz',
+                      `${drivers[seat as 0 | 1].name} antrenmandayken koltuğa oturamaz ve yerine geçecek yedeğin yok — o araç 55 seviyesinde geçici bir sürücüyle yarışır.\n\nAntrenman 6 saat sürer; 30 Altınla hızlandırılabilir.`,
+                      [
+                        { text: 'Vazgeç', style: 'cancel' },
+                        { text: 'Yine de başlat', style: 'destructive', onPress: () => { if (startTraining(seat as number, stat)) { haptic.medium(); sfx.play('wrench'); } } },
+                      ],
+                    );
+                    return;
+                  }
+                  if (startTraining(seat as number, stat)) {
                     haptic.medium();
                     sfx.play('wrench');
                   }
@@ -439,7 +466,12 @@ function DriversSection() {
           </AppText>
           <Chip label={`1 · ${drivers[0].name.split(' ').pop()}`} compact selected={seat === 0} onPress={() => setSeat(0)} />
           <Chip label={`2 · ${drivers[1].name.split(' ').pop()}`} compact selected={seat === 1} onPress={() => setSeat(1)} />
-          <Chip label="Yedek (yarı ücret)" compact selected={seat === 'reserve'} onPress={() => setSeat('reserve')} />
+          <Chip
+            label={squadSize() >= SQUAD_MAX ? `Yedek · kadro dolu ${squadSize()}/${SQUAD_MAX}` : 'Yedek (yarı ücret)'}
+            compact
+            selected={seat === 'reserve'}
+            onPress={() => setSeat('reserve')}
+          />
         </View>
         <View className="flex-row flex-wrap items-center gap-1.5">
           <AppText variant="labelSmall" color={colors.textTertiary} uppercase>
@@ -478,13 +510,17 @@ function DriversSection() {
               </View>
               <Pressable
                 onPress={() => {
-                  const r = signDriver(d.id, seat, term);
+                  const target = seat === 'reserve' ? 'reserve' : (seat as 0 | 1);
+                  const r = signDriver(d.id, target, term);
                   if (r === 'ok') {
                     haptic.success();
                     sfx.play('partFitted');
-                  } else {
-                    haptic.error();
-                    sfx.play('denied');
+                    return;
+                  }
+                  haptic.error();
+                  sfx.play('denied');
+                  if (r === 'full') {
+                    Alert.alert('Kadro dolu', `En fazla ${SQUAD_MAX} sürücü tutabilirsin. Önce birini sat.`);
                   }
                 }}
                 className="items-center rounded-md border px-3 py-1.5"
