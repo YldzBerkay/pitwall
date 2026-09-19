@@ -10,6 +10,7 @@
 import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPacks, goldPrices, rpPrices, skipCostGold } from '../src/data/economy';
 import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
+import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
 import { wageFor } from '../src/data/staff';
 import { driverFee, driverWage, saleValue } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
@@ -74,6 +75,15 @@ check('sabır Altın\'dan ucuz (6 sa atlama > geliştirme fiyatı)',
 check('§11.7 bedava RP < döngü gelirinin %30\'u',
   GOLD_TO_RP_DAILY_CAP * GOLD_TO_RP * 2.5 < 1100 * 2.5 * 0.3,
   `${GOLD_TO_RP_DAILY_CAP * GOLD_TO_RP * 2.5} RP/döngü`);
+
+console.log('\n── Yarış günü kilidi ──');
+const baseSetup = { motor: 80, aero: 88, grip: 76, compound: 'MEDIUM' as const, bias: 0 };
+const hurt = crippleSetup(baseSetup, 'AERO');
+check('pişen stat yarı değerde', hurt.aero === 44, String(hurt.aero));
+check('diğer statlar bozulmaz', hurt.motor === 80 && hurt.grip === 76);
+check('kilit yoksa setup aynı nesne', crippleSetup(baseSetup, undefined) === baseSetup);
+check('bilinmeyen etiket ceza vermez', crippleSetup(baseSetup, 'ZZZ') === baseSetup);
+check('DNF katsayısı 2', CRIPPLED_DNF_SCALE === 2, String(CRIPPLED_DNF_SCALE));
 
 console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
 process.exit(failed === 0 ? 0 : 1);

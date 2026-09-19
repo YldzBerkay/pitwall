@@ -39,6 +39,31 @@ export interface CarSetup {
   bias?: number;
 }
 
+// ── Yarış günü kilidi ──────────────────────────────────────────────────────
+// Işıklar söndüğünde fabrikada hâlâ bir parça varsa araç sökük yarışır.
+// Ceza yarış sonunda kalkar ve geliştirme kaldığı yerden devam eder: oyuncu
+// bir yarışı kaybeder, yatırımını değil. Bu, "hangisini başlatayım, yarışa
+// yetişir mi" kararının gerçek bedelidir — zaman da bir kaynak olsun diye.
+
+/** Sökük araçta güvenilirlik bu katsayıya bölünür, yani DNF riski katlanır. */
+export const CRIPPLED_DNF_SCALE = 2;
+
+const statFieldOf: Record<string, 'motor' | 'aero' | 'grip' | undefined> = {
+  MOTOR: 'motor',
+  AERO: 'aero',
+  GRIP: 'grip',
+};
+
+/**
+ * Pişen stat'ı yarı değerine indirir. `buildingLabel` yoksa setup'ı aynen
+ * döner (referans eşitliği korunur, gereksiz yeniden hesap olmasın).
+ */
+export function crippleSetup(setup: CarSetup, buildingLabel: string | undefined): CarSetup {
+  const field = buildingLabel ? statFieldOf[buildingLabel] : undefined;
+  if (!field) return setup;
+  return { ...setup, [field]: Math.round(setup[field] / 2) };
+}
+
 export interface RaceConditions {
   track: Track;
   wet: boolean;

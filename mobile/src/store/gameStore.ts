@@ -25,6 +25,8 @@ import {
   finishRace,
   playerDecisions,
   reliabilityOf,
+  crippleSetup,
+  CRIPPLED_DNF_SCALE,
   simulatePractice,
   simulateQualifying,
   soloEntries,
@@ -378,7 +380,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     const state = get();
     const levels = Object.fromEntries(state.departments.map((d) => [d.code, d.level]));
     const fx = state.effects();
-    const entries = soloEntries(state.setup(), Math.min(1, reliabilityOf(levels) + fx.reliabilityBonus), state.weekend.tactics);
+    // Yarış günü kilidi: tezgahta parça varken araç sökük yarışır — pişen
+    // stat yarı değerinde, güvenilirlik yarıya bölünmüş (yani DNF riski
+    // katlanmış). `dnfChance` güvenilirliği 1 - r*0.5 ile okuduğu için ayrı
+    // bir alan açmaya gerek yok.
+    const building = state.build?.label;
+    const reliability = Math.min(1, reliabilityOf(levels) + fx.reliabilityBonus);
+    const entries = soloEntries(
+      crippleSetup(state.setup(), building),
+      building ? reliability / CRIPPLED_DNF_SCALE : reliability,
+      state.weekend.tactics,
+    );
     const own = entries[playerTeam.key];
     own.drivers = state.raceDrivers();
     own.pitSecondsSaved = fx.pitSecondsSaved;
