@@ -107,8 +107,8 @@ Mevcut `"scripts"` bloğunu tamamen şununla değiştir:
 
 ```bash
 # Postgres
-DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall
-TEST_DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test
+DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall
+TEST_DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test
 
 # Oturum imzası — 32+ bayt rastgele. Üretimde Railway değişkeni olarak verilir.
 SESSION_SECRET=change-me-32-bytes-minimum-secret
@@ -125,15 +125,30 @@ FACEBOOK_APP_SECRET=
 
 - [ ] **Step 5: Yerel Postgres'i başlat ve iki veritabanı oluştur**
 
+> **Uygulama notu (2026-09-19):** Bu adım plan yazılırken Docker varsayıyordu.
+> Geliştirme makinesinde Docker kapalıydı ve Homebrew'daki `postgresql@13`
+> upstream'de EOL olduğu için (2026-03-01'de devre dışı bırakıldı) onarılamadı.
+> Yerine `postgresql@17` kuruldu ve **5432** portunda çalışıyor. Tüm bağlantı
+> dizeleri bu porta göredir.
+
 ```bash
-docker run -d --name pitwall-pg -p 5433:5432 \
-  -e POSTGRES_USER=pitwall -e POSTGRES_PASSWORD=pitwall -e POSTGRES_DB=pitwall \
-  postgres:16-alpine
-sleep 5
-docker exec pitwall-pg psql -U pitwall -d pitwall -c 'CREATE DATABASE pitwall_test;'
+brew install postgresql@17
+brew services start postgresql@17
+
+PSQL=/opt/homebrew/opt/postgresql@17/bin/psql
+$PSQL -d postgres -c "CREATE ROLE pitwall LOGIN PASSWORD 'pitwall' CREATEDB"
+$PSQL -d postgres -c "CREATE DATABASE pitwall OWNER pitwall"
+$PSQL -d postgres -c "CREATE DATABASE pitwall_test OWNER pitwall"
 ```
 
-Beklenen çıktı: `CREATE DATABASE`
+Doğrulama:
+
+```bash
+PGPASSWORD=pitwall psql -h localhost -p 5432 -U pitwall -d pitwall_test \
+  -tAc "select current_database(), current_user"
+```
+
+Beklenen çıktı: `pitwall_test|pitwall`
 
 - [ ] **Step 6: Koşucunun ayakta olduğunu doğrulayan test yaz**
 
@@ -203,7 +218,7 @@ describe('db pool', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="db pool"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="db pool"`
 Expected: FAIL — `Cannot find module '../src/db/pool.ts'`
 
 - [ ] **Step 3: `server/src/db/pool.ts` yaz**
@@ -230,7 +245,9 @@ export function getPool(): Pool {
     max: Number(process.env.PG_POOL_MAX ?? 10),
     // Railway'in yönetilen Postgres'i TLS ister ama sertifikayı kendi CA'sıyla
     // imzalar; yerelde TLS yok.
-    ssl: connectionString.includes('localhost') ? undefined : { rejectUnauthorized: false },
+    ssl: /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(connectionString)
+      ? undefined
+      : { rejectUnauthorized: false },
   });
   return pool;
 }
@@ -270,7 +287,7 @@ export async function closePool(): Promise<void> {
 
 - [ ] **Step 4: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="db pool"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="db pool"`
 Expected: PASS — `# pass 3`
 
 - [ ] **Step 5: Commit**
@@ -349,7 +366,7 @@ describe('migrations', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="migrations"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="migrations"`
 Expected: FAIL — `Cannot find module '../src/db/migrate.ts'`
 
 - [ ] **Step 3: `server/src/db/migrations/001_identity.sql` yaz**
@@ -477,12 +494,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 - [ ] **Step 5: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="migrations"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="migrations"`
 Expected: PASS — `# pass 4`
 
 - [ ] **Step 6: Geliştirme veritabanına da uygula**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall npm run migrate`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall npm run migrate`
 Expected: `migrated: 001_identity.sql` ve `1 migration applied`
 
 - [ ] **Step 7: Commit**
@@ -834,7 +851,7 @@ describe('allocateNickname', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="allocateNickname"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="allocateNickname"`
 Expected: FAIL — `Cannot find module '../src/identity/nicknameRepo.ts'`
 
 - [ ] **Step 3: `server/src/identity/nicknameRepo.ts` yaz**
@@ -944,7 +961,7 @@ export async function allocateNickname(
 
 - [ ] **Step 4: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="allocateNickname"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="allocateNickname"`
 Expected: PASS — `# pass 5`
 
 - [ ] **Step 5: Commit**
@@ -1981,7 +1998,7 @@ describe('userRepo', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="userRepo"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="userRepo"`
 Expected: FAIL — `Cannot find module '../src/auth/userRepo.ts'`
 
 - [ ] **Step 3: `server/src/auth/userRepo.ts` yaz**
@@ -2138,7 +2155,7 @@ export async function updateProfile(userId: string, patch: ProfilePatch): Promis
 
 - [ ] **Step 4: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="userRepo"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="userRepo"`
 Expected: PASS — `# pass 8`
 
 - [ ] **Step 5: Commit**
@@ -2675,7 +2692,7 @@ describe('password auth', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="authenticateSocial|password auth"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="authenticateSocial|password auth"`
 Expected: FAIL — `Cannot find module '../src/auth/service.ts'`
 
 - [ ] **Step 3: `server/src/auth/service.ts` yaz**
@@ -2866,7 +2883,7 @@ export async function loginWithPassword(input: PasswordLoginInput): Promise<Auth
 
 - [ ] **Step 4: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="authenticateSocial|password auth"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="authenticateSocial|password auth"`
 Expected: PASS — `# pass 14`
 
 - [ ] **Step 5: Commit**
@@ -3308,7 +3325,7 @@ describe('identity http', () => {
 
 - [ ] **Step 2: Testi koş, başarısız olduğunu gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="identity http"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="identity http"`
 Expected: FAIL — `Cannot find module '../src/auth/routes.ts'`
 
 - [ ] **Step 3: `server/src/identity/routes.ts` yaz**
@@ -3475,7 +3492,7 @@ export function registerAuthRoutes(router: Router): void {
 
 - [ ] **Step 5: Testi koş, geçtiğini gör**
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test -- --test-name-pattern="identity http"`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test -- --test-name-pattern="identity http"`
 Expected: PASS — `# pass 11`
 
 - [ ] **Step 6: `server/src/index.ts`'e yönlendiriciyi bağla**
@@ -3522,13 +3539,13 @@ runMigrations()
 Run: `cd server && npm run typecheck`
 Expected: çıktı yok (hata yok)
 
-Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test`
+Run: `cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test`
 Expected: PASS — `# fail 0`
 
 - [ ] **Step 9: Sunucuyu elle doğrula**
 
 ```bash
-cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall \
+cd server && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall \
   SESSION_SECRET=local-dev-secret-at-least-32-chars EMAIL_HASH_PEPPER=local-pepper \
   npm start
 ```
@@ -3655,10 +3672,14 @@ denetler. Cihaz locale'i, saat dilimi veya tanımlayıcısı hiç okunmaz.
 ### Veritabanı
 
 ```bash
-docker run -d --name pitwall-pg -p 5433:5432 \
-  -e POSTGRES_USER=pitwall -e POSTGRES_PASSWORD=pitwall -e POSTGRES_DB=pitwall \
-  postgres:16-alpine
-docker exec pitwall-pg psql -U pitwall -d pitwall -c 'CREATE DATABASE pitwall_test;'
+brew install postgresql@17
+brew services start postgresql@17
+
+PSQL=/opt/homebrew/opt/postgresql@17/bin/psql
+$PSQL -d postgres -c "CREATE ROLE pitwall LOGIN PASSWORD 'pitwall' CREATEDB"
+$PSQL -d postgres -c "CREATE DATABASE pitwall OWNER pitwall"
+$PSQL -d postgres -c "CREATE DATABASE pitwall_test OWNER pitwall"
+
 npm run migrate
 ```
 
@@ -3701,7 +3722,7 @@ npm run gen:ip-region    # RIR delegation dosyalarından /16 IP→region tablosu
 
 - [ ] **Step 5: Tam doğrulama**
 
-Run: `cd server && npm run typecheck && DATABASE_URL=postgres://pitwall:pitwall@localhost:5433/pitwall_test npm test`
+Run: `cd server && npm run typecheck && DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test`
 Expected: PASS — `# fail 0`
 
 - [ ] **Step 6: Commit**
