@@ -8,7 +8,7 @@
     "dev": "RACE_IN_SECONDS=20 CHECKIN_SECONDS=15 npx tsx watch src/index.ts",
     "start": "npx tsx src/index.ts",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "test": "node --import tsx --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "migrate": "npx tsx src/db/migrate.ts",
     "gen:countries": "npx tsx scripts/gen-countries.ts",
     "gen:ip-region": "npx tsx scripts/gen-ip-region.ts"

@@ -1,8 +1,6 @@
 -- 001_identity.sql — hesap kimliği.
 -- Spec: docs/superpowers/specs/2026-09-19-cok-oyunculu-kabuk-tasarim.md §2, §6
 
-create extension if not exists pgcrypto;
-
 create table if not exists users (
   id             uuid        primary key default gen_random_uuid(),
   created_at     timestamptz not null default now(),
