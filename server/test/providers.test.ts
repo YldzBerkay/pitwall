@@ -2,7 +2,7 @@ import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { generateKeyPair, exportJWK, SignJWT, type KeyLike, type JWK } from 'jose';
+import { generateKeyPair, exportJWK, exportSPKI, SignJWT, type KeyLike, type JWK } from 'jose';
 
 import { isSocialProvider, verifySocialToken } from '../src/auth/providers/index.ts';
 import { verifyGoogleToken, __setGoogleJwksUrl } from '../src/auth/providers/google.ts';
@@ -235,6 +235,67 @@ describe('google token verification', () => {
     const line = String(errorLogs[0]?.[0]);
     assert.match(line, /google/);
     assert.ok(!line.includes(token), 'infrastructure-failure log must never contain the token');
+  });
+
+  it('rejects an alg:"none" token and stays quiet (JOSENotSupported must not flood the logs)', async () => {
+    const base64url = (input: string) => Buffer.from(input).toString('base64url');
+    const header = base64url(JSON.stringify({ alg: 'none', typ: 'JWT' }));
+    const now = Math.floor(Date.now() / 1000);
+    const payload = base64url(
+      JSON.stringify({
+        sub: 'google-uid-123',
+        iss: 'https://accounts.google.com',
+        aud: CLIENT_A,
+        email: 'driver@example.com',
+        email_verified: true,
+        iat: now,
+        exp: now + 3600,
+      }),
+    );
+    const noneAlgToken = `${header}.${payload}.`;
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(noneAlgToken));
+
+    assert.equal(result, null);
+    assert.deepEqual(errorLogs, []);
+  });
+
+  it('rejects an HS256 alg-confusion token signed with the RSA public key bytes, and stays quiet', async () => {
+    const { publicKey: confusionPublicKey } = await generateKeyPair('RS256');
+    const spkiPem = await exportSPKI(confusionPublicKey);
+    const secretBytes = new TextEncoder().encode(spkiPem);
+
+    const confusedToken = await new SignJWT({
+      email: 'driver@example.com',
+      email_verified: true,
+    })
+      .setProtectedHeader({ alg: 'HS256', kid: 'test-kid' })
+      .setSubject('google-uid-123')
+      .setIssuer('https://accounts.google.com')
+      .setAudience(CLIENT_A)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(secretBytes);
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(confusedToken));
+
+    assert.equal(result, null);
+    assert.deepEqual(errorLogs, []);
+  });
+
+  it('still logs on a JWKS non-200 (guard against over-quieting the alg-confusion fix)', async () => {
+    const token = await makeToken({}, CLIENT_A);
+    const { url: brokenUrl, server: brokenServer } = await serveStatus(502);
+    __setGoogleJwksUrl(brokenUrl);
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(token));
+
+    __setGoogleJwksUrl(goodJwksUrl);
+    await new Promise((resolve) => brokenServer.close(resolve));
+
+    assert.equal(result, null);
+    assert.equal(errorLogs.length, 1);
+    assert.match(String(errorLogs[0]?.[0]), /google/);
   });
 });
 

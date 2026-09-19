@@ -18,6 +18,13 @@ import { verifyFacebookToken } from './facebook.ts';
  * just by sending garbage — so they must stay quiet: an attacker must not be
  * able to flood the logs by hammering us with invalid tokens.
  *
+ * Also included: `JOSENotSupported`. jose throws this the moment it sees a
+ * JWT header `alg` it won't map to a JWKS key type (e.g. `"none"`, or
+ * `"HS256"` in a classic alg-confusion attempt) — that check runs purely
+ * against attacker-controlled input, before any network call, so anyone can
+ * trigger it at will just by setting a strange `alg`. It is exactly as
+ * routine as a bad signature and must stay quiet for the same reason.
+ *
  * Deliberately NOT included: jose's generic `JOSEError` (e.g. a non-200 JWKS
  * response, or a JWKS body that fails to parse) and `JWKSTimeout` — both mean
  * the identity provider's infrastructure misbehaved, not that the token was
@@ -34,7 +41,8 @@ export function isJwtTokenRejection(error: unknown): boolean {
     error instanceof joseErrors.JWKSInvalid ||
     error instanceof joseErrors.JOSEAlgNotAllowed ||
     error instanceof joseErrors.JWKSNoMatchingKey ||
-    error instanceof joseErrors.JWKSMultipleMatchingKeys
+    error instanceof joseErrors.JWKSMultipleMatchingKeys ||
+    error instanceof joseErrors.JOSENotSupported
   );
 }
 
