@@ -15,6 +15,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { League } from './league.ts';
+import { Router } from './http/router.ts';
+import { registerAuthRoutes } from './auth/routes.ts';
+import { registerIdentityRoutes } from './identity/routes.ts';
+import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
 
@@ -24,6 +28,10 @@ const league = new League({
   intervalMs: env('INTERVAL_SECONDS', 86_400) * 1000,
   firstRaceInMs: env('RACE_IN_SECONDS', 3600) * 1000,
 });
+
+const identityRouter = new Router();
+registerAuthRoutes(identityRouter);
+registerIdentityRoutes(identityRouter);
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
@@ -40,6 +48,8 @@ const readBody = (req: IncomingMessage): Promise<Record<string, unknown>> =>
   });
 
 const server = createServer(async (req, res) => {
+  if (await identityRouter.handle(req, res)) return;
+
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST' });
@@ -83,7 +93,19 @@ league.subscribe((event) => {
 });
 
 const port = env('PORT', 8787);
-server.listen(port, () => {
-  const s = league.publicState();
-  console.log(`[pit-wall] league on :${port} · ${s.track.gp} · lights out ${new Date(s.raceStartAt).toISOString()} · check-in opens ${new Date(s.checkinOpensAt).toISOString()}`);
-});
+
+// We must not serve any request — league or identity — against a
+// half-applied schema, so migrations run to completion before the server
+// starts listening. A migration failure is fatal: log it and exit rather
+// than silently falling back to whatever schema state happens to exist.
+runMigrations()
+  .then(() => {
+    server.listen(port, () => {
+      const s = league.publicState();
+      console.log(`[pit-wall] league on :${port} · ${s.track.gp} · lights out ${new Date(s.raceStartAt).toISOString()} · check-in opens ${new Date(s.checkinOpensAt).toISOString()}`);
+    });
+  })
+  .catch((err: unknown) => {
+    console.error('[pit-wall] migrations failed, refusing to start:', err);
+    process.exit(1);
+  });
