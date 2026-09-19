@@ -27,12 +27,22 @@
 - ✅ Sezon öncesi 3 test günü: mühendis raporu, doğru program +2 stat
 - ✅ Online lig sunucusu (`server/`): aynı motor, sabit saat, WebSocket tur yayını; `/join`, `/weekend`, `/checkin`, `/pit`; **5 dk check-in penceresi**, yapmayan takım yardımcı bota düşer; istemcide Race Week → Online Lig kartı, yarış sunucudan aynı canlı panele akar (`store/slices/leagueSlice.ts`). Kalıcılık yok (Postgres sırada)
 
-## Ekonomi ve sonuç
-- ✅ RP: sponsor ücreti koşulsuz, yarış ödülü, brifing bonusu; **maaşlar** (personel + sürücü) ödemeden düşer
+## Ekonomi ve sonuç — [ekonomi-tasarim.md](superpowers/specs/2026-09-19-ekonomi-tasarim.md)
+- ✅ **Tek ölçek knob'u**: `ECONOMY_SCALE = 1.5` (`data/economy.ts`); sponsor, ödül, maaş, transfer, fabrika ve casusluk fiyatlarının hepsi onu okur. Orta sıra takım yarış başına ~1.100 RP kazanır
+- ✅ RP: sponsor ücreti koşulsuz, yarış ödülü (P1 600 / P11 263), brifing bonusu; **maaşlar** (personel + sürücü) ödemeden düşer. Sezon ödülü 9.000–2.500 (~6 yarışlık gelir)
+- ✅ **Araç merdiveni**: her stat kendi sayacını tutar, `750 × 1.5^tamamlanan` RP ve `6 sa × 1.5^n` (72 sa tavanlı) süre. Adım başına +6 stat. Süre tavanlanır, **fiyat tavanlanmaz** — geç sezonda fren parasal olur
+- ✅ **Üç tezgah, gruplar arası paralel / grup içinde tek**: araç (MOTOR+AERO+GRIP tek tezgahı paylaşır), sürücü (kadronun tamamı tek antrenman koltuğunu paylaşır, 6 sa), istihbarat (casus görevi 24 sa, sonraki görev 48 sa sonra)
+- ✅ **Yarış günü kilidi**: ışıklar söndüğünde tezgahta parça varsa araç sökük yarışır — pişen stat yarı değerinde, DNF riski iki katı. Antrenmandaki sürücü koltuğa oturamaz, yerine kadronun en güçlüsü geçer. İptal yok; 24 saatten uzun geliştirme başlatılırken hesabı gösteren onay çıkar
+- ✅ **Kış reseti**: `55 + (eski − 55) × 0,35 + fabrika × 1,5`. 90'lık araç ~74'e geriler, merdiven sayaçları sıfırlanır, fabrika taşınır. Oyuncu her kış en güçlü rakibin (82,3) altına düşer, sezon sonunda (~90) üstüne çıkar — bir sezonluk ark tekrarlanabilir
+- ✅ **Fabrika canlı**: seviye maliyeti `1.500 × 1,7^(n−1)`, tavan 5. Rüzgar tüneli yükseltme kazancına, üretim maliyet ve süreye, akademi antrenmana, motor lab güvenilirliğe bağlı; her seviye kış tabanına +1,5
+- ✅ **Sürücü ekonomisi**: bedel üstel (`800 × 1,075^(ort−55) + potansiyel × 25`) — ort 95 bir yıldız 14.485 RP, yani 13 yarışlık gelir; biriktirerek alınmaz. Maaş 60–250
+- ✅ **Ticaret**: kadro 2–6, satışta %20 menajer komisyonu. 62/88 bir genci 1.977'ye alıp 76'ya çıkarıp satmak +1.185 RP; tek antrenman koltuğu sezona ~1 çevirme sığdırır, yani ticaret ikincil gelir
 - ✅ Şampiyona tablosu, sezon sonu ödülü ve sıfırlama, sürücü yaşlanması
 - ✅ Hedefler: sıralama ve puan hedefi; rütbe puanı kapısı (tam / 0 / negatif)
 - ✅ Başarımlar: podyum, pole, en hızlı tur, galibiyet, duble, hat-trick, grand slam, clean sweep; zayıf takım çarpanı; 10 rütbe ve **özgün çizgi rütbe ikonları** (`RankIcon`, Skia)
-- ✅ **Altın** (premium): reklam (+1, günde 8) ve paket; ✅ AdMob ödüllü reklam (`react-native-google-mobile-ads`, Google test birimleri) ve mağaza ödemesi (`react-native-iap`, OpenIAP) adaptörleri (`lib/monetization/*`); ödül yalnızca SDK onayında verilir. 🔶 Mağazada ürünlerin (SKU) oluşturulması ve üretim reklam kimlikleri kalan dış iş
+- ✅ **Altın**: sabit kur 1 Altın = 50 RP, hızlandırma saat başı 5 Altın. Paketler 60/180/500 (₺49,99/₺129,99/₺299,99). `goldPrices`'taki her satırın `rpPrices`'ta karşılığı var — **sadece Altın'la açılan hiçbir şey yok**. Altın→RP dönüşümüne günlük 6 Altın tavanı (bedava reklam Altını ekonomiyi şişirmesin)
+- ✅ AdMob ödüllü reklam ve mağaza ödemesi adaptörleri (`lib/monetization/*`); ödül yalnızca SDK onayında verilir. 🔶 Mağazada SKU oluşturma ve üretim reklam kimlikleri kalan dış iş
+- ✅ **Denge kapısı**: `npm run econ` (`scripts/econ-check.ts`) — 65 kontrol, sezon simülasyonu dahil. Yalın kadro sezonu 91/88/90 (ort 89.7), P3, 12 geliştirme ile bitirir; elit kadro 22 puan geride kalır
 
 ## Padok (`src/store/slices/*`, `features/paddock/*`) — [paddock-research.md](paddock-research.md)
 - ✅ Personel: baş mekanik (geliştirme +0…+1.5, güvenilirlik), stratejist (brifing doğruluğu, tahmin bandı, bot keskinliği), pit şefi (pit süresi, hata); 3 koltuk, dolu koltuğa alırken "kimi bırakıyorsun"; pazar günlük
