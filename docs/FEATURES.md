@@ -47,11 +47,11 @@
 ## Padok (`src/store/slices/*`, `features/paddock/*`) — [paddock-research.md](paddock-research.md)
 - ✅ Personel: baş mekanik (geliştirme +0…+1.5, güvenilirlik), stratejist (brifing doğruluğu, tahmin bandı, bot keskinliği), pit şefi (pit süresi, hata); 3 koltuk, dolu koltuğa alırken "kimi bırakıyorsun"; pazar günlük
 - ✅ Her takımın varsayılan sürücü çifti (`teams.ts`, 22 sürücü, tam stat); tüm kadrolar store'da (`rosters`), sezon sonunda herkes yaşlanır ve potansiyeline göre gelişir, motor güncel kadroları okur, Lig ekranı her takımın sürücülerini gösterir
-- ✅ Sürücüler: yaş, potansiyel; 6 saatlik antrenman (gençler hızlı, 33+ gelişmez); günlük pazar, güce göre fiyat (sürücü > tekniker); yedek sürücü (yarı ücret), sakatlıkta koltuğa geçer
+- ✅ Sürücüler: yaş, potansiyel; 6 saatlik antrenman (gençler hızlı, 33+ gelişmez); günlük pazar, üstel fiyat. **Kadro 2-6**: iki asıl koltuk + dört yedek/yatırım (yarı ücret). Yedek hem sakatlıkta hem de asıl sürücü antrenmandayken koltuğa geçer; satışta %20 komisyon
 - ✅ **Sözleşme süreleri**: 1/2/3 sezon; kısa sözleşme ucuz imza + %25 pahalı maaş, uzun sözleşme %45 pahalı imza + %15 ucuz maaş; maaş sözleşmede sabitlenir. Son yılına giren sürücü padokta uyarı verir, uzatma transfer ücreti değil güncel değerinin %45'i kadar imza parası ister; uzatılmazsa kışın takımdan ayrılır ve koltuğa akademiden genç çıkar
 - ✅ **Rakip transferleri**: her kış sözleşmesi biten ve takımının seviyesinin çok altında kalan sürücüler koltuğunu boşaltır; boşalan koltukları güçlü takımdan başlayarak serbest sürücülerden ve zayıf takımların son yılındaki sürücülerinden doldururlar (zincirleme transfer), kalan koltuğa çaylak çıkar; 36+ (34+ ise %40) sözleşmesi biten sürücü emekli olur. Bizim ayrılan sürücümüz de bu havuza girer ve bir rakibe gider. Hepsi sezona tohumlu — ligdeki herkes aynı kışı görür
-- ✅ Casusluk: hedef takım + stat; ücretsiz ajan (25 RP, %55 başarı, %12 yakalanma) / profesyonel (3 Altın, %85, yakalanmaz); 3 günde 1, sonuç 1 gün sonra; başarı → sonraki geliştirme ×1.5, yanlış istihbarat ×0.5, yakalanma → RP cezası + hedefe güç
-- ✅ Garaj gizleme: 1 gün 30 RP, 3 gün 1 Altın, 7 gün 2 Altın; rakip girişimleri engeller
+- ✅ Casusluk: hedef takım + stat; ücretsiz ajan (%55 başarı, %12 yakalanma) / profesyonel (15 Altın ya da 900 RP, %85, yakalanmaz); **rapor 24 gerçek saat sonra**, sonraki görev 48 saat sonra, 120 Altınla hemen alınabilir; başarı → sonraki geliştirme ×1.5, yanlış istihbarat ×0.5, yakalanma → RP cezası + hedefe güç
+- ✅ Garaj gizleme: 1/3/7 gün — 3/8/20 Altın ya da 200/500/1.200 RP; rakip girişimleri engeller
 - ✅ Rakip istihbaratı: ilk 4'teysen %20 deneme, başarılıysa rakip kalıcı güçlenir (`aiBonus`)
 
 ## Ekranlar
