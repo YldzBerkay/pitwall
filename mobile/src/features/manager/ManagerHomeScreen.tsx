@@ -67,7 +67,7 @@ export function ManagerHomeScreen() {
   const training = useGameStore((s) => s.training);
   const staff = useGameStore((s) => s.staff);
   const missions = useGameStore((s) => s.missions);
-  const nextMissionRound = useGameStore((s) => s.nextMissionRound);
+  const nextMissionAt = useGameStore((s) => s.nextMissionAt);
   const setupFn = useGameStore((s) => s.setup);
   const track = trackForRound(round);
   const [carWidth, setCarWidth] = useState(0);
@@ -113,7 +113,7 @@ export function ManagerHomeScreen() {
   if (!training) todos.push({ icon: 'driver', title: 'Sürücü antrenmanı planlanmadı', detail: '6 saatlik bir antrenman başlat; genç sürücüler hızlı gelişir.', route: '/(tabs)/paddock' });
   const emptySeats = (['mechanic', 'strategist', 'pitCrew'] as const).filter((r) => !staff[r]).length;
   if (emptySeats > 0) todos.push({ icon: 'mechanic', title: `${emptySeats} personel kadrosu boş`, detail: 'Mekanik, stratejist ve pit şefi yarış sonucunu doğrudan etkiler.', route: '/(tabs)/paddock' });
-  if (!missions.some((m) => !m.outcome) && round >= nextMissionRound()) todos.push({ icon: 'spy', title: 'Ajan gönderilebilir', detail: 'Bir rakibin güçlü olduğu alanı hedefle; başarı sonraki yükseltmeni ×1,5 yapar.', route: '/(tabs)/paddock' });
+  if (!missions.some((m) => !m.outcome) && now >= nextMissionAt()) todos.push({ icon: 'spy', title: 'Ajan gönderilebilir', detail: 'Bir rakibin güçlü olduğu alanı hedefle; başarı sonraki yükseltmeni ×1,5 yapar.', route: '/(tabs)/paddock' });
   if (build && buildDone) {
     todos.push({ icon: 'development', title: 'Yeni parça hazır', detail: 'Fabrikadaki parçayı araca tak; değer şimdi yükselir.', route: '/(tabs)/development', urgent: true });
   } else if (build) {

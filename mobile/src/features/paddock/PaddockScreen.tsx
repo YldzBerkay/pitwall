@@ -9,7 +9,8 @@ import { useGameStore } from '@/store/gameStore';
 import { Chip } from '@/features/raceweek/shared';
 import { ADS_PER_DAY, goldPacks, goldPrices, rpPrices } from '@/data/economy';
 import { hiringFee, staffRoles, type StaffRole } from '@/data/staff';
-import { SPY_COOLDOWN_ROUNDS, agentProfiles, type AgentKind } from '@/data/espionage';
+import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS, agentProfiles, type AgentKind } from '@/data/espionage';
+import { formatDuration } from '@/data/carCustomisation';
 import {
   contractTerms,
   contractWage,
@@ -556,7 +557,9 @@ function IntelSection() {
   const boosts = useGameStore((s) => s.upgradeBoosts);
   const news = useGameStore((s) => s.intelNews);
   const round = useGameStore((s) => s.round);
-  const nextRoundFn = useGameStore((s) => s.nextMissionRound);
+  const nextMissionAtFn = useGameStore((s) => s.nextMissionAt);
+  const skipMission = useGameStore((s) => s.skipMission);
+  const skipMissionCost = useGameStore((s) => s.skipMissionCost);
   const startMission = useGameStore((s) => s.startMission);
   const hideGarage = useGameStore((s) => s.hideGarage);
   const isHiddenFn = useGameStore((s) => s.isHidden);
@@ -568,7 +571,13 @@ function IntelSection() {
   const [message, setMessage] = useState<string | undefined>(undefined);
 
   const pending = missions.find((m) => !m.outcome);
-  const nextRound = nextRoundFn();
+  const nextMissionAt = nextMissionAtFn();
+  // Geri sayımlar her dakika tazelenir; saniye hassasiyeti gerekmiyor.
+  const [spyNow, setSpyNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setSpyNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const hidden = isHiddenFn();
   const profile = agentProfiles[agent];
 
@@ -576,7 +585,7 @@ function IntelSection() {
     const r = startMission(target, stat, agent);
     const text: Record<string, string> = {
       ok: 'Ajan yola çıktı. Rapor bir gün sonra.',
-      cooldown: `Bekleme süresi: ${nextRound}. turdan itibaren.`,
+      cooldown: `Bekleme süresi: ${formatDuration(nextMissionAt - Date.now())} kaldı.`,
       noGold: 'Yeterli altın yok.',
       noRp: 'Yeterli RP yok (25 RP).',
       pending: 'Zaten sahada bir ajan var.',
@@ -599,7 +608,7 @@ function IntelSection() {
               Casusluk Görevi
             </AppText>
             <AppText variant="labelSmall" color={colors.textTertiary} uppercase>
-              {SPY_COOLDOWN_ROUNDS} günde 1 · sonuç 1 gün sonra
+              Rapor {SPY_RESOLVE_MS / 3_600_000} saatte gelir · sonraki görev {SPY_COOLDOWN_MS / 3_600_000} saat sonra
             </AppText>
           </View>
           <AppText variant="labelSmall" color={colors.textTertiary} uppercase>
@@ -635,10 +644,23 @@ function IntelSection() {
             Başarı %{Math.round(profile.success * 100)} · yakalanma %{Math.round(profile.caught * 100)} · yanlış istihbarat %{Math.round(profile.badIntel * 100)}. Başarı: {teamByKey(target).short} o statta bizden güçlüyse bir sonraki {stat.toUpperCase()} geliştirmesi ×1.5. Yakalanma: RP cezası ve hedefe bedava güç.
           </AppText>
           <GlassButton
-            label={pending ? `Ajan sahada · rapor ${pending.resolvesRound}. tur` : round < nextRound ? `Bekleme · ${nextRound}. tur` : 'Ajanı Gönder'}
-            disabled={Boolean(pending) || round < nextRound || (agent === 'premium' && gold < goldPrices.premiumAgent)}
+            label={
+              pending
+                ? `Ajan sahada · rapor ${formatDuration(pending.endsAt - spyNow)}`
+                : spyNow < nextMissionAt
+                  ? `Bekleme · ${formatDuration(nextMissionAt - spyNow)}`
+                  : 'Ajanı Gönder'
+            }
+            disabled={Boolean(pending) || spyNow < nextMissionAt || (agent === 'premium' && gold < goldPrices.premiumAgent)}
             onPress={onStart}
           />
+          {pending && (
+            <GlassButton
+              label={`Raporu hemen al · ${skipMissionCost()} Altın`}
+              disabled={gold < skipMissionCost()}
+              onPress={() => { haptic.success(); skipMission(); }}
+            />
+          )}
           {message && (
             <AppText variant="labelSmall" color={colors.accentLime}>
               {message}

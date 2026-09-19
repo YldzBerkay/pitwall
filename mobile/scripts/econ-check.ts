@@ -11,6 +11,7 @@ import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPac
 import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
 import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
+import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS } from '../src/data/espionage';
 import { wageFor } from '../src/data/staff';
 import { SQUAD_MAX, SQUAD_MIN, driverFee, driverWage, saleValue } from '../src/data/driverMarket';
 import { UPGRADE_GAIN, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
@@ -57,6 +58,11 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
+
+console.log('\n── İstihbarat ──');
+check('rapor 24 sa', SPY_RESOLVE_MS === 24 * 3600_000, `${SPY_RESOLVE_MS / 3600_000} sa`);
+check('bekleme 48 sa', SPY_COOLDOWN_MS === 48 * 3600_000, `${SPY_COOLDOWN_MS / 3600_000} sa`);
+check('rapor atlama 120 Altın', skipCostGold(SPY_RESOLVE_MS) === 120, String(skipCostGold(SPY_RESOLVE_MS)));
 
 console.log('\n── Kadro ──');
 check('kadro tabanı 2', SQUAD_MIN === 2, String(SQUAD_MIN));

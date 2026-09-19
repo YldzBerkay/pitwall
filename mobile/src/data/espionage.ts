@@ -31,10 +31,17 @@ export const agentProfiles: Record<AgentKind, AgentProfile> = {
   premium: { success: 0.85, caught: 0, badIntel: 0.02 },
 };
 
-/** Days (rounds) between missions. */
-export const SPY_COOLDOWN_ROUNDS = 3;
-/** The mission reports back this many rounds after it starts. */
-export const SPY_RESOLVE_ROUNDS = 1;
+/**
+ * İstihbarat gerçek zamanlı çalışır — üçüncü tezgah (spec §5A).
+ *
+ * Eskiden round cinsindendi, yani takvime bağlıydı; artık saate bağlı.
+ * Bekleme, eski "3 raunda bir" seyrekliğini takvimden bağımsız korur.
+ * Sonuç tohumu hâlâ `startedRound` üzerinden üretilir: oyuncu cihaz saatini
+ * ileri alarak sonucu çeviremez, yalnızca bekleme süresini kısaltabilir.
+ */
+export const SPY_RESOLVE_MS = 24 * 60 * 60 * 1000;
+/** Biten görevden sonra bu kadar süre yeni görev açılmaz. */
+export const SPY_COOLDOWN_MS = 48 * 60 * 60 * 1000;
 /** Multiplier on the next upgrade of the spied stat. */
 export const SPY_BOOST = 1.5;
 /** Multiplier when the intelligence was wrong. */
@@ -50,8 +57,12 @@ export interface SpyMission {
   targetTeam: string;
   stat: StatKey;
   agent: AgentKind;
+  /** Tohum bunun üzerinden üretilir — saat değiştirerek sonuç çevrilemesin. */
   startedRound: number;
-  resolvesRound: number;
+  /** Görevin başladığı an. */
+  startedAt: number;
+  /** Raporun düşeceği an. */
+  endsAt: number;
   outcome?: MissionOutcome;
 }
 

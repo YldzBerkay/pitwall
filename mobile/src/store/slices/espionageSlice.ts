@@ -1,12 +1,12 @@
-import { goldPrices, rpPrices } from '@/data/economy';
+import { goldPrices, rpPrices, skipCostGold } from '@/data/economy';
 import {
   BAD_INTEL_FACTOR,
   CAUGHT_FINE_MIN,
   CAUGHT_FINE_SHARE,
   RIVAL_GAIN,
   SPY_BOOST,
-  SPY_COOLDOWN_ROUNDS,
-  SPY_RESOLVE_ROUNDS,
+  SPY_COOLDOWN_MS,
+  SPY_RESOLVE_MS,
   outcomeText,
   resolveMission,
   rivalAttempt,
@@ -36,8 +36,12 @@ export interface EspionageSlice {
   aiBonus: AiBonus;
   /** Latest intelligence headlines, newest first. */
   intelNews: string[];
-  /** Round from which a new mission may start. */
-  nextMissionRound: () => number;
+  /** Yeni görevin açılabileceği an; şimdi ya da öncesiyse serbest. */
+  nextMissionAt: () => number;
+  /** Bekleyen raporu hemen almanın Altın fiyatı; görev yoksa 0. */
+  skipMissionCost: () => number;
+  /** Kalan süreyi Altınla satın alır ve raporu hemen çözer. */
+  skipMission: () => boolean;
   startMission: (targetTeam: string, stat: StatKey, agent: AgentKind) => SpyStart;
   hideGarage: (days: HideDays) => boolean;
   isHidden: () => boolean;
@@ -56,15 +60,34 @@ export const createEspionageSlice: SliceCreator<EspionageSlice> = (set, get) => 
   aiBonus: {},
   intelNews: [],
 
-  nextMissionRound: () => {
+  nextMissionAt: () => {
     const last = get().missions[get().missions.length - 1];
-    return last ? last.startedRound + SPY_COOLDOWN_ROUNDS : 0;
+    return last?.outcome ? last.endsAt + SPY_COOLDOWN_MS : 0;
+  },
+
+  skipMissionCost: () => {
+    const pending = get().missions.find((m) => !m.outcome);
+    return pending ? skipCostGold(pending.endsAt - Date.now()) : 0;
+  },
+
+  skipMission: () => {
+    const state = get();
+    const pending = state.missions.find((m) => !m.outcome);
+    if (!pending) return false;
+    const cost = state.skipMissionCost();
+    // İstihbaratın değeri zamanında gelmesidir: bir sonraki geliştirmeyi
+    // yönlendiremeyecek kadar geç gelen rapor işe yaramaz. Atlama, yarışa
+    // yetişmeyecek bir raporu kurtarır — pahalı olması bundan.
+    if (cost > 0 && !state.spendGold(cost)) return false;
+    set((s) => ({ missions: s.missions.map((m) => (m === pending ? { ...m, endsAt: Date.now() } : m)) }));
+    get().resolveIntel();
+    return true;
   },
 
   startMission: (targetTeam, stat, agent) => {
     const state = get();
     if (state.missions.some((m) => !m.outcome)) return 'pending';
-    if (state.round < state.nextMissionRound()) return 'cooldown';
+    if (Date.now() < state.nextMissionAt()) return 'cooldown';
     if (agent === 'premium') {
       if (!state.spendGold(goldPrices.premiumAgent)) return 'noGold';
     } else {
@@ -77,7 +100,8 @@ export const createEspionageSlice: SliceCreator<EspionageSlice> = (set, get) => 
       stat,
       agent,
       startedRound: state.round,
-      resolvesRound: state.round + SPY_RESOLVE_ROUNDS,
+      startedAt: Date.now(),
+      endsAt: Date.now() + SPY_RESOLVE_MS,
     };
     set((s) => ({ missions: [...s.missions, mission] }));
     return 'ok';
@@ -112,7 +136,7 @@ export const createEspionageSlice: SliceCreator<EspionageSlice> = (set, get) => 
     const own: Record<StatKey, number> = { motor: value('MOTOR'), aero: value('AERO'), grip: value('GRIP') };
 
     const missions = state.missions.map((m) => {
-      if (m.outcome || state.round < m.resolvesRound) return m;
+      if (m.outcome || Date.now() < m.endsAt) return m;
       const target = teamByKey(m.targetTeam);
       // AI cars have one strength for every stat; the player's own sheet is the comparison.
       const targetStat = aiStrength(target, state.round) + (aiBonus[target.key] ?? 0);
