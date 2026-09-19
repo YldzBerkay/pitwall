@@ -150,7 +150,10 @@ seviyeleriyle işler; yoksa oyuncu iki sezonda ligi terk eder.
 Reset sırasında:
 - Stat merdiveni sayaçları (`upgradeLadder`) sıfırlanır.
 - Fabrika seviyeleri **taşınır**. Kalıcı ilerleme oradadır.
-- Devam eden `CarBuild` iptal edilir, parası iade edilir.
+- Devam eden `CarBuild` iptal edilir ve parası **iade edilir**. Bu, §3.2'deki
+  "iptal yok, iade yok" kuralının tek istisnasıdır: sezon sınırında biten bir
+  geliştirmenin statı zaten resetle silineceği için oyuncu parasını boşa
+  vermemelidir. Antrenman ve casus görevleri de aynı şekilde iptal + iade olur.
 
 ---
 
