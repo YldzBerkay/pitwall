@@ -6,9 +6,53 @@
  * the identity inside it, then mint our own session JWT (see ../jwt.ts) and
  * discard the provider token.
  */
+import { errors as joseErrors } from 'jose';
 import { verifyGoogleToken } from './google.ts';
 import { verifyAppleToken } from './apple.ts';
 import { verifyFacebookToken } from './facebook.ts';
+
+/**
+ * True when `error` is an ordinary, expected JWT rejection (bad signature,
+ * wrong audience/issuer, expired, malformed, unknown key id) rather than an
+ * infrastructure problem. These are routine — anyone can trigger one at will
+ * just by sending garbage — so they must stay quiet: an attacker must not be
+ * able to flood the logs by hammering us with invalid tokens.
+ *
+ * Deliberately NOT included: jose's generic `JOSEError` (e.g. a non-200 JWKS
+ * response, or a JWKS body that fails to parse) and `JWKSTimeout` — both mean
+ * the identity provider's infrastructure misbehaved, not that the token was
+ * bad, and those must be logged (see `logProviderInfraFailure`).
+ */
+export function isJwtTokenRejection(error: unknown): boolean {
+  return (
+    error instanceof joseErrors.JWTClaimValidationFailed ||
+    error instanceof joseErrors.JWTExpired ||
+    error instanceof joseErrors.JWSSignatureVerificationFailed ||
+    error instanceof joseErrors.JWTInvalid ||
+    error instanceof joseErrors.JWSInvalid ||
+    error instanceof joseErrors.JWKInvalid ||
+    error instanceof joseErrors.JWKSInvalid ||
+    error instanceof joseErrors.JOSEAlgNotAllowed ||
+    error instanceof joseErrors.JWKSNoMatchingKey ||
+    error instanceof joseErrors.JWKSMultipleMatchingKeys
+  );
+}
+
+/**
+ * Logs an infrastructure failure (JWKS/Graph endpoint unreachable, timed
+ * out, returned a non-2xx status, or sent a body we could not parse) so an
+ * operator can tell "the provider is down" apart from "someone is sending
+ * forged tokens" — both otherwise collapse to the same `null` return.
+ *
+ * Never pass the token or an email address into `error` — only short,
+ * fixed messages (a status code, a timeout, a network error name) belong
+ * here. This is deliberately `console.error` (loud): infrastructure
+ * failures are rare and actionable, unlike token rejections.
+ */
+export function logProviderInfraFailure(provider: SocialProvider, error: unknown): void {
+  const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  console.error(`[auth] ${provider} token verification hit an infrastructure problem: ${reason}`);
+}
 
 export interface VerifiedIdentity {
   providerUid: string;

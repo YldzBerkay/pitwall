@@ -9,6 +9,38 @@ import { verifyGoogleToken, __setGoogleJwksUrl } from '../src/auth/providers/goo
 import { verifyAppleToken, __setAppleJwksUrl } from '../src/auth/providers/apple.ts';
 import { verifyFacebookToken } from '../src/auth/providers/facebook.ts';
 
+/**
+ * Runs `fn` with `console.error` replaced by a recorder, restoring the
+ * original in a `finally` no matter what `fn` does. Used to assert the
+ * infrastructure-failure / token-rejection log split (Concern 1).
+ */
+async function withCapturedErrors<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; errorLogs: unknown[][] }> {
+  const original = console.error;
+  const errorLogs: unknown[][] = [];
+  console.error = (...args: unknown[]) => {
+    errorLogs.push(args);
+  };
+  try {
+    const result = await fn();
+    return { result, errorLogs };
+  } finally {
+    console.error = original;
+  }
+}
+
+/** Starts an HTTP server that answers every request with `status`, on a random port. */
+async function serveStatus(status: number): Promise<{ url: string; server: Server }> {
+  const server = createServer((_req, res) => {
+    res.writeHead(status);
+    res.end('not ok');
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const { port } = server.address() as AddressInfo;
+  return { url: `http://127.0.0.1:${port}/jwks`, server };
+}
+
 /** Serves a JWKS containing the given public JWK under a fixed kid, on a random port. */
 async function serveJwks(jwk: JWK): Promise<{ url: string; server: Server }> {
   const server = createServer((_req, res) => {
@@ -73,6 +105,7 @@ describe('verifySocialToken fail-closed with no env configured', () => {
 describe('google token verification', () => {
   let jwksServer: Server;
   let privateKey: KeyLike;
+  let goodJwksUrl: string;
   const CLIENT_A = 'client-a.apps.googleusercontent.com';
   const CLIENT_B = 'client-b.apps.googleusercontent.com';
 
@@ -82,6 +115,7 @@ describe('google token verification', () => {
     const jwk = await exportJWK(publicKey);
     const { url, server } = await serveJwks(jwk);
     jwksServer = server;
+    goodJwksUrl = url;
     __setGoogleJwksUrl(url);
     process.env.GOOGLE_CLIENT_IDS = `${CLIENT_A},${CLIENT_B}`;
   });
@@ -178,11 +212,36 @@ describe('google token verification', () => {
     process.env.GOOGLE_CLIENT_IDS = saved;
     assert.equal(result, null);
   });
+
+  it('stays quiet (no console.error) on an ordinary token rejection', async () => {
+    const token = await makeToken({}, 'attacker-app.apps.googleusercontent.com');
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(token));
+    assert.equal(result, null);
+    assert.deepEqual(errorLogs, []);
+  });
+
+  it('logs to console.error on a JWKS infrastructure failure (non-200), without leaking the token', async () => {
+    const token = await makeToken({}, CLIENT_A);
+    const { url: brokenUrl, server: brokenServer } = await serveStatus(500);
+    __setGoogleJwksUrl(brokenUrl);
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyGoogleToken(token));
+
+    __setGoogleJwksUrl(goodJwksUrl);
+    await new Promise((resolve) => brokenServer.close(resolve));
+
+    assert.equal(result, null);
+    assert.equal(errorLogs.length, 1);
+    const line = String(errorLogs[0]?.[0]);
+    assert.match(line, /google/);
+    assert.ok(!line.includes(token), 'infrastructure-failure log must never contain the token');
+  });
 });
 
 describe('apple token verification', () => {
   let jwksServer: Server;
   let privateKey: KeyLike;
+  let goodJwksUrl: string;
   const BUNDLE_A = 'com.pitwall.app';
 
   before(async () => {
@@ -191,6 +250,7 @@ describe('apple token verification', () => {
     const jwk = await exportJWK(publicKey);
     const { url, server } = await serveJwks(jwk);
     jwksServer = server;
+    goodJwksUrl = url;
     __setAppleJwksUrl(url);
     process.env.APPLE_BUNDLE_IDS = BUNDLE_A;
   });
@@ -245,6 +305,30 @@ describe('apple token verification', () => {
       .sign(privateKey);
     const result = await verifyAppleToken(token);
     assert.deepEqual(result, { providerUid: 'apple-uid-str', email: 'a@example.com' });
+  });
+
+  it('stays quiet (no console.error) on an ordinary token rejection', async () => {
+    const token = await baseToken('com.attacker.app').sign(privateKey);
+    const { result, errorLogs } = await withCapturedErrors(() => verifyAppleToken(token));
+    assert.equal(result, null);
+    assert.deepEqual(errorLogs, []);
+  });
+
+  it('logs to console.error on a JWKS infrastructure failure (non-200), without leaking the token', async () => {
+    const token = await baseToken().sign(privateKey);
+    const { url: brokenUrl, server: brokenServer } = await serveStatus(503);
+    __setAppleJwksUrl(brokenUrl);
+
+    const { result, errorLogs } = await withCapturedErrors(() => verifyAppleToken(token));
+
+    __setAppleJwksUrl(goodJwksUrl);
+    await new Promise((resolve) => brokenServer.close(resolve));
+
+    assert.equal(result, null);
+    assert.equal(errorLogs.length, 1);
+    const line = String(errorLogs[0]?.[0]);
+    assert.match(line, /apple/);
+    assert.ok(!line.includes(token), 'infrastructure-failure log must never contain the token');
   });
 });
 
@@ -344,6 +428,61 @@ describe('facebook token verification', () => {
     process.env.FACEBOOK_APP_ID = savedId;
     process.env.FACEBOOK_APP_SECRET = savedSecret;
     assert.equal(result, null);
+  });
+
+  it('stays quiet (no console.error) on an ordinary token rejection (wrong app)', async () => {
+    stubFetch((url) => {
+      if (url.includes('debug_token')) {
+        return { status: 200, body: { data: { is_valid: true, app_id: 'someone-elses-app', user_id: 'fb-uid-1' } } };
+      }
+      return { status: 200, body: { id: 'fb-uid-1', email: 'driver@example.com' } };
+    });
+    const { result, errorLogs } = await withCapturedErrors(() => verifyFacebookToken('sometoken'));
+    assert.equal(result, null);
+    assert.deepEqual(errorLogs, []);
+  });
+
+  it('logs to console.error on a Graph infrastructure failure (non-200 from debug_token), without leaking the token', async () => {
+    const token = 'super-secret-token-value';
+    stubFetch(() => ({ status: 500, body: { error: 'boom' } }));
+    const { result, errorLogs } = await withCapturedErrors(() => verifyFacebookToken(token));
+    assert.equal(result, null);
+    assert.equal(errorLogs.length, 1);
+    const line = String(errorLogs[0]?.[0]);
+    assert.match(line, /facebook/);
+    assert.ok(!line.includes(token), 'infrastructure-failure log must never contain the token');
+  });
+
+  it('returns null quickly (without hanging) when the Graph call never responds, and logs it as infrastructure', async () => {
+    const originalAbortTimeout = AbortSignal.timeout;
+    // Speed up the test rather than waiting out the real ~4s production
+    // budget: shrink every AbortSignal.timeout(ms) call to 20ms. This still
+    // exercises the real abort wiring in facebook.ts, just faster.
+    (AbortSignal as unknown as { timeout: typeof AbortSignal.timeout }).timeout = () =>
+      originalAbortTimeout(20);
+
+    globalThis.fetch = ((_input: unknown, init?: { signal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return; // never settles — the test would hang if the code forgot the signal
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }) as typeof fetch;
+
+    const start = Date.now();
+    const { result, errorLogs } = await withCapturedErrors(() => verifyFacebookToken('sometoken'));
+    const elapsed = Date.now() - start;
+
+    AbortSignal.timeout = originalAbortTimeout;
+
+    assert.equal(result, null);
+    assert.ok(elapsed < 2000, `expected the abort to resolve quickly, took ${elapsed}ms`);
+    assert.equal(errorLogs.length, 1);
+    assert.match(String(errorLogs[0]?.[0]), /facebook/);
   });
 });
 
