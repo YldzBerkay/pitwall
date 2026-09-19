@@ -31,8 +31,8 @@ export const AmbientBackground = memo(function AmbientBackground() {
     <Canvas style={[StyleSheet.absoluteFill, { backgroundColor: colors.bgDeepSpace }]}>
       <Group>
         <Blur blur={90} />
-        <Circle cx={blueX} cy={blueY} r={width * 0.5} color="#16205544" />
-        <Circle cx={purpleX} cy={purpleY} r={width * 0.45} color="#2A163F44" />
+        <Circle cx={blueX} cy={blueY} r={width * 0.5} color="#2A2C1033" />
+        <Circle cx={purpleX} cy={purpleY} r={width * 0.45} color="#241A3344" />
       </Group>
     </Canvas>
   );

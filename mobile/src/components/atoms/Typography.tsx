@@ -21,12 +21,18 @@ export const AppText = memo(function AppText({
   children,
   ...rest
 }: AppTextProps) {
+  // iOS `textTransform` follows the system locale and turns "i" into "I"
+  // (dotless) for Turkish words; do it ourselves with the Turkish rules.
+  const upper = (c: unknown): unknown =>
+    typeof c === 'string' ? c.toLocaleUpperCase('tr-TR') : Array.isArray(c) ? c.map(upper) : c;
+  const plain = typeof children === 'string' || (Array.isArray(children) && children.every((c) => typeof c === 'string' || typeof c === 'number'));
+  const content = uppercase && plain ? (upper(children) as typeof children) : children;
   return (
     <Text
-      style={[typeScale[variant], { color }, uppercase && { textTransform: 'uppercase' }, style]}
+      style={[typeScale[variant], { color }, uppercase && !plain && { textTransform: 'uppercase' }, style]}
       {...rest}
     >
-      {children}
+      {content}
     </Text>
   );
 });

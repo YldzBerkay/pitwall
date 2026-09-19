@@ -1,51 +1,58 @@
 /**
- * Pit Wall — refined "Deep Space" dark theme.
- * Premium, restrained: near-black navy canvas, solid elevated surfaces,
- * ONE confident blue accent. Green / amber / red appear only to carry meaning.
+ * Pit Wall — "Night Circuit" dark theme (landscape shell reference).
+ * Near-black graphite canvas, solid elevated panels, ONE loud acid-lime
+ * accent with a violet support. Teal / amber / pink appear only to carry
+ * meaning (fit, warnings, danger).
  */
 export const colors = {
-  // Backgrounds — near-black navy (never pure black)
-  bgDeepSpace: '#0A0E17',
-  bgElevated: '#141A28',
-  bgSurface2: '#1C2434',
-  bgSidebar: 'rgba(15, 20, 33, 0.92)',
+  // Backgrounds — graphite, never pure black
+  bgDeepSpace: '#0B0C0F',
+  bgElevated: '#17181C',
+  bgSurface2: '#1F2024',
+  bgSidebar: 'rgba(23, 24, 28, 0.92)',
 
-  // Surface tokens (kept named "glass" for compatibility; now solid panels)
-  glass: '#141A28',
-  glassStrong: '#1C2434',
-  glassPressed: '#232E43',
+  // Surface tokens (kept named "glass" for compatibility; solid panels)
+  glass: '#17181C',
+  glassStrong: '#1F2024',
+  glassPressed: '#26272C',
 
-  // Single accent (blue) — the only decorative colour
-  accentBlue: '#4C82F7',
-  accentBlueLight: '#9CBBFF',
-  accentSoft: 'rgba(76, 130, 247, 0.15)',
+  // Primary accent — acid lime; violet as the gradient partner
+  accentLime: '#D4FF3D',
+  accentViolet: '#9B5CFF',
+  accentSoft: 'rgba(212, 255, 61, 0.12)',
+  /** Text/icon color placed ON an acid-lime surface. */
+  onAccent: '#14151A',
 
-  // Semantic only (muted, meaning-bearing) — cyan/purple fold into the accent
-  electricCyan: '#4C82F7',
-  cyberPurple: '#9CBBFF',
-  matrixGreen: '#3FCF8E',
-  neonCoral: '#F0655E',
+  // Back-compat aliases (old names used across components)
+  accentBlue: '#D4FF3D',
+  accentBlueLight: '#D4FF3D',
+  electricCyan: '#2DD4BF',
+  cyberPurple: '#9B5CFF',
+  matrixGreen: '#2DD4BF',
+  neonCoral: '#FF3B5C',
   solarAmber: '#E3B341',
 
   // Text
-  textPrimary: '#EEF2F9',
-  textSecondary: '#9EABC6',
-  textTertiary: '#647192',
+  textPrimary: '#F5F6F2',
+  textSecondary: '#9A9C9F',
+  textTertiary: '#5C5E63',
 
   // Borders / hairlines
-  borderDefault: 'rgba(255, 255, 255, 0.07)',
-  borderActive: 'rgba(76, 130, 247, 0.55)',
+  borderDefault: 'rgba(255, 255, 255, 0.08)',
+  borderActive: 'rgba(212, 255, 61, 0.5)',
   borderGlassTop: 'rgba(255, 255, 255, 0.10)',
 } as const;
 
 export const gradients = {
-  accent: ['#4C82F7', '#9CBBFF'] as const,
-  cyan: ['#4C82F7', '#9CBBFF'] as const,
-  coral: ['#F0655E', '#E3B341'] as const,
-  green: ['#3FCF8E', '#4C82F7'] as const,
-  purple: ['#9CBBFF', '#4C82F7'] as const,
-  amber: ['#E3B341', '#F0655E'] as const,
-  ambient: ['#0E1330', '#0A0E17', '#120C24'] as const,
+  accent: ['#D4FF3D', '#9B5CFF'] as const,
+  cyan: ['#D4FF3D', '#9B5CFF'] as const,
+  coral: ['#FF3B5C', '#E3B341'] as const,
+  green: ['#2DD4BF', '#D4FF3D'] as const,
+  purple: ['#9B5CFF', '#D4FF3D'] as const,
+  amber: ['#E3B341', '#FF3B5C'] as const,
+  /** Setup-bias track: aero (pink) → mechanical (lime). */
+  bias: ['#FF3B5C', '#D4FF3D'] as const,
+  ambient: ['#14150F', '#0B0C0F', '#141019'] as const,
 } as const;
 
 export type ColorToken = keyof typeof colors;

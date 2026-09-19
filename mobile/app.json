@@ -3,21 +3,24 @@
     "name": "Pit Wall",
     "slug": "pit-wall",
     "version": "0.1.0",
-    "orientation": "landscape",
+    "orientation": "default",
     "scheme": "pitwall",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",
-    "backgroundColor": "#090B14",
-    "assetBundlePatterns": ["**/*"],
+    "backgroundColor": "#0B0C0F",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
-      "userInterfaceStyle": "dark"
+      "userInterfaceStyle": "dark",
+      "bundleIdentifier": "com.yberkayarda.pit-wall"
     },
     "android": {
       "userInterfaceStyle": "dark",
       "adaptiveIcon": {
-        "backgroundColor": "#090B14",
+        "backgroundColor": "#0B0C0F",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false
@@ -26,7 +29,19 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
-    "plugins": ["expo-router", "expo-font"],
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-asset",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+          "userTrackingUsageDescription": "Reklamları kişiselleştirmek için kullanılır."
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     }

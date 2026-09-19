@@ -37,10 +37,10 @@ export const GlassButton = memo(function GlassButton({
 
   const labelColor =
     variant === 'secondary' || variant === 'outline'
-      ? colors.accentBlueLight
+      ? colors.accentLime
       : variant === 'ghost'
         ? colors.textSecondary
-        : colors.textPrimary;
+        : colors.onAccent;
 
   return (
     <AnimatedPressable
@@ -56,9 +56,9 @@ export const GlassButton = memo(function GlassButton({
         onPress?.();
       }}
       className={`h-[50px] items-center justify-center overflow-hidden rounded-md border px-6 ${
-        variant === 'outline' ? 'border-border-active' : 'border-border-default'
+        variant === 'outline' || variant === 'primary' ? 'border-border-active' : 'border-border-default'
       } ${disabled ? 'opacity-40' : ''} ${className ?? ''}`}
-      style={[variant === 'primary' && glow.blue, animatedStyle, style]}
+      style={[variant === 'primary' && glow.lime, animatedStyle, style]}
     >
       {variant === 'primary' && (
         <LinearGradient

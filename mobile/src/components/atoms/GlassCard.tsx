@@ -7,6 +7,8 @@ interface GlassCardProps {
   padded?: boolean;
   className?: string;
   style?: StyleProp<ViewStyle>;
+  /** Style for the inner content wrapper (e.g. `gap` between children). */
+  contentStyle?: StyleProp<ViewStyle>;
 }
 
 /**
@@ -19,6 +21,7 @@ export const GlassCard = memo(function GlassCard({
   padded = true,
   className,
   style,
+  contentStyle,
   children,
 }: PropsWithChildren<GlassCardProps>) {
   return (
@@ -29,7 +32,9 @@ export const GlassCard = memo(function GlassCard({
       style={[styles.shadow, active && styles.activeGlow, style]}
     >
       <View className="absolute left-0 right-0 top-0 h-px bg-border-top" />
-      <View className={padded ? 'p-5' : ''}>{children}</View>
+      <View className={padded ? 'p-5' : ''} style={contentStyle}>
+        {children}
+      </View>
     </View>
   );
 });

@@ -1,8 +1,7 @@
 import { View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, layout, spacing } from '@/theme';
+import { colors, spacing } from '@/theme';
 import { AppText, GlassCard, Icon, NeonStatChip, type IconName } from '@/components/atoms';
-import { useGameStore } from '@/store/gameStore';
+import { useShellLayout } from '@/lib/useShellLayout';
 
 interface PlaceholderScreenProps {
   title: string;
@@ -13,17 +12,15 @@ interface PlaceholderScreenProps {
 
 /** Design-system-consistent placeholder for not-yet-built feature screens. */
 export function PlaceholderScreen({ title, subtitle, note, icon = 'bolt' }: PlaceholderScreenProps) {
-  const insets = useSafeAreaInsets();
-  const navCollapsed = useGameStore((s) => s.navCollapsed);
-  const navWidth = navCollapsed ? layout.navCollapsed : layout.navExpanded;
+  const shell = useShellLayout();
   return (
     <View
       className="flex-1 justify-center"
       style={{
-        paddingLeft: navWidth + insets.left + spacing.xxl,
-        paddingRight: insets.right + spacing.xxl,
-        paddingTop: layout.headerHeight + insets.top + spacing.xl,
-        paddingBottom: insets.bottom + spacing.xl,
+        paddingLeft: shell.contentPaddingLeft + spacing.sm,
+        paddingRight: shell.contentPaddingRight + spacing.sm,
+        paddingTop: shell.contentTop,
+        paddingBottom: shell.contentPaddingBottom,
       }}
     >
       <View className="max-w-[520px]">
@@ -36,7 +33,7 @@ export function PlaceholderScreen({ title, subtitle, note, icon = 'bolt' }: Plac
         <AppText variant="body" color={colors.textSecondary} className="mb-6">
           {subtitle}
         </AppText>
-        <GlassCard active className="gap-3">
+        <GlassCard active contentStyle={{ gap: spacing.md }}>
           <NeonStatChip value="COMING SOON" tone="info" />
           <AppText variant="body" color={colors.textSecondary}>
             {note}

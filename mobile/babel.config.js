@@ -5,7 +5,11 @@ module.exports = function (api) {
       ['babel-preset-expo', { jsxImportSource: 'nativewind' }],
       'nativewind/babel',
     ],
-    // react-native-worklets/plugin must be listed last (Reanimated v4).
-    plugins: ['react-native-worklets/plugin'],
+    plugins: [
+      // react-native-filament's worklet runtime (separate from Reanimated's).
+      ['react-native-worklets-core/plugin', { processNestedWorklets: true }],
+      // react-native-worklets/plugin must be listed last (Reanimated v4).
+      'react-native-worklets/plugin',
+    ],
   };
 };

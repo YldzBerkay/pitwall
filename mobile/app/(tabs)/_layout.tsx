@@ -15,8 +15,11 @@ export default function TabsLayout() {
         sceneStyle: { backgroundColor: colors.bgDeepSpace },
       }}
     >
-      <Tabs.Screen name="race-week" options={{ title: 'Race Week' }} />
-      <Tabs.Screen name="index" options={{ title: 'Manager' }} />
+      <Tabs.Screen name="index" options={{ title: 'Garaj' }} />
+      <Tabs.Screen name="race-week" options={{ title: 'Yarış' }} />
+      <Tabs.Screen name="development" options={{ title: 'Geliştirme' }} />
+      <Tabs.Screen name="sponsors" options={{ title: 'Sponsorluk' }} />
+      <Tabs.Screen name="paddock" options={{ title: 'Padok' }} />
       <Tabs.Screen name="league" options={{ title: 'League' }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
     </Tabs>
