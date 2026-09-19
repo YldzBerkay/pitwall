@@ -36,7 +36,7 @@ Mevcut ekonominin beş kırık yeri var:
 | İlerleme temposu | **1 sezon** — orta sıradan şampiyonluk arabasına |
 | Ekonominin rolü | Kıt kaynak paylaştırması **+** sürücü ticareti |
 | Yükseltme fiyatı | `×1.5` **sıradaki yükseltme** üstüne (stat başına bağımsız merdiven) |
-| Geliştirme süresi | Gerçek zaman, **fabrikada tek tezgah** |
+| Geliştirme süresi | Gerçek zaman. **Gruplar arası paralel, grup içinde tek** (araç / sürücü / istihbarat) |
 | Sürücü ticareti | Serbest, **%20 komisyon + 4 kişilik kadro limiti** ile frenli |
 | Altın | Orta agresiflik, **sabit kur 1 Altın = 50 RP**, sadece-Altın mekaniği yok |
 | Hızlandırma | **Saat başı 5 Altın** |
@@ -95,7 +95,8 @@ Stat 100'de tavanlanır. Kesirli kazanç `upgradeCarry` ile taşınmaya devam ed
 
 ### 3.2 Tek tezgah
 
-Fabrikada aynı anda **tek** geliştirme pişer. Durum:
+Araç grubu aynı anda **tek** geliştirme alır (§5A): AERO pişerken ne ikinci bir
+AERO ne de MOTOR başlatılabilir. Durum:
 
 ```ts
 interface CarBuild {
@@ -110,8 +111,9 @@ Para başlatma anında düşer, stat **bitişte** işlenir. Oyuncu `endsAt`'e ka
 kalan saat başına 5 Altın ödeyerek atlayabilir (yukarı yuvarlanır, en az 5).
 Başlatılmış bir geliştirme iptal edilemez — para geri gelmez.
 
-Bu, "hangisini başlatayım, yarışa yetişir mi" kararını doğurur. Para tek başına
-hız satın alamaz; zaman da bir kaynaktır.
+Bu, "üç stat'tan hangisini başlatayım, yarışa yetişir mi" kararını doğurur:
+araç grubunda tek tezgah olduğu için sezonun geliştirme sayısını para değil
+**takvim** belirler. Para tek başına hız satın alamaz; zaman da bir kaynaktır.
 
 ### 3.3 Sezon eğrisi (doğrulanmış)
 
@@ -224,17 +226,42 @@ Tek değişiklik: sürücü akademisi seviyesi `trainingGain`'e çarpan olarak b
 
 ## 5A. Zaman kaynağı — üç tezgah
 
-Para artık tek kısıt değil. Oyunun üç bağımsız gerçek zamanlı kuyruğu vardır ve
-her biri aynı anda **bir** iş alır:
+Para artık tek kısıt değil. Gerçek zamanlı işler **üç gruba** ayrılır ve tek
+bir kural işletir:
 
-| Tezgah | İş | Süre | Atlama |
+> **Gruplar arası paralel, grup içinde tek.**
+> Üç grubun üçü birden aynı anda çalışabilir. Ama bir grupta aynı anda yalnızca
+> bir iş yürür.
+
+| Grup | Kapsadığı işler | Süre | Atlama |
 |---|---|---|---|
-| Fabrika | araç geliştirmesi | 6-72 sa (§3.1) | 5 Altın/saat |
-| Antrenman | sürücü statı | 6 sa (`TRAINING_MS`) | 30 Altın |
-| İstihbarat | casus görevi | **24 sa** | 120 Altın |
+| **Araç** (fabrika tezgahı) | MOTOR, AERO, GRIP geliştirmeleri | 6-72 sa (§3.1) | 5 Altın/saat |
+| **Sürücü** (antrenman koltuğu) | kadrodaki **her** sürücünün **her** statı | 6 sa (`TRAINING_MS`) | 30 Altın |
+| **İstihbarat** | casus görevi | **24 sa** | 120 Altın |
 
-Üçü paraleldir — aynı anda bir geliştirme, bir antrenman ve bir casus görevi
-yürüyebilir. Oyuncunun günlük ritmi budur: gir, üç kuyruğu da doldur, çık.
+Yani:
+
+- AERO pişerken **MOTOR başlatılamaz** — araç grubu dolu. (Aynı stat da olmaz.)
+- 1. sürücü antrenmandayken **2. sürücü antrene edilemez**, yedek de edilemez.
+  Kadro limiti 4'tür ama antrenman koltuğu birdir; kalabalık kadro tutmak
+  antrenman hızını artırmaz, sadece maaş yükünü artırır (§5.3 freni).
+- Buna karşılık **AERO + 2. sürücü + casus** aynı anda gayet yürür. Oyuncunun
+  günlük ritmi budur: gir, üç grubu da doldur, çık.
+
+Durum modeli gruplara birebir oturur — her grup için en fazla bir kayıt:
+
+```ts
+build?:    CarBuild;      // araç grubu
+training?: Training;      // sürücü grubu  (mevcut yapı, tek slot)
+mission?:  SpyMission;    // istihbarat grubu
+```
+
+Sürücü grubu bugün zaten tek slot (`driverSlice`: `if (state.training) return false`),
+araç grubu ise henüz yok — yeni gelen kısıt orada.
+
+Arayüz tarafı: her grubun kendi kartı ve geri sayımı olur. Grup doluyken o
+grubun "başlat" düğmeleri kilitlenir ve kilidin sebebi yazılır ("Fabrika dolu:
+AERO 4 sa 12 dk"), yoksa oyuncu neden başlatamadığını anlayamaz.
 
 ### İstihbarat 24 saate geçiyor
 
@@ -388,6 +415,9 @@ ile koşulur, **silinir**. Ölçülecekler:
    alınamamalı (aksi hâlde ×1.5 fren tutmuyor demektir).
 3. **Tezgah darboğazı:** 60 saatlik yarış arasında en fazla 2-3 geliştirme
    bitebilmeli; sezon boyu toplam biten geliştirme **10-14** olmalı.
+3b. **Grup dışlayıcılığı:** araç grubu doluyken ikinci bir araç geliştirmesi,
+   sürücü grubu doluyken ikinci bir antrenman başlatma denemesi reddedilmeli;
+   buna karşılık araç + sürücü + casus üçlüsü aynı anda yürüyebilmeli.
 4. **Kadro tercihi:** elit kadro senaryosu koşulduğunda sezon sonu araç
    ortalaması yalın kadro senaryosundan **en az 8 puan düşük** olmalı — tercih
    gerçekten acıtıyor mu.
