@@ -77,8 +77,8 @@ export function RaceWeekScreen() {
   const liveFirst = weekend.phase === 'race' || weekend.phase === 'sprint' || weekend.phase === 'result';
   const raceFinished = (weekend.phase === 'race' || weekend.phase === 'sprint') && Boolean(weekend.race?.finished);
   const overview = (
-      <Cols>
-        <GlassCard style={{ flex: 1.4 }}>
+      <Cols weights={[1.4, 1]}>
+        <GlassCard style={{ flex: 1 }}>
           <View className="flex-row items-center">
             {sessions.map((s, i) => {
               const done = s.status === 'completed';

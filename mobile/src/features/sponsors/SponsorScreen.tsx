@@ -152,9 +152,9 @@ export function SponsorScreen() {
         )}
       </View>
 
-      <Cols align="flex-start">
+      <Cols align="flex-start" weights={[1.25, 1]}>
         {/* Offer sheet */}
-        <View style={{ flex: 1.25, gap: spacing.sm }}>
+        <View style={{ flex: 1, gap: spacing.sm }}>
           <AppText variant="cardTitle" color={colors.textPrimary}>
             Bu hafta gelen teklifler
           </AppText>

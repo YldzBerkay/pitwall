@@ -7,7 +7,7 @@
  *
  *   npm run econ
  */
-import { ECONOMY_SCALE } from '../src/data/economy';
+import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPacks, goldPrices, rpPrices, skipCostGold } from '../src/data/economy';
 import { racePrize } from '../src/data/sponsors';
 import { championshipPrize } from '../src/data/season';
 import { wageFor } from '../src/data/staff';
@@ -56,6 +56,24 @@ check('5. yükseltme 3797 RP', upgradeCostFor(4) === 3797, String(upgradeCostFor
 check('fiyat tavanlanmaz', upgradeCostFor(9) > upgradeCostFor(8));
 check('süre 72 sa tavanlı', upgradeDurationMs(9) === upgradeDurationMs(8));
 check('taban kazanç 6', UPGRADE_GAIN === 6, String(UPGRADE_GAIN));
+
+console.log('\n── Altın ──');
+check('kur 1 Altın = 50 RP', GOLD_TO_RP === 50, String(GOLD_TO_RP));
+check('hızlandırma 5 Altın/saat', GOLD_PER_HOUR === 5, String(GOLD_PER_HOUR));
+check('6 sa atlama 30 Altın', skipCostGold(6 * 3600_000) === 30, String(skipCostGold(6 * 3600_000)));
+check('kısmi saat yukarı yuvarlanır', skipCostGold(30 * 60_000) === 5, String(skipCostGold(30 * 60_000)));
+check('biten iş 0 Altın', skipCostGold(0) === 0, String(skipCostGold(0)));
+check('paketler 60/180/500', goldPacks.map((p) => p.gold).join('/') === '60/180/500', goldPacks.map((p) => p.gold).join('/'));
+check('büyük paket daha ucuz/Altın',
+  goldPacks[2].gold / 299.99 > goldPacks[0].gold / 49.99);
+check('sadece-Altın mekaniği yok',
+  Object.keys(goldPrices).every((k) => k in rpPrices), Object.keys(goldPrices).join(','));
+check('sabır Altın\'dan ucuz (6 sa atlama > geliştirme fiyatı)',
+  skipCostGold(6 * 3600_000) * GOLD_TO_RP > upgradeCostFor(0),
+  `${skipCostGold(6 * 3600_000) * GOLD_TO_RP} RP > ${upgradeCostFor(0)} RP`);
+check('§11.7 bedava RP < döngü gelirinin %30\'u',
+  GOLD_TO_RP_DAILY_CAP * GOLD_TO_RP * 2.5 < 1100 * 2.5 * 0.3,
+  `${GOLD_TO_RP_DAILY_CAP * GOLD_TO_RP * 2.5} RP/döngü`);
 
 console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
 process.exit(failed === 0 ? 0 : 1);

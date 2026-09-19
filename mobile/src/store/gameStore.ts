@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { carStats, factoryDepartments, teamState, type CarStat, type FactoryDepartment } from '@/data/mock';
+import { skipCostGold } from '@/data/economy';
 import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
 import {
   generateOffers,
@@ -253,6 +254,10 @@ interface CoreState {
   buildTimeFor: (label: string) => number;
   /** Bu stat'ın sıradaki yükseltmesinin RP fiyatı — 750 × 1.5^tamamlanan. */
   buildCostFor: (label: string) => number;
+  /** Tezgahtaki parçayı hemen bitirmenin Altın fiyatı; iş yoksa 0. */
+  skipBuildCost: () => number;
+  /** Kalan süreyi Altınla satın alır ve parçayı takar. */
+  skipBuild: () => boolean;
   /** Pay the RP and put a part on the bench. The gain lands on collect. */
   startUpgrade: (label: string) => StartUpgradeResult;
   /** Fit a finished part. Returns undefined while the build is still running. */
@@ -393,6 +398,22 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   buildTimeFor: (label) => upgradeDurationMs(get().upgradesDone[label] ?? 0),
   buildCostFor: (label) => upgradeCostFor(get().upgradesDone[label] ?? 0),
+
+  skipBuildCost: () => {
+    const { build } = get();
+    return build ? skipCostGold(build.endsAt - Date.now()) : 0;
+  },
+
+  skipBuild: () => {
+    const state = get();
+    if (!state.build) return false;
+    const cost = state.skipBuildCost();
+    // Fiyat once tahsil edilir; odeme tutmazsa parca tezgahta kalir.
+    if (cost > 0 && !state.spendGold(cost)) return false;
+    set((s) => ({ build: s.build ? { ...s.build, endsAt: Date.now() } : undefined }));
+    get().collectUpgrade();
+    return true;
+  },
 
   startUpgrade: (label) => {
     const state = get();

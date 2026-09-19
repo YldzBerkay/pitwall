@@ -84,7 +84,7 @@ export function LiveRacePanel() {
           : undefined;
 
   const mapCard = (
-        <GlassCard style={{ flex: 1.15 }} padded={false}>
+        <GlassCard style={{ flex: 1 }} padded={false}>
           <View className="flex-row items-center justify-between px-3 pt-3">
             <View className="flex-row items-center gap-2">
               {!race.finished && <PulseDot color={colors.neonCoral} size={8} periodMs={900} />}
@@ -250,7 +250,7 @@ export function LiveRacePanel() {
   return (
     <View style={{ gap: spacing.lg }}>
       {shell.isWide ? (
-        <Cols>
+        <Cols weights={[1.15, 1]}>
           {mapCard}
           {boardCard}
         </Cols>

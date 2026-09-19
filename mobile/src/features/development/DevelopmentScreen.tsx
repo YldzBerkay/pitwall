@@ -125,9 +125,9 @@ export function DevelopmentScreen() {
         }
       />
 
-      <Cols align="flex-start">
+      <Cols align="flex-start" weights={[1.3, 1]}>
         {/* Car stage + performance */}
-        <View style={{ flex: 1.3, gap: spacing.md + 2 }}>
+        <View style={{ flex: 1, gap: spacing.md + 2 }}>
           <View
             className="overflow-hidden rounded-lg border border-border-default"
             style={{ backgroundColor: '#050506' }}

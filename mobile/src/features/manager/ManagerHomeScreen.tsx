@@ -142,8 +142,8 @@ export function ManagerHomeScreen() {
         subtitle="Takımının bugünkü durumu ve seni bekleyen kararlar."
       />
 
-      <Cols>
-        <View style={{ flex: 1.2 }}>
+      <Cols weights={[1.2, 1]}>
+        <View style={{ flex: 1 }}>
           <NextRaceWidget
             track={track}
             round={round}
@@ -202,8 +202,8 @@ export function ManagerHomeScreen() {
         </GlassCard>
       </Cols>
 
-      <Cols>
-        <View style={{ flex: 1.3 }}>
+      <Cols weights={[1.3, 1]}>
+        <View style={{ flex: 1 }}>
           <View className="overflow-hidden rounded-xl border border-border-default" style={{ backgroundColor: '#050506' }} onLayout={(e) => setCarWidth(e.nativeEvent.layout.width)}>
             {carWidth > 0 && (
               <CarTurntable width={carWidth} height={CAR_VIEW_HEIGHT} spec={spec.spec} livery={livery} compound={compound} rim={rim} sponsorships={sponsorships} />
