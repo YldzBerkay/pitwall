@@ -556,7 +556,6 @@ function IntelSection() {
   const missions = useGameStore((s) => s.missions);
   const boosts = useGameStore((s) => s.upgradeBoosts);
   const news = useGameStore((s) => s.intelNews);
-  const round = useGameStore((s) => s.round);
   const nextMissionAtFn = useGameStore((s) => s.nextMissionAt);
   const skipMission = useGameStore((s) => s.skipMission);
   const skipMissionCost = useGameStore((s) => s.skipMissionCost);
@@ -573,7 +572,7 @@ function IntelSection() {
   const pending = missions.find((m) => !m.outcome);
   const nextMissionAt = nextMissionAtFn();
   // Geri sayımlar her dakika tazelenir; saniye hassasiyeti gerekmiyor.
-  const [spyNow, setSpyNow] = useState(Date.now());
+  const [spyNow, setSpyNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setSpyNow(Date.now()), 60_000);
     return () => clearInterval(id);

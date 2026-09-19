@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { DEPARTMENT_MAX_LEVEL, departmentCost, type FactoryDepartment } from '@/data/factory';
 import { AppText, GlassCard, Cols, ScreenHeader, SegmentTabs } from '@/components/atoms';
@@ -34,6 +34,9 @@ export function DevelopmentScreen() {
     buildCostFor,
     startUpgrade,
     collectUpgrade,
+    skipBuild,
+    skipBuildCost,
+    gold,
     upgradeDepartment,
     livery,
     compound,
@@ -58,6 +61,37 @@ export function DevelopmentScreen() {
   const aero = stat('AERO');
   const grip = stat('GRIP');
   const spec = describeSpec(motor, aero, grip);
+
+  /**
+   * Yarış günü kilidi bir tuzak değil, bilinçli bir tercih olmalı: uzun bir
+   * geliştirme başlatmadan önce hesabı göster. Oyuncu bir yarışı feda edip
+   * büyük yatırımı öne almayı SEÇEBİLMELİ.
+   *
+   * Not: store'da henüz gerçek bir yarış başlangıç zaman damgası yok
+   * (`mock.raceStartsInMs` sabit bir görüntü değeri), o yüzden "yarıştan X
+   * saat sonra biter" diyemiyoruz. Yarış saati geldiğinde bu eşik oraya
+   * bağlanmalı; şimdilik uyarı, bir yarış hafta sonundan uzun süren
+   * geliştirmelerde çıkıyor.
+   */
+  const LONG_BUILD_MS = 24 * 60 * 60 * 1000;
+
+  const confirmLongBuild = (label: string, onConfirm: () => void) => {
+    const ms = buildTimeFor(label);
+    if (ms < LONG_BUILD_MS) {
+      onConfirm();
+      return;
+    }
+    const stat = carStats.find((c) => c.label === label);
+    const halved = stat ? Math.round(stat.value / 2) : 0;
+    Alert.alert(
+      'Bu parça yarışa yetişmeyebilir',
+      `${statName[label] ?? label} üretimi ${formatDuration(ms)} sürüyor. Işıklar söndüğünde tezgahta duruyorsa araç sökük yarışır: ${statName[label] ?? label} ${stat?.value ?? 0} yerine ${halved} sayılır ve DNF riskin iki katına çıkar.\n\nHızlandırma her zaman açık: saat başı 5 Altın.`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        { text: 'Yine de başlat', style: 'destructive', onPress: onConfirm },
+      ],
+    );
+  };
 
   const onStartUpgrade = (label: string) => {
     const started = startUpgrade(label);
@@ -178,7 +212,10 @@ export function DevelopmentScreen() {
                   busy={!!build && build.label !== s.label}
                   remainingMs={build?.label === s.label ? build.endsAt - now : 0}
                   done={buildDone && build?.label === s.label}
-                  onUpgrade={() => onStartUpgrade(s.label)}
+                  skipGold={skipBuildCost()}
+                  canSkip={gold >= skipBuildCost()}
+                  onSkip={() => { haptic.success(); skipBuild(); }}
+                  onUpgrade={() => confirmLongBuild(s.label, () => onStartUpgrade(s.label))}
                   onCollect={onCollectUpgrade}
                 />
               ))}
@@ -227,6 +264,10 @@ interface StatRowProps {
   done: boolean;
   onUpgrade: () => void;
   onCollect: () => void;
+  /** Kalan süreyi satın almanın Altın fiyatı. */
+  skipGold: number;
+  canSkip: boolean;
+  onSkip: () => void;
 }
 
 function StatRow({
@@ -241,6 +282,9 @@ function StatRow({
   done,
   onUpgrade,
   onCollect,
+  skipGold,
+  canSkip,
+  onSkip,
 }: StatRowProps) {
   const tier = tierOf(value);
   // Distance to the next part unlock, so the player can see what they're buying.
@@ -285,7 +329,7 @@ function StatRow({
               {done ? 'Parçayı Tak' : `Üretimde · ${formatDuration(remainingMs)}`}
             </AppText>
           </Pressable>
-        ) : (
+        ) : building ? null : (
           <Pressable
             className="flex-row items-center gap-1 rounded-md border px-2.5 py-1.5"
             style={{
@@ -308,6 +352,22 @@ function StatRow({
           </Pressable>
         )}
       </View>
+      {building && !done && (
+        <Pressable
+          className="self-start rounded-md border px-2.5 py-1.5"
+          style={{
+            borderColor: canSkip ? colors.borderActive : colors.borderDefault,
+            backgroundColor: canSkip ? colors.accentSoft : 'transparent',
+            opacity: canSkip ? 1 : 0.5,
+          }}
+          disabled={!canSkip}
+          onPress={onSkip}
+        >
+          <AppText variant="labelSmall" color={colors.solarAmber} style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11 }}>
+            Hızlandır · {skipGold} Altın
+          </AppText>
+        </Pressable>
+      )}
       <AppText variant="labelSmall" color={building ? colors.solarAmber : colors.textTertiary} style={{ fontSize: 10 }}>
         {building
           ? done
