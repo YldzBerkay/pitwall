@@ -68,9 +68,10 @@
 - ✅ Altı uç nokta: `GET /onboarding/bootstrap`, `POST /auth/social`, `POST /auth/password/register`, `POST /auth/password/login`, `GET /me`, `PATCH /me`
 - ✅ **Gizlilik sözleşmesi (KVKK/GDPR)**: istemci IP'si yalnızca bölge kovasına çevrilip atılır, ham e-posta/şifre asla saklanmaz — sadece `email_hash`/`password_hash`; sözleşme `server/test/privacy.test.ts` ile kaynak ağacı üzerinde denetlenir
 - ✅ 195 sunucu testi, `npm run typecheck` temiz
-- ⬜ Mobil onboarding ekranları (Faz 1b): giriş/kayıt akışı, takma ad seçimi, ülke/bölge seçim ekranı istemci tarafında henüz yok
+- ✅ **Faz 1b — mobil istemciye bağlandı** (`mobile/src/lib/api/identity.ts`, `store/slices/authSlice.ts`, `features/auth/AuthScreen.tsx`, rota `/auth`, Profil ekranındaki "Hesap" kartından açılır): e-posta+şifre ile giriş/kayıt, takma ad (bootstrap önerisiyle ön dolu, düzenlenebilir), bölge seçici (7 bölge + yarış saati), aranabilir ülke seçici (CLDR listesi), oturum tokenı + hesap profili cihazda kalıcı (`gameStore.ts` persist). Gerçek sunucuya karşı uçtan uca doğrulandı (register → me → login → patch). `leagueSlice`'daki `managerId` artık signed-in hesabın gerçek id'sini kullanıyor (`effectiveManagerId`), anonim değilse. **Google/Apple/Facebook bağlanmadı** — native SDK (client id, bundle id, cihaz testi) gerektiriyor, kapsam dışı bırakıldı; butonlar arayüzde "yakında" olarak görünüyor, `lib/api/identity.ts`'deki `loginWithSocial` sunucu tarafını çağırmaya hazır bekliyor.
 
 ## Kapsam dışı / sırada
-- ⬜ Lig oluşturma/davet, kimlik doğrulamasının mobil istemciye bağlanması
-- ⬜ Kayıt/yükleme (persist)
+- ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)
+- ⬜ Lig oluşturma/davet (şu an tek sabit takım `bosphorus`'a katılım var, takım seçimi/davet akışı yok)
+- ⬜ Kayıt/yükleme (persist) — kariyer/yarış/ekonomi durumu; hesap oturumu ve Ayarlar tercihleri zaten kalıcı (yukarı bakın)
 - ⬜ Mağaza ürünleri ve üretim AdMob kimlikleri (kod hazır)

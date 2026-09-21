@@ -85,6 +85,7 @@ import { createEspionageSlice, type EspionageSlice } from './slices/espionageSli
 import { INJURY_ROUNDS, createDriverSlice, type DriverSlice } from './slices/driverSlice';
 import { createLeagueSlice, type LeagueSlice } from './slices/leagueSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
+import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import type { StatKey } from '@/data/driverMarket';
 
 /** Stat label on the garage card → engine key. */
@@ -357,15 +358,16 @@ interface CoreState {
   paddockNews: string[];
 }
 
-export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice;
+export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice & AuthSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
 /**
- * Only display/accessibility preferences persist today — the rest of the
- * game (career, race, economy) has no save/load system yet
- * (`docs/FEATURES.md`), so it stays session-only and is deliberately left
- * out of `partialize` to avoid shipping a half-persisted save.
+ * Only display/accessibility preferences and the account session
+ * (`auth.baseUrl`/`token`/`user`) persist today — the rest of the game
+ * (career, race, economy) has no save/load system yet (`docs/FEATURES.md`),
+ * so it stays session-only and is deliberately left out of `partialize` to
+ * avoid shipping a half-persisted save.
  */
 export const useGameStore = create<GameState>()(
   persist(
@@ -376,6 +378,7 @@ export const useGameStore = create<GameState>()(
   ...createDriverSlice(set, get),
   ...createLeagueSlice(set, get),
   ...createSettingsSlice(set, get),
+  ...createAuthSlice(set, get),
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},
@@ -963,13 +966,14 @@ export const useGameStore = create<GameState>()(
     set({ championshipPosition: Math.max(1, Math.min(sponsorSlots.length, position)) }),
     }),
     {
-      name: 'pitwall-settings',
+      name: 'pitwall-store',
       storage: createJSONStorage(() => AsyncStorage),
       version: 1,
       partialize: (state) => ({
         colorblindMode: state.colorblindMode,
         textScale: state.textScale,
         hudCompact: state.hudCompact,
+        auth: { baseUrl: state.auth.baseUrl, token: state.auth.token, user: state.auth.user, status: 'idle' as const },
       }),
     },
   ),
