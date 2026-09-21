@@ -21,6 +21,7 @@ import { useShellLayout } from '@/lib/useShellLayout';
 export function ProfileScreen() {
   const shell = useShellLayout();
   const career = useGameStore((s) => s.career);
+  const authUser = useGameStore((s) => s.auth.user);
 
   const [showAll, setShowAll] = useState(false);
   const rank = rankFor(career.score);
@@ -57,6 +58,27 @@ export function ProfileScreen() {
           />
         }
       />
+
+      <GlassCard contentStyle={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md }}>
+        <View style={{ flex: 1 }}>
+          <AppText variant="cardTitle" color={colors.textPrimary}>
+            {authUser ? authUser.nickname : 'Hesap'}
+          </AppText>
+          <AppText variant="bodySmall" color={colors.textSecondary}>
+            {authUser
+              ? `${authUser.region ?? 'Bölge seçilmedi'} · ${authUser.rankPoints} rütbe puanı · ${authUser.gold} Altın`
+              : 'Giriş yapılmadı — takma ad, bölge ve rütbe puanın cihazlar arası taşınmaz.'}
+          </AppText>
+        </View>
+        <GlassButton
+          label={authUser ? 'Hesap' : 'Giriş yap'}
+          variant="secondary"
+          onPress={() => {
+            haptic.select();
+            router.push('/auth');
+          }}
+        />
+      </GlassCard>
 
       <Cols align="flex-start">
         {/* Rank */}

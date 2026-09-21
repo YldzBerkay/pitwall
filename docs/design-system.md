@@ -362,8 +362,11 @@ anlam taşımıyor (metin/ikon her zaman eşlik ediyor).
 Profil ekranındaki "Ayarlar" butonundan): renk körü modu (canlı swatch önizlemeli),
 yazı boyutu (Normal/Büyük/En büyük — `AppText` artık `useGameStore((s) => s.textScale)`
 okuyup `fontSize`/`lineHeight`'i ölçekliyor), HUD yoğunluğu ön ayarı (altyapı hazır,
-ekran tarafında henüz tüketilmiyor). Tercihler oturum ömürlü — kalıcı kayıt/yükleme
-geldiğinde bu slice de ona bağlanmalı.
+ekran tarafında henüz tüketilmiyor). Tercihler `zustand/middleware`'in `persist`'i +
+`@react-native-async-storage/async-storage` ile cihazda kalıcı (`gameStore.ts`,
+anahtar `pitwall-settings`, yalnızca `colorblindMode`/`textScale`/`hudCompact`
+`partialize` edilir). Kariyer/yarış durumu bunun dışında — o hâlâ oturum ömürlü,
+ayrı bir iş (`docs/FEATURES.md`: "Kayıt/yükleme").
 
 **Kontrast** — `textTertiary` `#5C5E63` → `#8A8D93` (WCAG AA 4.5:1 eşiğinin altından
 üstüne, `bgElevated` üzerinde ~2.7:1 → ~5.3:1).
@@ -379,3 +382,28 @@ ekranında kullanılıyor), `ConfirmDialog` (yıkıcı aksiyon onayı, henüz t�
 **Yeni organism**: `GridIntro` — yarış Tur 0'da başladığında ~2,4 sn'liğine tam ekran
 başlangıç gridini (pozisyon · sürücü · takım rengi) gösterip kendiliğinden kapanır;
 dokunarak erken kapatılabilir. `LiveRacePanel`'de "yeni tur" efekti tetikleniyor.
+
+---
+
+## 9. Hesap (Faz 1b, 2026-09-21)
+
+Server tarafı bitmiş kimlik sistemi (`docs/FEATURES.md` §Kimlik) mobil istemciye
+bağlandı: `features/auth/AuthScreen.tsx` (rota `/auth`, Profil ekranındaki "Hesap"
+kartından açılır). Giriş/kayıt e-posta+şifre ile; kayıt formu tek ekranda takma ad
+(sunucudan gelen öneriyle ön dolu, düzenlenebilir), bölge (7 buçuk, yarış saatiyle
+birlikte) ve aranabilir ülke seçimini birlikte topluyor — sunucunun `register`
+uç noktası zaten hepsini tek çağrıda kabul ediyor, iki adımlı bir onboarding'e
+gerek yok. Giriş yapılınca oturum tokenı + profil `gameStore.ts`'in persist
+katmanına yazılıyor (bkz. §8) ve `leagueSlice`'daki `managerId` artık bu hesabın
+gerçek id'sini kullanıyor (`effectiveManagerId`), böylece bir yöneticinin lig
+kimliği yeniden kurulumdan sağ çıkıyor.
+
+**Google/Apple/Facebook bağlanmadı** — sunucu tarafı hazır ve test edilmiş olsa
+da (`server/src/auth/providers/*`), native SDK bağlama (client id, bundle id,
+cihaz testi) bu işin kapsamı dışında bırakıldı. Butonlar arayüzde görünür ama
+devre dışı ("yakında"); `lib/api/identity.ts`'deki `loginWithSocial` sunucuyu
+çağırmaya hazır, sadece hiçbir ekran onu tetiklemiyor.
+
+Uçtan uca doğrulama: yerel Postgres + sunucu çalıştırılıp `curl` ile
+register → me → login → patch akışı gerçek isteklerle test edildi (yanıt
+şekilleri istemci tiplerine birebir uyuyor).

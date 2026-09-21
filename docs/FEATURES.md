@@ -57,7 +57,7 @@
 ## Ekranlar
 - ✅ Garaj (kahraman yarış kartı, bugün yapılacaklar, araç, sürücüler), Yarış, Geliştirme, Padok, Sponsorluk, Şampiyona, Profil
 - ✅ **Dikey + yatay kabuk**: alt hap sekme çubuğu / yan kapsül, `Cols` ile uyarlanan düzen, açıklayıcı `ScreenHeader`; üç kalite ajanıyla incelenip düzeltildi (docs/design-system.md §7)
-- ✅ **Ayarlar** (`features/settings/SettingsScreen.tsx`, `/settings`, Profil'den açılır): renk körü modu, yazı boyutu, HUD yoğunluğu ön ayarı — oturum ömürlü, kalıcı kayıt/yükleme gelince o katmana bağlanacak (docs/design-system.md §8)
+- ✅ **Ayarlar** (`features/settings/SettingsScreen.tsx`, `/settings`, Profil'den açılır): renk körü modu, yazı boyutu, HUD yoğunluğu ön ayarı — `@react-native-async-storage/async-storage` üzerinden zustand `persist` ile cihazda kalıcı (yalnızca bu tercihler; kariyer/yarış durumu aşağıdaki "Kayıt/yükleme" maddesinin kapsamında, hâlâ yok) (docs/design-system.md §8)
 
 ## Kimlik (`server/src/auth/*`, `server/src/identity/*`) — Faz 1a
 - ✅ Postgres tabanlı hesap kimliği: `users` + `auth_identities`, sağlayıcı başına tek satır, hesap birleştirme e-posta özetinden
@@ -68,9 +68,10 @@
 - ✅ Altı uç nokta: `GET /onboarding/bootstrap`, `POST /auth/social`, `POST /auth/password/register`, `POST /auth/password/login`, `GET /me`, `PATCH /me`
 - ✅ **Gizlilik sözleşmesi (KVKK/GDPR)**: istemci IP'si yalnızca bölge kovasına çevrilip atılır, ham e-posta/şifre asla saklanmaz — sadece `email_hash`/`password_hash`; sözleşme `server/test/privacy.test.ts` ile kaynak ağacı üzerinde denetlenir
 - ✅ 195 sunucu testi, `npm run typecheck` temiz
-- ⬜ Mobil onboarding ekranları (Faz 1b): giriş/kayıt akışı, takma ad seçimi, ülke/bölge seçim ekranı istemci tarafında henüz yok
+- ✅ **Faz 1b — mobil istemciye bağlandı** (`mobile/src/lib/api/identity.ts`, `store/slices/authSlice.ts`, `features/auth/AuthScreen.tsx`, rota `/auth`, Profil ekranındaki "Hesap" kartından açılır): e-posta+şifre ile giriş/kayıt, takma ad (bootstrap önerisiyle ön dolu, düzenlenebilir), bölge seçici (7 bölge + yarış saati), aranabilir ülke seçici (CLDR listesi), oturum tokenı + hesap profili cihazda kalıcı (`gameStore.ts` persist). Gerçek sunucuya karşı uçtan uca doğrulandı (register → me → login → patch). `leagueSlice`'daki `managerId` artık signed-in hesabın gerçek id'sini kullanıyor (`effectiveManagerId`), anonim değilse. **Google/Apple/Facebook bağlanmadı** — native SDK (client id, bundle id, cihaz testi) gerektiriyor, kapsam dışı bırakıldı; butonlar arayüzde "yakında" olarak görünüyor, `lib/api/identity.ts`'deki `loginWithSocial` sunucu tarafını çağırmaya hazır bekliyor.
 
 ## Kapsam dışı / sırada
-- ⬜ Lig oluşturma/davet, kimlik doğrulamasının mobil istemciye bağlanması
-- ⬜ Kayıt/yükleme (persist)
+- ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)
+- ⬜ Lig oluşturma/davet (şu an tek sabit takım `bosphorus`'a katılım var, takım seçimi/davet akışı yok)
+- ⬜ Kayıt/yükleme (persist) — kariyer/yarış/ekonomi durumu; hesap oturumu ve Ayarlar tercihleri zaten kalıcı (yukarı bakın)
 - ⬜ Mağaza ürünleri ve üretim AdMob kimlikleri (kod hazır)
