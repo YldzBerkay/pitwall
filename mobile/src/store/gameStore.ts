@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { carStats, teamState, type CarStat } from '@/data/mock';
 import {
   DEPARTMENT_MAX_LEVEL,
@@ -359,7 +361,15 @@ export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice &
 
 const initialStandings = seedStandings(teamState.round - 1);
 
-export const useGameStore = create<GameState>((set, get) => ({
+/**
+ * Only display/accessibility preferences persist today — the rest of the
+ * game (career, race, economy) has no save/load system yet
+ * (`docs/FEATURES.md`), so it stays session-only and is deliberately left
+ * out of `partialize` to avoid shipping a half-persisted save.
+ */
+export const useGameStore = create<GameState>()(
+  persist(
+    (set, get) => ({
   ...createEconomySlice(set, get),
   ...createStaffSlice(set, get),
   ...createEspionageSlice(set, get),
@@ -951,4 +961,16 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setChampionshipPosition: (position) =>
     set({ championshipPosition: Math.max(1, Math.min(sponsorSlots.length, position)) }),
-}));
+    }),
+    {
+      name: 'pitwall-settings',
+      storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      partialize: (state) => ({
+        colorblindMode: state.colorblindMode,
+        textScale: state.textScale,
+        hudCompact: state.hudCompact,
+      }),
+    },
+  ),
+);

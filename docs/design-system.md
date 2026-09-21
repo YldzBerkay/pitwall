@@ -362,8 +362,11 @@ anlam taşımıyor (metin/ikon her zaman eşlik ediyor).
 Profil ekranındaki "Ayarlar" butonundan): renk körü modu (canlı swatch önizlemeli),
 yazı boyutu (Normal/Büyük/En büyük — `AppText` artık `useGameStore((s) => s.textScale)`
 okuyup `fontSize`/`lineHeight`'i ölçekliyor), HUD yoğunluğu ön ayarı (altyapı hazır,
-ekran tarafında henüz tüketilmiyor). Tercihler oturum ömürlü — kalıcı kayıt/yükleme
-geldiğinde bu slice de ona bağlanmalı.
+ekran tarafında henüz tüketilmiyor). Tercihler `zustand/middleware`'in `persist`'i +
+`@react-native-async-storage/async-storage` ile cihazda kalıcı (`gameStore.ts`,
+anahtar `pitwall-settings`, yalnızca `colorblindMode`/`textScale`/`hudCompact`
+`partialize` edilir). Kariyer/yarış durumu bunun dışında — o hâlâ oturum ömürlü,
+ayrı bir iş (`docs/FEATURES.md`: "Kayıt/yükleme").
 
 **Kontrast** — `textTertiary` `#5C5E63` → `#8A8D93` (WCAG AA 4.5:1 eşiğinin altından
 üstüne, `bgElevated` üzerinde ~2.7:1 → ~5.3:1).

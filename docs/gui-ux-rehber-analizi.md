@@ -210,12 +210,17 @@ Yukarıdaki "en somut 5 bulgu" ve birkaç ek madde koda uygulandı. Tip kontrol�
    bağlanmadı, altyapı hazır).
 8. **`infoBlue` tokenı** — rehberin "mavi sadece bilgilendirme, tehlike için asla"
    kuralına karşılık gelen ayrı bir ton tanımlandı (`colors.infoBlue` / `semantic.info`).
+9. **Ayarlar kalıcılığı** (sonradan eklendi) — `gameStore.ts` artık `zustand/middleware`'in
+   `persist`'i + `@react-native-async-storage/async-storage` ile sarmalı; yalnızca
+   `colorblindMode`/`textScale`/`hudCompact` cihazda saklanıyor (`partialize`). Kariyer/
+   yarış/ekonomi durumu bilinçli olarak dışarıda bırakıldı — `docs/FEATURES.md`'deki
+   "Kayıt/yükleme" maddesi hâlâ ayrı ve çok daha büyük bir iş (tüm oyun durumunun
+   serileştirilmesi + online lig ile tutarlılık).
 
 ### Bilinçli olarak yapılmayanlar
 
-- **Persist/kayıt-yükleme**: Ayarlar ekranındaki tercihler oturum ömürlü — `FEATURES.md`
-  zaten bunu ayrı, daha büyük bir iş olarak işaretlemiş; bu görev onu kapsamıyor.
-  Persist eklendiğinde `settingsSlice.ts`'nin de o katmana bağlanması gerekir.
+- **Kariyer/yarış durumu kalıcılığı**: `docs/FEATURES.md`'nin "Kayıt/yükleme" maddesi
+  hâlâ açık — yalnızca görüntü/erişilebilirlik tercihleri kalıcı hale geldi (yukarı bakın).
 - **Sektör bazlı zamanlama/renklendirme**: `raceEngine.ts`'e yeni bir veri modeli
   (sektör süreleri) eklemek gerektirir — kapsam dışı bırakıldı, ayrı bir karar konusu.
 - **HUD "Sade" modunun gerçek etkisi**: `hudCompact` store alanı ve Ayarlar UI'ı hazır,
