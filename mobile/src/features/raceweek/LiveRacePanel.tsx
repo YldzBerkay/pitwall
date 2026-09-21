@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import { colors, spacing } from '@/theme';
+import { semanticColors } from '@/theme/colors';
 import { AppText, GlassButton, GlassCard, PulseDot, Cols } from '@/components/atoms';
+import { GridIntro } from '@/components/organisms';
 import { compoundByKey, type CompoundKey } from '@/data/carCustomisation';
 import { playerTeam } from '@/data/teams';
 import { RACE_TICK_MS, useGameStore } from '@/store/gameStore';
@@ -33,6 +35,8 @@ export function LiveRacePanel() {
   const finishSprint = useGameStore((s) => s.finishSprint);
   const leagueLive = useGameStore((s) => s.league.connected && s.league.state?.phase === 'live');
   const track = useGameStore((s) => s.track());
+  const colorblindMode = useGameStore((s) => s.colorblindMode);
+  const semantic = semanticColors(colorblindMode);
 
   const shell = useShellLayout();
   const MAP_HEIGHT = Math.min(MAP_HEIGHT_MAX, Math.round(shell.height * 0.5));
@@ -42,12 +46,24 @@ export function LiveRacePanel() {
   const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
   const progress = useSharedValue(1);
   const lastLap = useRef(-1);
+  const [gridVisible, setGridVisible] = useState(false);
+
+  // Auto-dismiss the grid intro — the moment is a taste, not a wait.
+  useEffect(() => {
+    if (!gridVisible) return;
+    const id = setTimeout(() => setGridVisible(false), 2400);
+    return () => clearTimeout(id);
+  }, [gridVisible]);
 
   // A new lap arrived: restart the map interpolation and play the cues.
   useEffect(() => {
     if (!race || race.lap === lastLap.current) return;
     lastLap.current = race.lap;
-    if (race.lap === 0) return;
+    if (race.lap === 0) {
+      // Deferred so the state update isn't synchronous inside the effect body.
+      const id = setTimeout(() => setGridVisible(true), 0);
+      return () => clearTimeout(id);
+    }
     // Full tick length: the next lap's start point is exactly where this
     // animation ends, so the dots never stall and never jump.
     progress.value = 0;
@@ -74,20 +90,20 @@ export function LiveRacePanel() {
   const isSprint = race.session === 'sprint';
   const under = race.neutralised && race.lap < race.neutralised.untilLap ? race.neutralised.kind : undefined;
   const flag = under === 'red'
-    ? { text: 'KIRMIZI BAYRAK', colour: colors.neonCoral }
+    ? { text: 'KIRMIZI BAYRAK', colour: semantic.danger }
     : under === 'sc'
-      ? { text: 'GÜVENLİK ARACI', colour: colors.solarAmber }
+      ? { text: 'GÜVENLİK ARACI', colour: semantic.attention }
       : under === 'vsc'
-        ? { text: 'SANAL GÜVENLİK ARACI', colour: colors.solarAmber }
+        ? { text: 'SANAL GÜVENLİK ARACI', colour: semantic.attention }
         : latest?.kind === 'yellow' && latest.lap === race.lap
-          ? { text: 'SARI BAYRAK', colour: colors.solarAmber }
+          ? { text: 'SARI BAYRAK', colour: semantic.attention }
           : undefined;
 
   const mapCard = (
         <GlassCard style={{ flex: 1 }} padded={false}>
           <View className="flex-row items-center justify-between px-3 pt-3">
             <View className="flex-row items-center gap-2">
-              {!race.finished && <PulseDot color={colors.neonCoral} size={8} periodMs={900} />}
+              {!race.finished && <PulseDot color={semantic.danger} size={8} periodMs={900} />}
               <AppText variant="cardTitle" color={colors.textPrimary}>
                 {race.finished ? 'Damalı Bayrak' : `${leagueLive ? 'LİG · ' : ''}${isSprint ? 'Sprint · ' : ''}Tur ${race.lap}/${race.laps}`}
               </AppText>
@@ -141,7 +157,7 @@ export function LiveRacePanel() {
               Sıralama
             </AppText>
             {race.fastestLap && (
-              <AppText variant="labelSmall" color={colors.accentViolet} numberOfLines={1}>
+              <AppText variant="labelSmall" color={semantic.record} numberOfLines={1}>
                 En hızlı tur · {race.fastestLap.driver.split(' ').pop()} {fmtSec(race.fastestLap.sec)}
               </AppText>
             )}
@@ -158,7 +174,7 @@ export function LiveRacePanel() {
                 <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 14, textAlign: 'right' }}>
                   {c.stops}
                 </AppText>
-                <AppText variant="labelSmall" color={c.dnf ? colors.neonCoral : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 54, textAlign: 'right' }}>
+                <AppText variant="labelSmall" color={c.dnf ? semantic.danger : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 54, textAlign: 'right' }}>
                   {c.dnf ? 'Dışı' : c.pitting ? 'Pit' : fmtGap(c.position === 1 ? 0 : c.totalSec - race.cars[0].totalSec)}
                 </AppText>
               </View>
@@ -179,8 +195,8 @@ export function LiveRacePanel() {
         </View>
 
         {prompt && (
-          <View className="rounded-md border px-3 py-2" style={{ borderColor: colors.solarAmber, backgroundColor: 'rgba(227,179,65,0.12)' }}>
-            <AppText variant="labelSmall" color={colors.solarAmber} uppercase>
+          <View className="rounded-md border px-3 py-2" style={{ borderColor: semantic.attention, backgroundColor: 'rgba(227,179,65,0.12)' }}>
+            <AppText variant="labelSmall" color={semantic.attention} uppercase>
               Tur {prompt.lap} · Karar anı
             </AppText>
             <AppText variant="bodySmall" color={colors.textPrimary}>
@@ -194,7 +210,7 @@ export function LiveRacePanel() {
             const idx = car.driverIdx;
             const queued = weekend.pending[idx];
             const wearPct = Math.min(100, Math.round(car.wear * 100));
-            const wearTint = car.wear > 0.95 ? colors.neonCoral : car.wear > 0.75 ? colors.solarAmber : colors.matrixGreen;
+            const wearTint = car.wear > 0.95 ? semantic.danger : car.wear > 0.75 ? semantic.attention : semantic.positive;
             return (
               <View key={idx} className="flex-1 rounded-md border border-border-default p-2.5" style={{ gap: 8, opacity: car.dnf ? 0.5 : 1 }}>
                 <View className="flex-row items-center justify-between gap-2">
@@ -262,6 +278,12 @@ export function LiveRacePanel() {
         </>
       )}
       {shell.isWide && !race.finished && wallCard}
+      {gridVisible && (
+        <GridIntro
+          cars={race.cars.map((c) => ({ teamKey: c.teamKey, driverIdx: c.driverIdx, driver: c.driver, position: c.position, isPlayer: c.isPlayer }))}
+          onDismiss={() => setGridVisible(false)}
+        />
+      )}
     </View>
   );
 }

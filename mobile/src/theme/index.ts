@@ -39,8 +39,8 @@ export const layout = {
   navCapsuleWidth: 56,
   /** Gap between the capsule and the screen edge (before safe insets). */
   navEdgeGap: 12,
-  /** Diameter of a nav icon button inside the capsule. */
-  navItemSize: 40,
+  /** Diameter of a nav icon button inside the capsule — Apple HIG / Material minimum (44pt / 48dp touch target). */
+  navItemSize: 44,
   /** Height of the portrait bottom tab pill. */
   tabBarHeight: 60,
 } as const;

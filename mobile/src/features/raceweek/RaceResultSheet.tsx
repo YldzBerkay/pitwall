@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { colors, spacing } from '@/theme';
+import { semanticColors } from '@/theme/colors';
 import { AppText, GlassButton, GlassCard, NeonStatChip, RankIcon, Cols } from '@/components/atoms';
 import { playerTeam, teamByKey } from '@/data/teams';
 import { achievementByKey, rankFor } from '@/data/achievements';
@@ -22,6 +23,8 @@ export function RaceResultSheet() {
   const nextWeekend = useGameStore((s) => s.nextWeekend);
   const seasonSummary = useGameStore((s) => s.seasonSummary);
   const dismissSeasonSummary = useGameStore((s) => s.dismissSeasonSummary);
+  const colorblindMode = useGameStore((s) => s.colorblindMode);
+  const semantic = semanticColors(colorblindMode);
   const [fullTable, setFullTable] = useState(false);
 
   const result = weekend.result;
@@ -76,16 +79,16 @@ export function RaceResultSheet() {
               </AppText>
               <View className="flex-row items-center gap-1.5">
                 <RankIcon level={rank.level} colour={rank.colour} size={14} />
-                <AppText variant="labelSmall" color={a.score < 0 ? colors.neonCoral : colors.accentViolet}>
+                <AppText variant="labelSmall" color={a.score < 0 ? semantic.danger : semantic.record}>
                   {a.score >= 0 ? '+' : ''}{a.score} kariyer puanı (×{a.multiplier.toFixed(1).replace('.', ',')})
                 </AppText>
               </View>
             </View>
-            <View className="rounded-md border px-2.5 py-1.5" style={{ borderColor: a.targets.verdict === 'position' ? colors.matrixGreen : a.targets.verdict === 'collapsed' ? colors.neonCoral : colors.solarAmber }}>
+            <View className="rounded-md border px-2.5 py-1.5" style={{ borderColor: a.targets.verdict === 'position' ? semantic.positive : a.targets.verdict === 'collapsed' ? semantic.danger : semantic.attention }}>
               <AppText variant="labelSmall" color={colors.textSecondary}>
                 Hedef: {a.targets.targets.position}. sıra ve {a.targets.targets.points} puan · Sonuç: {a.targets.finish === 22 && result.playerFinish === 0 ? 'yarış dışı' : `${a.targets.finish}. sıra`}, {a.targets.pointsScored} puan
               </AppText>
-              <AppText variant="labelSmall" color={a.targets.verdict === 'position' ? colors.matrixGreen : a.targets.verdict === 'collapsed' ? colors.neonCoral : colors.solarAmber}>
+              <AppText variant="labelSmall" color={a.targets.verdict === 'position' ? semantic.positive : a.targets.verdict === 'collapsed' ? semantic.danger : semantic.attention}>
                 {a.targets.verdict === 'position'
                   ? `Sıralama hedefi tuttu: rütbe puanı tam (${a.rawScore})`
                   : a.targets.verdict === 'pointsOnly'
@@ -148,7 +151,7 @@ export function RaceResultSheet() {
                     <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 30, textAlign: 'right' }}>
                       {e.gridPosition < e.position ? `▼${e.position - e.gridPosition}` : e.gridPosition > e.position ? `▲${e.gridPosition - e.position}` : '—'}
                     </AppText>
-                    <AppText variant="labelSmall" color={e.dnf ? colors.neonCoral : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 56, textAlign: 'right' }}>
+                    <AppText variant="labelSmall" color={e.dnf ? semantic.danger : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 56, textAlign: 'right' }}>
                       {fmtGap(e.gapSec)}
                     </AppText>
                   </View>

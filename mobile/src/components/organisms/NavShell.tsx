@@ -110,13 +110,14 @@ export function NavShell({ state, navigation }: TabBarProps) {
             {items.map(({ route, focused, info, onPress }) => (
               <Pressable
                 key={route.key}
+                hitSlop={6}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: focused }}
                 accessibilityLabel={info.label}
                 onPress={onPress}
                 className="h-11 flex-row items-center justify-center rounded-full"
                 style={{
-                  paddingHorizontal: focused ? 14 : shell.width < 390 ? 8 : 11,
+                  paddingHorizontal: focused ? 14 : shell.width < 390 ? 10 : 11,
                   gap: 8,
                   backgroundColor: focused ? colors.accentLime : 'transparent',
                 }}

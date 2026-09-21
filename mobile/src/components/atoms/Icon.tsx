@@ -51,7 +51,9 @@ export type IconName =
   | 'close'
   | 'trend-up'
   | 'trend-down'
-  | 'map';
+  | 'map'
+  | 'settings'
+  | 'eye';
 
 const glyphMap: Record<IconName, Glyph> = {
   'race-week': 'flag-checkered',
@@ -96,6 +98,8 @@ const glyphMap: Record<IconName, Glyph> = {
   'trend-up': 'trending-up',
   'trend-down': 'trending-down',
   map: 'map-marker-path',
+  settings: 'cog-outline',
+  eye: 'eye-outline',
 };
 
 interface IconProps {

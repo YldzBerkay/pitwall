@@ -31,11 +31,14 @@ export const colors = {
   matrixGreen: '#2DD4BF',
   neonCoral: '#FF3B5C',
   solarAmber: '#E3B341',
+  /** Information only — never used for danger (ISO 22324: blue = bilgi, kırmızı = tehlike). */
+  infoBlue: '#3FA9FF',
 
   // Text
   textPrimary: '#F5F6F2',
   textSecondary: '#9A9C9F',
-  textTertiary: '#5C5E63',
+  /** AA kontrastlı (~5.3:1 bgElevated üzerinde) — eski #5C5E63 (~2.7:1) WCAG'ın altındaydı. */
+  textTertiary: '#8A8D93',
 
   // Borders / hairlines
   borderDefault: 'rgba(255, 255, 255, 0.08)',
@@ -57,3 +60,71 @@ export const gradients = {
 
 export type ColorToken = keyof typeof colors;
 export type GradientToken = keyof typeof gradients;
+
+/**
+ * Anlam taşıyan HUD renkleri — bu beşi HER ZAMAN bir ikon/şekil/metinle
+ * eşlik eder (renk asla tek başına anlam taşımaz), bkz. `useSemanticColors`.
+ */
+export interface SemanticColors {
+  /** Tehlike — kırmızı bayrak, DNF, kritik uyarı. */
+  danger: string;
+  /** Dikkat — sarı bayrak, SC/VSC, aşınma uyarısı. */
+  attention: string;
+  /** Onay — en iyi tur, uyum, "hazır". */
+  positive: string;
+  /** Rekor tur / öne çıkan istatistik (yayın konvansiyonu: mor). */
+  record: string;
+  /** Sadece bilgilendirme — asla tehlike anlamına gelmez. */
+  info: string;
+}
+
+export const COLORBLIND_MODES = ['none', 'protanopia', 'deuteranopia', 'tritanopia'] as const;
+export type ColorblindMode = (typeof COLORBLIND_MODES)[number];
+
+export const colorblindModeLabels: Record<ColorblindMode, string> = {
+  none: 'Kapalı',
+  protanopia: 'Protanopi (kırmızı zayıf)',
+  deuteranopia: 'Deuteranopi (yeşil zayıf)',
+  tritanopia: 'Tritanopi (mavi-sarı zayıf)',
+};
+
+/**
+ * Her mod için kırmızı/yeşil ayrımının yerini alan mavi/turuncu karşıtlığı
+ * (protan/deutan) ya da sarı-mavi ekseni düzeltmesi (tritan). Değerler klinik
+ * olarak doğrulanmadı; amaç renk-körü kullanıcı için de "tehlike" ile "onay"
+ * arasındaki farkın algılanabilir kalması.
+ */
+const semanticByMode: Record<ColorblindMode, SemanticColors> = {
+  none: {
+    danger: colors.neonCoral,
+    attention: colors.solarAmber,
+    positive: colors.matrixGreen,
+    record: colors.accentViolet,
+    info: colors.infoBlue,
+  },
+  protanopia: {
+    danger: '#FF8A3D',
+    attention: '#FFD400',
+    positive: '#3FA9FF',
+    record: '#9B5CFF',
+    info: '#3FA9FF',
+  },
+  deuteranopia: {
+    danger: '#FF8A3D',
+    attention: '#FFD400',
+    positive: '#3FA9FF',
+    record: '#9B5CFF',
+    info: '#3FA9FF',
+  },
+  tritanopia: {
+    danger: colors.neonCoral,
+    attention: '#FF8A3D',
+    positive: colors.matrixGreen,
+    record: '#FF6F91',
+    info: '#7DB8FF',
+  },
+};
+
+export function semanticColors(mode: ColorblindMode): SemanticColors {
+  return semanticByMode[mode];
+}
