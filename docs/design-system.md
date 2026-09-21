@@ -341,3 +341,41 @@ Takım" segment, alt yüzen hap navigasyon, tek vurgu rengi).
   dar buton ("İşe al" + ücret). Lastik çipleri Türkçe: Yumuşak, Orta, Sert,
   Geçiş, Yağmur. Pist tarzı: "Sokak pisti · yol tutuş".
 - `AppText uppercase` karma çocuklarda da tr-TR büyük harf kullanır (LASTİK).
+
+---
+
+## 8. Erişilebilirlik ve Ayarlar (2026-09-21)
+
+Kaynak: [gui-ux-rehber-analizi.md](gui-ux-rehber-analizi.md) — genel bir GUI/UX
+rehberinin bu koda uygulanabilir maddelerinin gap-analizi ve uygulaması.
+
+**Renk körü desteği** — `theme/colors.ts`'te `SemanticColors` (danger/attention/
+positive/record/info) + `semanticColors(mode)`. Üç mod: Protanopi/Deuteranopi
+(kırmızı/yeşil yerine turuncu/mavi), Tritanopi (sarı yerine turuncu, mor yerine
+pembe-mor). HUD'da anlam taşıyan her renk (bayrak, lastik aşınması, hedef/başarım
+verdict'i, en hızlı tur) artık ham `colors.neonCoral` gibi sabitler yerine bu
+çözümlenmiş paleti okur — `colorblindMode` store'da (`settingsSlice.ts`), Ayarlar
+ekranından değişir, HUD anında günceller. Renk hâlâ hiçbir yerde tek başına
+anlam taşımıyor (metin/ikon her zaman eşlik ediyor).
+
+**Ayarlar ekranı** (`features/settings/SettingsScreen.tsx`, rota: `/settings`,
+Profil ekranındaki "Ayarlar" butonundan): renk körü modu (canlı swatch önizlemeli),
+yazı boyutu (Normal/Büyük/En büyük — `AppText` artık `useGameStore((s) => s.textScale)`
+okuyup `fontSize`/`lineHeight`'i ölçekliyor), HUD yoğunluğu ön ayarı (altyapı hazır,
+ekran tarafında henüz tüketilmiyor). Tercihler oturum ömürlü — kalıcı kayıt/yükleme
+geldiğinde bu slice de ona bağlanmalı.
+
+**Kontrast** — `textTertiary` `#5C5E63` → `#8A8D93` (WCAG AA 4.5:1 eşiğinin altından
+üstüne, `bgElevated` üzerinde ~2.7:1 → ~5.3:1).
+
+**Dokunma hedefleri** — yatay nav kapsülü `layout.navItemSize` 40→44px; dikey hap
+sekme çubuğunda dar ekranda padding 8→10 + her iki düzende `hitSlop={6}`.
+
+**Yeni atomlar**: `ProgressLoader` (gerçek ilerleme + dönen ipucu, ~400ms gecikmeyle
+gösterilir — kısa yüklemede hiç görünmez; `app/_layout.tsx`'in font/Skia yükleme
+ekranında kullanılıyor), `ConfirmDialog` (yıkıcı aksiyon onayı, henüz tüketilmiyor),
+`Toast` (engellemeyen bildirim, tek seferde tek, otomatik kapanır, henüz bağlanmadı).
+
+**Yeni organism**: `GridIntro` — yarış Tur 0'da başladığında ~2,4 sn'liğine tam ekran
+başlangıç gridini (pozisyon · sürücü · takım rengi) gösterip kendiliğinden kapanır;
+dokunarak erken kapatılabilir. `LiveRacePanel`'de "yeni tur" efekti tetikleniyor.

@@ -11,6 +11,14 @@ import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-goog
 import { JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
 import { colors } from '@/theme';
 import { queryClient } from '@/lib/queryClient';
+import { ProgressLoader } from '@/components/atoms';
+
+const LOADING_TIPS = [
+  'Pit duvarı: pit çağrısı sıraya alındıktan sonraki turda uygulanır.',
+  'Lastik aşınması %95 üstüne çıkınca kırmızıya döner — o turda pite girmeyi düşünün.',
+  'Mühendis brifingindeki öneriyi tutmak +8 RP ve +5 skor kazandırır.',
+  'Sarı bayrakta geçiş zorlaşır, güvenlik aracında pit kaybı yarıya iner.',
+];
 
 // Third-party deprecation notices we cannot act on; keep the dev overlay for real problems.
 LogBox.ignoreLogs(['InteractionManager has been deprecated', '[react-native-skia] SkPath']);
@@ -57,8 +65,24 @@ export default function RootLayout() {
     };
   }, []);
 
+  // Real progress from the two known stages — never a decoy animation. Shown
+  // only past a short grace window so a sub-second native boot never flashes
+  // it. Once both stages finish this branch stops rendering for good, so
+  // there is nothing to reset `showLoader` back to.
+  const stagesDone = Number(fontsLoaded) + Number(skiaReady);
+  const [showLoader, setShowLoader] = useState(false);
+  useEffect(() => {
+    if (fontsLoaded && skiaReady) return;
+    const id = setTimeout(() => setShowLoader(true), 400);
+    return () => clearTimeout(id);
+  }, [fontsLoaded, skiaReady]);
+
   if (!fontsLoaded || !skiaReady) {
-    return <View style={styles.root} />;
+    return (
+      <View style={[styles.root, styles.loadingCenter]}>
+        {showLoader && <ProgressLoader value={10 + (stagesDone / 2) * 90} tips={LOADING_TIPS} label="Pit Wall hazırlanıyor" />}
+      </View>
+    );
   }
 
   return (
@@ -85,5 +109,10 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.bgDeepSpace,
+  },
+  loadingCenter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
   },
 });

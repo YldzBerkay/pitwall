@@ -82,6 +82,7 @@ import { createStaffSlice, type StaffSlice } from './slices/staffSlice';
 import { createEspionageSlice, type EspionageSlice } from './slices/espionageSlice';
 import { INJURY_ROUNDS, createDriverSlice, type DriverSlice } from './slices/driverSlice';
 import { createLeagueSlice, type LeagueSlice } from './slices/leagueSlice';
+import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import type { StatKey } from '@/data/driverMarket';
 
 /** Stat label on the garage card → engine key. */
@@ -354,7 +355,7 @@ interface CoreState {
   paddockNews: string[];
 }
 
-export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice;
+export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
@@ -364,6 +365,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   ...createEspionageSlice(set, get),
   ...createDriverSlice(set, get),
   ...createLeagueSlice(set, get),
+  ...createSettingsSlice(set, get),
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},

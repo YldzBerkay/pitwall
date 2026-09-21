@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
+import { router } from 'expo-router';
 import { colors, spacing } from '@/theme';
-import { AppText, GlassCard, Icon, RankIcon, Cols, ScreenHeader } from '@/components/atoms';
+import { AppText, GlassButton, GlassCard, Icon, RankIcon, Cols, ScreenHeader } from '@/components/atoms';
+import { haptic } from '@/lib/haptics';
 import { playerTeam } from '@/data/teams';
 import {
   achievementDefs,
@@ -44,6 +46,16 @@ export function ProfileScreen() {
         icon="profile"
         title="Profil"
         subtitle="Başarımlar kariyer skoru verir, skor rütbeni belirler. Zayıf takımla kazanmak daha çok sayılır."
+        right={
+          <GlassButton
+            label="Ayarlar"
+            variant="ghost"
+            onPress={() => {
+              haptic.select();
+              router.push('/settings');
+            }}
+          />
+        }
       />
 
       <Cols align="flex-start">
