@@ -361,10 +361,12 @@ anlam taşımıyor (metin/ikon her zaman eşlik ediyor).
 **Ayarlar ekranı** (`features/settings/SettingsScreen.tsx`, rota: `/settings`,
 Profil ekranındaki "Ayarlar" butonundan): renk körü modu (canlı swatch önizlemeli),
 yazı boyutu (Normal/Büyük/En büyük — `AppText` artık `useGameStore((s) => s.textScale)`
-okuyup `fontSize`/`lineHeight`'i ölçekliyor), HUD yoğunluğu ön ayarı (altyapı hazır,
-ekran tarafında henüz tüketilmiyor). Tercihler `zustand/middleware`'in `persist`'i +
+okuyup `fontSize`/`lineHeight`'i ölçekliyor), HUD yoğunluğu (Tam/Sade — `LiveRacePanel`
+`hudCompact` okuyup pit duvarındaki lastik aşınması yüzdesi/çubuğunu ve sıralama
+tablosundaki pit sayısı sütununu gizliyor; konum, tur, sıralama ve pit duvarının
+kendisi her zaman kalır). Tercihler `zustand/middleware`'in `persist`'i +
 `@react-native-async-storage/async-storage` ile cihazda kalıcı (`gameStore.ts`,
-anahtar `pitwall-settings`, yalnızca `colorblindMode`/`textScale`/`hudCompact`
+anahtar `pitwall-store`, yalnızca `colorblindMode`/`textScale`/`hudCompact`/`auth`
 `partialize` edilir). Kariyer/yarış durumu bunun dışında — o hâlâ oturum ömürlü,
 ayrı bir iş (`docs/FEATURES.md`: "Kayıt/yükleme").
 

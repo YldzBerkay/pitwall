@@ -57,7 +57,7 @@
 ## Ekranlar
 - ✅ Garaj (kahraman yarış kartı, bugün yapılacaklar, araç, sürücüler), Yarış, Geliştirme, Padok, Sponsorluk, Şampiyona, Profil
 - ✅ **Dikey + yatay kabuk**: alt hap sekme çubuğu / yan kapsül, `Cols` ile uyarlanan düzen, açıklayıcı `ScreenHeader`; üç kalite ajanıyla incelenip düzeltildi (docs/design-system.md §7)
-- ✅ **Ayarlar** (`features/settings/SettingsScreen.tsx`, `/settings`, Profil'den açılır): renk körü modu, yazı boyutu, HUD yoğunluğu ön ayarı — `@react-native-async-storage/async-storage` üzerinden zustand `persist` ile cihazda kalıcı (yalnızca bu tercihler; kariyer/yarış durumu aşağıdaki "Kayıt/yükleme" maddesinin kapsamında, hâlâ yok) (docs/design-system.md §8)
+- ✅ **Ayarlar** (`features/settings/SettingsScreen.tsx`, `/settings`, Profil'den açılır): renk körü modu, yazı boyutu, HUD yoğunluğu (Tam/Sade — `LiveRacePanel`'e bağlı, sade modda aşınma yüzdesi/pit sayısı gizlenir) — `@react-native-async-storage/async-storage` üzerinden zustand `persist` ile cihazda kalıcı (yalnızca bu tercihler + hesap oturumu; kariyer/yarış durumu aşağıdaki "Kayıt/yükleme" maddesinin kapsamında, hâlâ yok) (docs/design-system.md §8)
 
 ## Kimlik (`server/src/auth/*`, `server/src/identity/*`) — Faz 1a
 - ✅ Postgres tabanlı hesap kimliği: `users` + `auth_identities`, sağlayıcı başına tek satır, hesap birleştirme e-posta özetinden

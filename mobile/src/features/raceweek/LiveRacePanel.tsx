@@ -37,6 +37,7 @@ export function LiveRacePanel() {
   const track = useGameStore((s) => s.track());
   const colorblindMode = useGameStore((s) => s.colorblindMode);
   const semantic = semanticColors(colorblindMode);
+  const hudCompact = useGameStore((s) => s.hudCompact);
 
   const shell = useShellLayout();
   const MAP_HEIGHT = Math.min(MAP_HEIGHT_MAX, Math.round(shell.height * 0.5));
@@ -163,7 +164,7 @@ export function LiveRacePanel() {
             )}
           </View>
           <AppText variant="labelSmall" color={colors.textTertiary} className="mb-1">
-            Sürücü · lastik · pit sayısı · lidere fark (sn)
+            {hudCompact ? 'Sürücü · lastik · lidere fark (sn)' : 'Sürücü · lastik · pit sayısı · lidere fark (sn)'}
           </AppText>
           <ScrollView style={{ height: MAP_HEIGHT + 22 }} showsVerticalScrollIndicator={false}>
             {race.cars.map((c) => (
@@ -171,9 +172,11 @@ export function LiveRacePanel() {
                 <Pos n={c.position} lit={c.isPlayer} width={22} />
                 <DriverCell entry={c} dim={c.dnf} showTeam={false} />
                 <CompoundDot compound={c.compound} />
-                <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 14, textAlign: 'right' }}>
-                  {c.stops}
-                </AppText>
+                {!hudCompact && (
+                  <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 14, textAlign: 'right' }}>
+                    {c.stops}
+                  </AppText>
+                )}
                 <AppText variant="labelSmall" color={c.dnf ? semantic.danger : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 54, textAlign: 'right' }}>
                   {c.dnf ? 'Dışı' : c.pitting ? 'Pit' : fmtGap(c.position === 1 ? 0 : c.totalSec - race.cars[0].totalSec)}
                 </AppText>
@@ -219,17 +222,21 @@ export function LiveRacePanel() {
                   </AppText>
                   <CompoundDot compound={car.compound} />
                 </View>
-                <View className="flex-row items-center justify-between">
-                  <AppText variant="labelSmall" color={colors.textTertiary}>
-                    Lastik aşınması
-                  </AppText>
-                  <AppText variant="labelSmall" color={wearTint} style={{ fontFamily: 'JetBrainsMono_700Bold' }}>
-                    {car.dnf ? 'Yarış dışı' : `%${wearPct} · ${car.stops} pit`}
-                  </AppText>
-                </View>
-                <View className="h-1.5 overflow-hidden rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
-                  <View className="h-full rounded-full" style={{ width: `${Math.min(100, wearPct)}%`, backgroundColor: wearTint }} />
-                </View>
+                {!hudCompact && (
+                  <>
+                    <View className="flex-row items-center justify-between">
+                      <AppText variant="labelSmall" color={colors.textTertiary}>
+                        Lastik aşınması
+                      </AppText>
+                      <AppText variant="labelSmall" color={wearTint} style={{ fontFamily: 'JetBrainsMono_700Bold' }}>
+                        {car.dnf ? 'Yarış dışı' : `%${wearPct} · ${car.stops} pit`}
+                      </AppText>
+                    </View>
+                    <View className="h-1.5 overflow-hidden rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                      <View className="h-full rounded-full" style={{ width: `${Math.min(100, wearPct)}%`, backgroundColor: wearTint }} />
+                    </View>
+                  </>
+                )}
                 {!car.dnf && !race.finished && (
                   <>
                     <CompoundPicker

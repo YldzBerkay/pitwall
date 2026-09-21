@@ -189,8 +189,9 @@ Yukarıdaki "en somut 5 bulgu" ve birkaç ek madde koda uygulandı. Tip kontrol�
 2. **Ayarlar ekranı** — yeni `mobile/src/features/settings/SettingsScreen.tsx`
    (`app/settings.tsx` rotası), Profil ekranındaki "Ayarlar" butonundan açılıyor:
    renk körü modu seçici (canlı önizleme swatch'larıyla), yazı boyutu (Normal/Büyük/En
-   büyük — `AppText` artık `textScale`'i okuyor), HUD yoğunluğu (Tam/Sade, altyapısı
-   `hudCompact` store alanı — ekran bazlı budama henüz bağlanmadı, sıradaki iş).
+   büyük — `AppText` artık `textScale`'i okuyor), HUD yoğunluğu (Tam/Sade — `hudCompact`,
+   `LiveRacePanel`'e bağlandı: sade modda pit duvarındaki aşınma yüzdesi/çubuğu ve
+   sıralamadaki pit sayısı sütunu gizlenir).
 3. **Kontrast düzeltmesi** — `textTertiary` `#5C5E63` (~2.7:1) → `#8A8D93` (~5.3:1
    `bgElevated` üzerinde), WCAG AA eşiğinin üzerine çıkarıldı.
 4. **Dokunma hedefleri** — yatay kabuk `navItemSize` 40→44px (Apple HIG eşiği);
@@ -212,18 +213,32 @@ Yukarıdaki "en somut 5 bulgu" ve birkaç ek madde koda uygulandı. Tip kontrol�
    kuralına karşılık gelen ayrı bir ton tanımlandı (`colors.infoBlue` / `semantic.info`).
 9. **Ayarlar kalıcılığı** (sonradan eklendi) — `gameStore.ts` artık `zustand/middleware`'in
    `persist`'i + `@react-native-async-storage/async-storage` ile sarmalı; yalnızca
-   `colorblindMode`/`textScale`/`hudCompact` cihazda saklanıyor (`partialize`). Kariyer/
-   yarış/ekonomi durumu bilinçli olarak dışarıda bırakıldı — `docs/FEATURES.md`'deki
-   "Kayıt/yükleme" maddesi hâlâ ayrı ve çok daha büyük bir iş (tüm oyun durumunun
-   serileştirilmesi + online lig ile tutarlılık).
+   `colorblindMode`/`textScale`/`hudCompact`/`auth` (hesap oturumu, bkz. madde 11) cihazda
+   saklanıyor (`partialize`). Kariyer/yarış/ekonomi durumu bilinçli olarak dışarıda
+   bırakıldı — `docs/FEATURES.md`'deki "Kayıt/yükleme" maddesi hâlâ ayrı ve çok daha
+   büyük bir iş (tüm oyun durumunun serileştirilmesi + online lig ile tutarlılık).
+10. **HUD "Sade" modu bağlandı** (sonradan eklendi) — `LiveRacePanel` artık `hudCompact`
+    okuyor: pit duvarındaki lastik aşınması yüzdesi/çubuğu ve sıralama tablosundaki pit
+    sayısı sütunu sade modda gizlenir; konum, tur, sıralama, pit çağrı kontrolü ve karar
+    anı kartı her iki modda da kalır.
+11. **Faz 1b — hesap sistemi mobil istemciye bağlandı** (sonradan eklendi) — server'ın
+    bitmiş kimlik sistemi (`docs/FEATURES.md` §Kimlik) `lib/api/identity.ts` +
+    `authSlice.ts` + `features/auth/AuthScreen.tsx` (`/auth`, Profil'deki "Hesap"
+    kartından) ile bağlandı: e-posta+şifre giriş/kayıt, tek ekranda takma ad + bölge +
+    aranabilir ülke seçimi. `leagueSlice`'daki anonim `managerId` artık signed-in
+    hesabın gerçek id'sini kullanıyor. Google/Apple/Facebook bilinçli olarak dışarıda
+    bırakıldı (native SDK + cihaz testi gerektiriyor); butonlar arayüzde "yakında"
+    olarak görünüyor.
 
 ### Bilinçli olarak yapılmayanlar
 
 - **Kariyer/yarış durumu kalıcılığı**: `docs/FEATURES.md`'nin "Kayıt/yükleme" maddesi
-  hâlâ açık — yalnızca görüntü/erişilebilirlik tercihleri kalıcı hale geldi (yukarı bakın).
+  hâlâ açık — yalnızca görüntü/erişilebilirlik tercihleri ve hesap oturumu kalıcı
+  hale geldi (yukarı bakın).
 - **Sektör bazlı zamanlama/renklendirme**: `raceEngine.ts`'e yeni bir veri modeli
   (sektör süreleri) eklemek gerektirir — kapsam dışı bırakıldı, ayrı bir karar konusu.
-- **HUD "Sade" modunun gerçek etkisi**: `hudCompact` store alanı ve Ayarlar UI'ı hazır,
-  ama `LiveRacePanel`'in hangi ikincil öğeleri gizleyeceği henüz kodlanmadı — sıradaki
-  iş olarak bırakıldı (tek ekranı etkileyen, düşük riskli bir takip PR'ı olabilir).
+- **Google/Apple/Facebook girişi**: server tarafı hazır ve test edilmiş, ama native
+  SDK bağlama (client id, bundle id, cihaz testi) bu işin kapsamı dışında bırakıldı.
+- **Lig oluşturma/davet**: online lige katılım hâlâ tek sabit takıma (`bosphorus`)
+  bağlı — takım seçimi/davet akışı ayrı bir iş.
 - **Sürüş-HUD'a özgü maddeler**: yukarıda açıklandığı gibi tür farkı nedeniyle atlandı.
