@@ -277,6 +277,98 @@ describe('economy http', () => {
     assert.equal(body.error, 'not_enough_gold');
   });
 
+  it('convertGoldToRp: gold spent, rp credited and the cap counter are mutually consistent — never one without the others', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+    await query(`update users set gold = 1000 where id = $1`, [owner.id]);
+
+    const goldBefore = 1000;
+    const rpBefore = await rpOf(lobbyId, 'aurelia');
+    const amount = 5;
+
+    const { status, body } = await post('/economy/action', owner.token, {
+      lobbyId, type: 'convertGoldToRp', gold: amount,
+    });
+    assert.equal(status, 200);
+
+    const goldAfter = (await query<{ gold: number }>('select gold from users where id = $1', [owner.id])).rows[0].gold;
+    const rpAfter = await rpOf(lobbyId, 'aurelia');
+    const capsAfter = (await query<{ gold_converted: number }>(
+      `select gold_converted from daily_caps where user_id = $1`,
+      [owner.id],
+    )).rows[0];
+
+    assert.equal(goldAfter, goldBefore - amount, 'gold must be spent by exactly the converted amount');
+    assert.equal(rpAfter, rpBefore + amount * GOLD_TO_RP, 'rp must be credited for exactly the converted amount');
+    assert.equal(capsAfter.gold_converted, amount, 'the cap counter must record exactly the converted amount');
+    assert.equal(body.gold, goldAfter);
+    assert.equal(body.rp, rpAfter);
+  });
+
+  it('convertGoldToRp past the daily cap is refused and spends nothing', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+    await query(`update users set gold = 1000 where id = $1`, [owner.id]);
+
+    // Use up the whole day's cap first.
+    const first = await post('/economy/action', owner.token, {
+      lobbyId, type: 'convertGoldToRp', gold: GOLD_TO_RP_DAILY_CAP,
+    });
+    assert.equal(first.status, 200);
+    const goldAfterFirst = (await query<{ gold: number }>('select gold from users where id = $1', [owner.id])).rows[0].gold;
+    const rpAfterFirst = await rpOf(lobbyId, 'aurelia');
+
+    // Any further conversion this UTC day must be refused, and refused
+    // ATOMICALLY — no gold taken even though the account can afford it.
+    const second = await post('/economy/action', owner.token, { lobbyId, type: 'convertGoldToRp', gold: 1 });
+    assert.equal(second.status, 409);
+    assert.equal(second.body.error, 'cap_reached');
+
+    const goldAfterSecond = (await query<{ gold: number }>('select gold from users where id = $1', [owner.id])).rows[0].gold;
+    const rpAfterSecond = await rpOf(lobbyId, 'aurelia');
+    assert.equal(goldAfterSecond, goldAfterFirst, 'a cap-refused conversion must not have spent gold');
+    assert.equal(rpAfterSecond, rpAfterFirst, 'a cap-refused conversion must not have credited rp');
+  });
+
+  it('RACE: conversions racing for the same user never exceed the daily cap', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+    // Plenty of gold, so the daily cap — not the balance — is what's tested.
+    await query(`update users set gold = 1000000 where id = $1`, [owner.id]);
+
+    const rpBefore = await rpOf(lobbyId, 'aurelia');
+    const chunk = Math.max(1, Math.floor(GOLD_TO_RP_DAILY_CAP / 4));
+    const attempts = 8;
+
+    const results = await Promise.all(
+      Array.from({ length: attempts }, () => post('/economy/action', owner.token, {
+        lobbyId, type: 'convertGoldToRp', gold: chunk,
+      })),
+    );
+
+    const succeeded = results.filter((r) => r.status === 200).length;
+    const totalConverted = succeeded * chunk;
+    assert.ok(
+      totalConverted <= GOLD_TO_RP_DAILY_CAP,
+      `concurrent conversions overshot the daily cap: converted ${totalConverted} > cap ${GOLD_TO_RP_DAILY_CAP}`,
+    );
+
+    const capsAfter = (await query<{ gold_converted: number }>(
+      `select gold_converted from daily_caps where user_id = $1`,
+      [owner.id],
+    )).rows[0];
+    assert.equal(capsAfter.gold_converted, totalConverted, 'the cap counter must match exactly what was actually converted');
+
+    const goldAfter = (await query<{ gold: number }>('select gold from users where id = $1', [owner.id])).rows[0].gold;
+    assert.equal(goldAfter, 1000000 - totalConverted, 'gold spent must match exactly what was converted');
+
+    const rpAfter = await rpOf(lobbyId, 'aurelia');
+    assert.equal(rpAfter, rpBefore + totalConverted * GOLD_TO_RP, 'rp credited must match exactly what was converted');
+  });
+
   it('the team key in the request body is ignored — the seat, not the body, decides', async () => {
     const owner = await makeUser();
     const lobbyId = await makeLobby(owner.id);

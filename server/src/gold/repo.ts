@@ -220,8 +220,21 @@ export async function capsFor(userId: string, at: Date): Promise<Caps> {
   };
 }
 
-export async function bumpAdsWatched(userId: string, at: Date, by = 1): Promise<void> {
-  await query(
+/**
+ * `client` defaults to unset, which routes the write through the
+ * module-level pool (`query`) for existing standalone callers (tests, and
+ * any future one-off bump). Passing a `PoolClient` — as a caller running
+ * its own `withTransaction`, like `convertGoldToRp` below, does — folds
+ * this write into that transaction instead of committing it separately.
+ */
+export async function bumpAdsWatched(
+  userId: string,
+  at: Date,
+  by = 1,
+  client?: PoolClient,
+): Promise<void> {
+  const run = (text: string, params: unknown[]) => (client ? client.query(text, params) : query(text, params));
+  await run(
     `insert into daily_caps (user_id, day, ads_watched)
        values ($1, ($2::timestamptz at time zone 'UTC')::date, $3)
      on conflict (user_id, day)
@@ -230,12 +243,43 @@ export async function bumpAdsWatched(userId: string, at: Date, by = 1): Promise<
   );
 }
 
-export async function bumpGoldConverted(userId: string, at: Date, by: number): Promise<void> {
-  await query(
+/**
+ * Same optional-`client` shape as `bumpAdsWatched`, plus the conditional-
+ * upsert cap enforcement `grantGoldForAd` already uses for `ads_watched`:
+ * the `WHERE` clause makes the day's cap the write's OWN precondition
+ * rather than a fact established by a prior `capsFor` read, so two
+ * concurrent conversions for the same user can't both read "under cap" and
+ * both get through. `cap` is optional so the handful of existing tests that
+ * call this to seed a day's counter (with no cap in mind) keep compiling —
+ * omitting it disables the check, matching the old unconditional behaviour.
+ * Returns whether the bump was applied (false means the cap was already at
+ * or past `cap` and the whole call, including `by`, was rejected).
+ */
+export async function bumpGoldConverted(
+  userId: string,
+  at: Date,
+  by: number,
+  client?: PoolClient,
+  cap?: number,
+): Promise<boolean> {
+  const run = (text: string, params: unknown[]) => (client ? client.query(text, params) : query(text, params));
+  if (cap === undefined) {
+    await run(
+      `insert into daily_caps (user_id, day, gold_converted)
+         values ($1, ($2::timestamptz at time zone 'UTC')::date, $3)
+       on conflict (user_id, day)
+         do update set gold_converted = daily_caps.gold_converted + excluded.gold_converted`,
+      [userId, at, by],
+    );
+    return true;
+  }
+  const res = await run(
     `insert into daily_caps (user_id, day, gold_converted)
        values ($1, ($2::timestamptz at time zone 'UTC')::date, $3)
      on conflict (user_id, day)
-       do update set gold_converted = daily_caps.gold_converted + excluded.gold_converted`,
-    [userId, at, by],
+       do update set gold_converted = daily_caps.gold_converted + excluded.gold_converted
+       where daily_caps.gold_converted + $3 <= $4`,
+    [userId, at, by, cap],
   );
+  return (res.rowCount ?? 0) > 0;
 }

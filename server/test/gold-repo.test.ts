@@ -107,6 +107,63 @@ describe('gold repo', () => {
     assert.equal((await capsFor(userId, new Date('2026-03-06T12:00:00Z'))).goldConverted, 0);
   });
 
+  it('bumpGoldConverted(client) joins the caller\'s transaction: a failure after it rolls the bump back', async () => {
+    const userId = await makeUser();
+    const day = new Date('2026-03-10T12:00:00Z');
+    class BoomError extends Error {}
+
+    await assert.rejects(() => withTransaction(async (client) => {
+      const ok = await bumpGoldConverted(userId, day, 4, client);
+      assert.equal(ok, true, 'the bump itself should have succeeded before the throw');
+      throw new BoomError('simulate a failure after the bump, before commit');
+    }), BoomError);
+
+    assert.equal((await capsFor(userId, day)).goldConverted, 0, 'a rolled-back transaction must not leave the bump committed');
+  });
+
+  it('bumpGoldConverted(client, cap) commits when the caller\'s transaction commits', async () => {
+    const userId = await makeUser();
+    const day = new Date('2026-03-11T12:00:00Z');
+
+    await withTransaction(async (client) => {
+      const ok = await bumpGoldConverted(userId, day, 6, client, 100);
+      assert.equal(ok, true);
+    });
+
+    assert.equal((await capsFor(userId, day)).goldConverted, 6);
+  });
+
+  it('bumpGoldConverted with a cap is per UTC day and never exceeds it', async () => {
+    const userId = await makeUser();
+    const day1 = new Date('2026-03-12T23:00:00Z');
+    const day2 = new Date('2026-03-13T01:00:00Z');
+    const cap = 10;
+
+    assert.equal(await bumpGoldConverted(userId, day1, 6, undefined, cap), true);
+    assert.equal(await bumpGoldConverted(userId, day1, 6, undefined, cap), false, 'would push the day past its cap');
+    assert.equal((await capsFor(userId, day1)).goldConverted, 6, 'a refused bump must not have partially applied');
+
+    // A fresh UTC day gets a fresh allowance.
+    assert.equal(await bumpGoldConverted(userId, day2, 6, undefined, cap), true);
+    assert.equal((await capsFor(userId, day2)).goldConverted, 6);
+  });
+
+  it('RACE: concurrent bumpGoldConverted calls for one user never exceed the cap', async () => {
+    const userId = await makeUser();
+    const day = new Date('2026-03-14T12:00:00Z');
+    const cap = 10;
+    const attempts = 6;
+
+    const results = await Promise.all(
+      Array.from({ length: attempts }, () => bumpGoldConverted(userId, day, 3, undefined, cap)),
+    );
+
+    const applied = results.filter(Boolean).length;
+    const total = applied * 3;
+    assert.ok(total <= cap, `concurrent bumps overshot the cap: ${total} > ${cap}`);
+    assert.equal((await capsFor(userId, day)).goldConverted, total);
+  });
+
   it('reports zeroes for a user with no cap row yet', async () => {
     const userId = await makeUser();
     const caps = await capsFor(userId, new Date());

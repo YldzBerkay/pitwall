@@ -19,7 +19,7 @@
  */
 import { startJob, claimJob, skipJob } from './jobs.ts';
 import { loadTeamEconomy, spendRp, addRp, setFactoryLevel } from './repo.ts';
-import { spendGold, capsFor, bumpGoldConverted } from '../gold/repo.ts';
+import { spendGold, bumpGoldConverted } from '../gold/repo.ts';
 import { buildSlotState, SlotStateError, type SlotState } from './state.ts';
 import { withTransaction } from '../db/pool.ts';
 import { departmentCost, factoryDepartments, DEPARTMENT_MAX_LEVEL } from '@pitwall/shared/factory';
@@ -157,38 +157,43 @@ export async function runAction(input: RunActionInput): Promise<RunActionResult>
       if (!Number.isInteger(gold) || (gold as number) <= 0) return fail('bad_payload');
       const amount = gold as number;
 
-      const caps = await capsFor(userId, now);
-      const convertibleLeft = Math.max(0, GOLD_TO_RP_DAILY_CAP - caps.goldConverted);
-      if (amount > convertibleLeft) return fail('cap_reached');
-
-      // The gold spend and the RP credit are one transaction — see the
-      // module docblock's note on `bumpGoldConverted` for why the daily-cap
-      // bookkeeping below could NOT join it too.
-      const spent = await withTransaction(async (client) => {
-        const chargedGold = await spendGold(client, userId, amount);
-        if (!chargedGold) return false;
-        await addRp(client, lobbyId, teamKey, amount * GOLD_TO_RP);
-        return true;
-      });
-      if (!spent) return fail('not_enough_gold');
-
-      // NOT ATOMIC WITH THE ABOVE, AND THIS IS A KNOWN GAP:
-      // `bumpGoldConverted` (gold/repo.ts) takes no `PoolClient` — it always
-      // writes through the module-level `query` helper, so it cannot join
-      // the `withTransaction` block above no matter how this call site is
-      // written. A crash between the transaction committing and this call
-      // would leave the gold spent and the RP credited, but the daily cap
-      // counter under-counted — letting a player convert slightly more than
-      // `GOLD_TO_RP_DAILY_CAP` gold across a day if that exact window is hit
-      // repeatedly. This mirrors the identical, already-documented gap in
-      // `gold/routes.ts` between `grantGold` and `bumpAdsWatched`. The real
-      // fix is the same shape: give `gold/repo.ts` a client-accepting
-      // variant (e.g. `bumpGoldConverted(client, userId, at, by)`) so this
-      // call can move inside the transaction above — out of scope here
-      // because `gold/repo.ts` is off-limits for this task. The window is
-      // minimized (this is the very next statement after the transaction
-      // resolves, with no other `await` in between) but not eliminated.
-      await bumpGoldConverted(userId, now, amount);
+      // All three writes — spend gold, credit RP, bump the day's cap
+      // counter — now live in ONE transaction via `bumpGoldConverted`'s
+      // client-accepting form (gold/repo.ts). A crash or thrown error
+      // partway through rolls all three back together, closing the gap a
+      // split version of this had: measured before the fix, a converted
+      // amount of 5 with the writes split left gold at 95 (100 - 5) but RP
+      // at 0 — paid and received nothing.
+      //
+      // The cap check is done the same way `grantGoldForAd` enforces
+      // `ads_watched`: a conditional upsert whose `WHERE` clause makes the
+      // cap the write's own precondition, not a fact read beforehand via
+      // `capsFor`. That closes the check-then-act race this call used to
+      // have (read the cap, then write, with no lock in between letting two
+      // concurrent conversions both read "under cap").
+      // `withTransaction` commits whatever the callback RETURNS — only a
+      // throw rolls back (see its docblock in db/pool.ts). `spendGold`
+      // already mutates `users.gold` before the cap check runs, so once it
+      // has succeeded, reporting `cap_reached` by returning (rather than
+      // throwing) would commit that spend with nothing to show for it —
+      // exactly the bug this whole fix exists to close. So the cap-reached
+      // path throws a sentinel, mirroring `grantGoldForAd`'s `CapReached`.
+      class CapReached extends Error {}
+      let result: 'not_enough_gold' | 'ok';
+      try {
+        result = await withTransaction(async (client) => {
+          const chargedGold = await spendGold(client, userId, amount);
+          if (!chargedGold) return 'not_enough_gold' as const;
+          const capOk = await bumpGoldConverted(userId, now, amount, client, GOLD_TO_RP_DAILY_CAP);
+          if (!capOk) throw new CapReached();
+          await addRp(client, lobbyId, teamKey, amount * GOLD_TO_RP);
+          return 'ok' as const;
+        });
+      } catch (err) {
+        if (err instanceof CapReached) return fail('cap_reached');
+        throw err;
+      }
+      if (result !== 'ok') return fail(result);
 
       return finish(lobbyId, teamKey, userId, now);
     }
