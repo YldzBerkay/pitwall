@@ -8,7 +8,29 @@ import { query, closePool } from '../src/db/pool.ts';
 
 describe('migrations', () => {
   before(async () => {
-    await query('drop table if exists auth_identities, users, schema_migrations cascade');
+    // Drop every table the migrations create — discovered from
+    // information_schema rather than hard-coded, so a future migration
+    // (say, 004_*.sql adding a table) can never be forgotten here. A
+    // hard-coded list previously named only the Phase 1a tables
+    // (auth_identities, users, schema_migrations); dropping `users` with
+    // CASCADE also silently dropped every FK referencing it from tables
+    // added by later migrations (gold_grants.user_id, daily_caps.user_id,
+    // etc.) without dropping those tables themselves. `runMigrations()`
+    // then re-ran every migration, but each one says
+    // `create table if not exists`, so the still-existing tables were a
+    // no-op and their FKs were never recreated — leaving the test database
+    // with orphanable rows and no referential integrity, silently diverged
+    // from what the migrations actually produce. Dropping every table
+    // (not just the ones this file's own scenario touches) guarantees
+    // `if not exists` is always false, so every constraint is genuinely
+    // rebuilt on each run.
+    const { rows } = await query<{ table_name: string }>(
+      `select table_name from information_schema.tables where table_schema = 'public'`,
+    );
+    if (rows.length > 0) {
+      const tables = rows.map((r) => `"${r.table_name}"`).join(', ');
+      await query(`drop table if exists ${tables} cascade`);
+    }
   });
   after(async () => { await closePool(); });
 
