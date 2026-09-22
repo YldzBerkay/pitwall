@@ -47,16 +47,6 @@ export function ProfileScreen() {
         icon="profile"
         title="Profil"
         subtitle="Başarımlar kariyer skoru verir, skor rütbeni belirler. Zayıf takımla kazanmak daha çok sayılır."
-        right={
-          <GlassButton
-            label="Ayarlar"
-            variant="ghost"
-            onPress={() => {
-              haptic.select();
-              router.push('/settings');
-            }}
-          />
-        }
       />
 
       <GlassCard contentStyle={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md }}>
