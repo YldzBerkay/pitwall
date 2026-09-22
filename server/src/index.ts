@@ -1,6 +1,9 @@
 /**
  * HTTP + WebSocket front for one league.
  *
+ *   GET  /slots · POST /slots/unlock  account slots (spec §4.1)
+ *   POST /lobby/create · /lobby/quick-match · /lobby/join   lobbies (spec §3)
+ *   POST /lobby/invite · GET /invites lobby invites (spec §3.6)
  *   GET  /state                       public league state
  *   POST /join     {teamKey, managerId}
  *   POST /weekend  {teamKey, managerId, setup?, tactics?, risk?, reliability?}
@@ -18,6 +21,7 @@ import { League } from './league.ts';
 import { Router } from './http/router.ts';
 import { registerAuthRoutes } from './auth/routes.ts';
 import { registerIdentityRoutes } from './identity/routes.ts';
+import { registerLobbyRoutes } from './lobby/routes.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
@@ -32,6 +36,7 @@ const league = new League({
 const identityRouter = new Router();
 registerAuthRoutes(identityRouter);
 registerIdentityRoutes(identityRouter);
+registerLobbyRoutes(identityRouter);
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
