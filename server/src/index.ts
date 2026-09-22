@@ -22,6 +22,7 @@ import { Router } from './http/router.ts';
 import { registerAuthRoutes } from './auth/routes.ts';
 import { registerIdentityRoutes } from './identity/routes.ts';
 import { registerLobbyRoutes } from './lobby/routes.ts';
+import { registerGoldRoutes } from './gold/routes.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
@@ -37,6 +38,7 @@ const identityRouter = new Router();
 registerAuthRoutes(identityRouter);
 registerIdentityRoutes(identityRouter);
 registerLobbyRoutes(identityRouter);
+registerGoldRoutes(identityRouter);
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
