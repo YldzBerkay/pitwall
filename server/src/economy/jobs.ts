@@ -269,37 +269,74 @@ export type SkipJobResult =
 
 /**
  * Skips the remaining time on a job, charging gold proportional to what is
- * left. The UPDATE that brings `ends_at` forward only runs AFTER the gold
- * spend succeeds, and both live in the same transaction, so a failed spend
- * can never move `ends_at`.
+ * left.
+ *
+ * The gold spend and the UPDATE that brings `ends_at` forward live in ONE
+ * transaction, and the UPDATE's `where` carries `claimed_at is null` alongside
+ * `id`/`lobby_id`/`team_key` — exactly the discipline `claimJob` already uses
+ * for its own conditional UPDATE. That guard is what makes the two directions
+ * of the guarantee hold together: a failed spend can never move `ends_at`,
+ * AND a spend that succeeds but hits a job some concurrent `claimJob` already
+ * claimed moves nothing either — the zero-row UPDATE fails the transaction
+ * (`already_claimed`) instead of returning `ok: true`, so the gold spend rolls
+ * back with it. The two either both land or both don't; there is no state
+ * where gold moves but the skip did not take effect.
+ *
+ * The initial SELECT is no longer what correctness depends on — a job read
+ * as unclaimed here could still be claimed by the time the UPDATE runs. It is
+ * kept only to produce a precise `not_found` / `already_claimed` result code
+ * on the common (non-racing) path before any gold is spent; the conditional
+ * UPDATE below is the actual guard.
+ *
+ * `withTransaction` only rolls back on a THROW — a function that merely
+ * `return`s still commits. So the zero-row case below cannot just return
+ * `{ ok: false }`; it throws a private sentinel to force the rollback (which
+ * undoes the gold spend), and the catch below turns that sentinel back into
+ * the ordinary `already_claimed` result.
  */
+class SkipLostRace extends Error {}
+
 export async function skipJob(input: SkipJobInput): Promise<SkipJobResult> {
   const { lobbyId, teamKey, jobId, userId, now } = input;
 
-  return withTransaction(async (client) => {
-    const res = await client.query<PendingJobRow>(
-      `select * from pending_jobs where id = $1 and lobby_id = $2 and team_key = $3`,
-      [jobId, lobbyId, teamKey],
-    );
-    const job = res.rows[0];
-    if (!job) return { ok: false, reason: 'not_found' };
-    if (job.claimed_at !== null) return { ok: false, reason: 'already_claimed' };
+  try {
+    return await withTransaction(async (client) => {
+      const res = await client.query<PendingJobRow>(
+        `select * from pending_jobs where id = $1 and lobby_id = $2 and team_key = $3`,
+        [jobId, lobbyId, teamKey],
+      );
+      const job = res.rows[0];
+      if (!job) return { ok: false, reason: 'not_found' };
+      if (job.claimed_at !== null) return { ok: false, reason: 'already_claimed' };
 
-    const remainingMs = job.ends_at.getTime() - now.getTime();
-    const goldCost = skipCostGold(remainingMs);
+      const remainingMs = job.ends_at.getTime() - now.getTime();
+      const goldCost = skipCostGold(remainingMs);
 
-    if (goldCost > 0) {
-      if (!userId) return { ok: false, reason: 'no_user' };
-      const spent = await spendGold(client, userId, goldCost);
-      if (!spent) return { ok: false, reason: 'not_enough_gold' };
+      if (goldCost > 0) {
+        if (!userId) return { ok: false, reason: 'no_user' };
+        const spent = await spendGold(client, userId, goldCost);
+        if (!spent) return { ok: false, reason: 'not_enough_gold' };
+      }
+
+      const updateRes = await client.query(
+        `update pending_jobs set ends_at = $2
+         where id = $1 and claimed_at is null`,
+        [jobId, now],
+      );
+      if (updateRes.rowCount === 0) {
+        // Someone claimed this job after our SELECT but before this UPDATE.
+        // Throw to force the rollback — otherwise the gold spend above would
+        // commit for a skip that moved nothing.
+        throw new SkipLostRace();
+      }
+      return { ok: true, goldCost };
+    });
+  } catch (err) {
+    if (err instanceof SkipLostRace) {
+      return { ok: false, reason: 'already_claimed' };
     }
-
-    await client.query(
-      `update pending_jobs set ends_at = $2 where id = $1`,
-      [jobId, now],
-    );
-    return { ok: true, goldCost };
-  });
+    throw err;
+  }
 }
 
 export interface OpenJob {

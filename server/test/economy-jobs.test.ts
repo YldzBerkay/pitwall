@@ -210,10 +210,56 @@ describe('economy jobs', () => {
     const claim = await claimJob({ lobbyId, teamKey: 'bosphorus', jobId: started.jobId, now: after });
     assert.equal(claim.ok, true);
 
+    const goldBefore = (await query<{ gold: number }>('select gold from users where id = $1', [userId])).rows[0].gold;
     const res = await skipJob({ lobbyId, teamKey: 'bosphorus', jobId: started.jobId, userId, now: after });
     assert.equal(res.ok, false);
     if (res.ok) return;
     assert.equal(res.reason, 'already_claimed');
+    const goldAfter = (await query<{ gold: number }>('select gold from users where id = $1', [userId])).rows[0].gold;
+    assert.equal(goldAfter, goldBefore, 'skipping an already-claimed job must not debit gold');
+  });
+
+  it('a claim racing a skip on the same fresh job: at most one succeeds, and gold moves only if the skip actually took effect', async () => {
+    const { lobbyId, userId } = await makeLobbyWithTeam();
+    await query('update users set gold = 1000 where id = $1', [userId]);
+    const now = new Date('2026-01-01T00:00:00Z');
+    const started = await startJob({ lobbyId, teamKey: 'bosphorus', kind: 'training', payload: {}, now });
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+
+    // Two independently-stamped `now`s, as two real concurrent requests would
+    // carry: the claim arrives once the job is actually ready, the skip
+    // arrives (or was in flight) just before that — giving it a positive
+    // remaining time, so it has real gold on the line, not the free skip a
+    // job past its own ends_at would report.
+    const claimNow = new Date(started.endsAt.getTime() + 1000);
+    const skipNow = new Date(started.endsAt.getTime() - 1000);
+
+    const goldBefore = (await query<{ gold: number }>('select gold from users where id = $1', [userId])).rows[0].gold;
+
+    const [claimRes, skipRes] = await Promise.all([
+      claimJob({ lobbyId, teamKey: 'bosphorus', jobId: started.jobId, now: claimNow }),
+      skipJob({ lobbyId, teamKey: 'bosphorus', jobId: started.jobId, userId, now: skipNow }),
+    ]);
+
+    const goldAfter = (await query<{ gold: number }>('select gold from users where id = $1', [userId])).rows[0].gold;
+
+    // Both winning is never acceptable — claim applies the economy effect,
+    // skip charges gold; a job cannot be simultaneously "still open, just
+    // sped up" and "claimed and applied".
+    assert.ok(!(claimRes.ok && skipRes.ok), 'both a claim and a skip succeeded on the same job');
+
+    if (skipRes.ok) {
+      // The skip actually took effect (won the race before the claim, or the
+      // claim was not yet ready) — gold must have moved.
+      assert.ok(goldAfter < goldBefore, 'skip reported success but did not debit gold');
+    } else {
+      // The skip lost the race (the job got claimed first) — the player
+      // must keep every last coin of gold. This is the bug: a skip that
+      // moves nothing must never charge.
+      assert.equal(skipRes.reason, 'already_claimed', `unexpected skip failure reason: ${skipRes.reason}`);
+      assert.equal(goldAfter, goldBefore, 'skip lost the race but still debited gold');
+    }
   });
 
   it('throws when starting a job with an unknown kind', async () => {
