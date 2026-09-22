@@ -409,3 +409,46 @@ devre dışı ("yakında"); `lib/api/identity.ts`'deki `loginWithSocial` sunucuy
 Uçtan uca doğrulama: yerel Postgres + sunucu çalıştırılıp `curl` ile
 register → me → login → patch akışı gerçek isteklerle test edildi (yanıt
 şekilleri istemci tiplerine birebir uyuyor).
+
+---
+
+## 10. Hesap/lobi navigasyon ayrımı (2026-09-22)
+
+Kullanıcı geri bildirimi: "lobinin ayarları ile kullanıcının ayarları iç içe" —
+Profil, diğer 6 yarış sekmesiyle aynı sırada bir sekme olduğu için hesap/ayarlar
+alanı ile "yarışmak için gerekli" gezinme aynı seviyede karışıyordu. Çözüm,
+hesabı kendi gezinme moduna ayırmak, sekme listesine değil:
+
+- **Header'da "PW" logosu kalktı** — sol üstte sürücü kaskı ikonlu bir buton var
+  (`Icon name="driver"`, glyph `racing-helmet`). Basınca `Modal` tabanlı bir
+  dropdown açılır: **Profilim** (`navigation.navigate('profile')`), **Ayarlar**
+  (`/settings`), ve hesap durumu satırı — giriş yapılmışsa takma ad + **Çıkış**,
+  yapılmamışsa **Giriş yap** (`/auth`).
+- **Profil artık bir yarış sekmesi değil.** `NavShell`'in alt gezinme listesi
+  (`raceItems`) `profile` rotasını filtreleyip çıkarır — sekmede sadece Garaj ·
+  Yarış · Geliştir · Sponsor · Padok · Lig kalır (6 sekme, hepsi "yarışmak için
+  gerekli"). `profile` rotası `(tabs)` grubunda kayıtlı kalmaya devam eder
+  (`app/(tabs)/_layout.tsx` değişmedi) — sadece ikonu alt barda gösterilmiyor,
+  yalnızca header menüsünden ulaşılıyor.
+- **Profil ekranındayken alt gezinme değişir.** `state.routes[state.index]?.name
+  === 'profile'` olduğunda (`inAccountMode`), hem dikey pill hem yatay kapsül,
+  normal sekme ikonları yerine iki eylem gösterir: **Oyuna dön** (`index`
+  sekmesine döner) ve **Lobi** (bağlantı durumuna göre renklenen nokta/ikon,
+  basınca `LobbySwitcher` modalını açar — "tekrar girmek istediği lobiyi
+  seçeceği alan").
+- **`LobbySwitcher`** (`components/organisms/LobbySwitcher.tsx`): tek-lobi
+  bağlan/ayrıl akışını (`leagueSlice.ts`'teki `connectLeague`/`disconnectLeague`,
+  daha önce yalnızca `RaceWeekScreen`'deki `LeagueCard`'da vardı) hesap moduna
+  taşıyan bir modal. `RaceWeekScreen`'deki `LeagueCard` **kaldırılmadı** — o,
+  hafta sonu kararlarıyla (ayar senkronu, check-in penceresi) bağlamsal olarak
+  hâlâ orada kalmalı; `LobbySwitcher` hızlı "hangi lobidayım / bağlan-ayrıl"
+  erişimi için ayrı ve daha sade bir yüzey.
+
+**Kasıtlı olarak yapılmayan:** kullanıcı "zaten 5 slotluk bir lobi sistemimiz
+yok muydu (3 ücretsiz + 2 Altınla)" diye sordu — bu,
+`docs/superpowers/specs/2026-09-19-cok-oyunculu-kabuk-tasarim.md`'de yazılı bir
+**Faz 2 tasarım belgesi**, hiç kodlanmadı (sunucuda `account_slots`/
+`lobby_seats`/`lobby_economy` tablosu yok, matchmaking yok, slot satın alma yok).
+`LobbySwitcher` o sistemin yerine geçmiyor — bugün var olan **tek lobi**
+bağlantısını doğru yere taşıyor. Gerçek çoklu-lobi/slot sistemi ayrı, çok daha
+büyük bir iş olarak kapsam dışı bırakıldı.
