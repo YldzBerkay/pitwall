@@ -83,6 +83,108 @@ function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
 }
 
+export interface GrantGoldForAdInput {
+  userId: string;
+  externalId: string;
+  gold: number;
+  /** The instant the callback was processed; caps are counted against its UTC day. */
+  at: Date;
+  /** The daily allowance (`ADS_PER_DAY` from `@pitwall/shared/economy`) — passed in, not imported, so this module stays free of a dependency on `shared`. */
+  cap: number;
+}
+
+export type GrantGoldForAdResult =
+  | { ok: true; gold: number }
+  | { ok: false; reason: 'duplicate' }
+  | { ok: false; reason: 'cap_reached' };
+
+/** Sentinel thrown to unwind the transaction when the cap bump affects no row — never leaked past this function. */
+class CapReached extends Error {}
+
+/**
+ * The atomic version of `grantGold` for the ad-watch faucet: the ledger
+ * insert, the `users.gold` credit, and the `daily_caps` bump all happen
+ * under ONE `withTransaction`, so a crash or error partway through can never
+ * leave gold credited without the counter moving (or vice versa) — the
+ * failure mode `grantGold` + a separate `bumpAdsWatched` call had.
+ *
+ * Statement order, and why it is not arbitrary:
+ *
+ * 1. INSERT INTO gold_grants first. This is the operation `gold_grants_unique`
+ *    can reject with a 23505, and a duplicate (a Google retry of an
+ *    already-credited ad) must be detected before anything else happens —
+ *    in particular, before the cap bump below, so a retried callback never
+ *    consumes a second slot in the day's allowance. Catching the unique
+ *    violation here means the transaction is aborted with NOTHING else
+ *    attempted.
+ *
+ * 2. THEN the conditional cap bump: an upsert into `daily_caps` whose
+ *    `DO UPDATE ... WHERE ads_watched < cap` mirrors `spendGold`'s
+ *    `WHERE gold >= amount` pattern — the cap is enforced by the write
+ *    itself, not by a `capsFor` read beforehand, so two concurrent grants
+ *    for the same user can't both read "7" and both get through. If the
+ *    row already exists and is at/over cap, the WHERE clause makes the
+ *    UPDATE affect zero rows, `RETURNING` yields nothing, and this function
+ *    throws `CapReached` to roll back the WHOLE transaction — undoing the
+ *    ledger insert from step 1. That is exactly why the insert had to come
+ *    first: if the ledger row were inserted last, a cap-reached rollback
+ *    would still have to undo it, but ordering it first means a plain
+ *    `ROLLBACK` (thrown error) is sufficient — there is nothing after the
+ *    cap bump that could partially commit.
+ *
+ * 3. Only once the cap bump has actually reserved a slot does step 3 credit
+ *    `users.gold` — the same conditional-write discipline as `grantGold`,
+ *    just sequenced so nothing is credited for a grant that gets rolled
+ *    back for being over cap.
+ */
+export async function grantGoldForAd(input: GrantGoldForAdInput): Promise<GrantGoldForAdResult> {
+  const { userId, externalId, gold, at, cap } = input;
+  assertPositiveInteger(gold);
+
+  try {
+    return await withTransaction(async (client) => {
+      // 1. Ledger insert — dedup happens here, before the cap is touched.
+      await client.query(
+        `insert into gold_grants (user_id, source, external_id, gold)
+         values ($1, 'ad', $2, $3)`,
+        [userId, externalId, gold],
+      );
+
+      // 2. Conditional cap bump — atomic check-and-increment, not a prior
+      // SELECT. Only rows currently under `cap` get updated; a fresh day
+      // (no existing row) always succeeds via the INSERT branch.
+      const bump = await client.query<{ ads_watched: number }>(
+        `insert into daily_caps (user_id, day, ads_watched)
+           values ($1, ($2::timestamptz at time zone 'UTC')::date, 1)
+         on conflict (user_id, day)
+           do update set ads_watched = daily_caps.ads_watched + 1
+           where daily_caps.ads_watched < $3
+         returning ads_watched`,
+        [userId, at, cap],
+      );
+      if (bump.rowCount === 0) {
+        throw new CapReached();
+      }
+
+      // 3. Only now credit the account — the same conditional-write
+      // discipline as `grantGold`, sequenced after the cap slot is secured.
+      const res = await client.query<{ gold: number }>(
+        `update users set gold = gold + $2 where id = $1 returning gold`,
+        [userId, gold],
+      );
+      return { ok: true, gold: res.rows[0].gold };
+    });
+  } catch (err) {
+    if (err instanceof CapReached) {
+      return { ok: false, reason: 'cap_reached' };
+    }
+    if (isUniqueViolation(err)) {
+      return { ok: false, reason: 'duplicate' };
+    }
+    throw err;
+  }
+}
+
 /**
  * Conditional UPDATE (`where gold >= amount`), never read-then-write — this
  * is what makes two concurrent spends against the same balance unable to

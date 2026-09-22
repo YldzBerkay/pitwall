@@ -18,7 +18,7 @@
 import type { Router, RequestContext, RouteResult } from '../http/router.ts';
 import { verifySession } from '../auth/jwt.ts';
 import { loadUser } from '../auth/userRepo.ts';
-import { grantGold, goldOf, capsFor, bumpAdsWatched } from './repo.ts';
+import { grantGold, grantGoldForAd, goldOf } from './repo.ts';
 import { verifySsvCallback as realVerifySsvCallback, type SsvVerifyResult } from './ssv.ts';
 import { verifyReceipt as realVerifyReceipt, type VerifyReceiptInput, type VerifyReceiptResult } from './receipts.ts';
 import { ADS_PER_DAY } from '@pitwall/shared/economy';
@@ -67,62 +67,32 @@ export function registerGoldRoutes(router: Router, deps: GoldRoutesDeps = {}): v
     }
 
     // Enforce the daily ad cap (shared/src/economy.ts: GOLD_PER_AD /
-    // ADS_PER_DAY) before crediting anything. `capsFor` resolves against
-    // the SERVER's UTC day, so a capped user gets a plain 200 with no
-    // credit — the same shape as a duplicate-transaction reply, and for
-    // the same reason: Google retries a non-200 up to 5 times, and "you
-    // are at your daily limit" is not a delivery failure, it is the
-    // expected steady state for an active player.
-    //
-    // This check-then-credit is not perfectly race-free: two distinct,
-    // genuine callbacks for the same user arriving at the same instant
-    // could both read a cap of ADS_PER_DAY-1 and both credit, landing the
-    // counter one over. That requires two concurrent ad-watch deliveries
-    // for one account, which is not how a single client watches ads (one
-    // rewarded ad at a time) — the overshoot is bounded by the number of
-    // truly concurrent requests in flight, not attacker-controlled at any
-    // scale that matters here, so it is accepted rather than solved.
+    // ADS_PER_DAY) and credit the account atomically via `grantGoldForAd`:
+    // the ledger insert, the `users.gold` credit, and the `daily_caps`
+    // bump all happen in ONE transaction in repo.ts, and the cap itself is
+    // enforced by a conditional UPDATE (`where ads_watched < cap`), not by
+    // a read beforehand — so this is no longer a check-then-credit race,
+    // and a crash mid-grant can no longer leave gold credited with the
+    // counter unbumped (or the reverse). See repo.ts for the ordering
+    // rationale.
     const now = new Date();
-    const caps = await capsFor(user.id, now);
-    if (caps.adsWatched >= ADS_PER_DAY) {
-      return { status: 200, body: { gold: await goldOf(user.id) } };
-    }
-
-    const grant = await grantGold({
+    const grant = await grantGoldForAd({
       userId: user.id,
-      source: 'ad',
       externalId: result.transactionId,
       // Taken from the VERIFIED callback result, never from a fresh,
       // unverified parse of the query string.
       gold: result.rewardAmount,
+      at: now,
+      cap: ADS_PER_DAY,
     });
 
-    // The counter is bumped only when `grantGold` actually inserted a new
-    // ledger row (`grant.ok`), and only AFTER it succeeds. On a duplicate
-    // `transaction_id` (a Google retry of an ad already credited),
-    // `grant.ok` is false and the counter is left untouched — a retry
-    // must not cost the player a second slot in their daily allowance.
-    //
-    // `grantGold` and `bumpAdsWatched` are two separate statements/
-    // transactions (`grantGold` opens and commits its own transaction in
-    // repo.ts), so this pair is not atomic: a crash between them would
-    // leave gold credited without the counter bumped, letting the cap
-    // silently drift upward over time. Closing that gap for real needs a
-    // single transaction that does the insert-into-gold_grants, the
-    // users.gold update, AND the daily_caps upsert together — i.e. a
-    // change to repo.ts (e.g. a `grantGoldForAd` that takes the same
-    // client used for the grant and bumps the counter before committing),
-    // which is out of scope for this change. This code minimizes the
-    // window (the bump happens immediately after the grant resolves, with
-    // no other awaits in between) but does not eliminate it.
-    if (grant.ok) {
-      await bumpAdsWatched(user.id, now);
-    }
-
+    // Both "duplicate" (a Google retry of an ad already credited) and
+    // "cap_reached" (the daily allowance is used up) must answer 200 with
+    // the unchanged balance — a duplicate because Google will retry a
+    // non-200 up to 5 times, and a cap because "you are at your daily
+    // limit" is not a delivery failure, it is the expected steady state
+    // for an active player.
     const gold = grant.ok ? grant.gold : await goldOf(user.id);
-    // Duplicate transaction_id => 200, nothing credited. This is the
-    // retry rule: Google will call this up to 5 times for one genuine ad
-    // watch, and every one of those calls must look like success.
     return { status: 200, body: { gold } };
   });
 

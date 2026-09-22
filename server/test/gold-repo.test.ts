@@ -5,8 +5,9 @@ import { runMigrations } from '../src/db/migrate.ts';
 import { query, closePool, withTransaction } from '../src/db/pool.ts';
 import { createUserWithIdentity } from '../src/auth/userRepo.ts';
 import {
-  grantGold, spendGold, goldOf, capsFor, bumpAdsWatched, bumpGoldConverted,
+  grantGold, grantGoldForAd, spendGold, goldOf, capsFor, bumpAdsWatched, bumpGoldConverted,
 } from '../src/gold/repo.ts';
+import { ADS_PER_DAY } from '@pitwall/shared/economy';
 
 let seq = 0;
 const makeUser = async (): Promise<string> => (await createUserWithIdentity({
@@ -122,5 +123,80 @@ describe('gold repo', () => {
     const c = await query('select 1 from daily_caps where user_id = $1', [userId]);
     assert.equal(g.rowCount, 0);
     assert.equal(c.rowCount, 0);
+  });
+
+  describe('grantGoldForAd (atomic ledger + credit + cap bump)', () => {
+    it('grants at the cap boundary: the 8th succeeds, the 9th is refused with nothing written', async () => {
+      const userId = await makeUser();
+      const at = new Date('2026-04-01T10:00:00Z');
+
+      for (let i = 1; i <= ADS_PER_DAY; i += 1) {
+        const res = await grantGoldForAd({ userId, externalId: extId(), gold: 1, at, cap: ADS_PER_DAY });
+        assert.equal(res.ok, true, `ad #${i} (<= ADS_PER_DAY) must be granted`);
+      }
+      assert.equal(await goldOf(userId), ADS_PER_DAY);
+      assert.equal((await capsFor(userId, at)).adsWatched, ADS_PER_DAY);
+
+      const before = await query('select count(*)::int as n from gold_grants where user_id = $1', [userId]);
+
+      const ninth = await grantGoldForAd({ userId, externalId: extId(), gold: 1, at, cap: ADS_PER_DAY });
+      assert.equal(ninth.ok, false);
+      assert.equal(ninth.ok === false && ninth.reason, 'cap_reached');
+
+      assert.equal(await goldOf(userId), ADS_PER_DAY, 'the 9th grant must not have credited gold');
+      assert.equal((await capsFor(userId, at)).adsWatched, ADS_PER_DAY, 'the 9th grant must not have bumped the counter');
+      const after = await query('select count(*)::int as n from gold_grants where user_id = $1', [userId]);
+      assert.equal(after.rows[0].n, before.rows[0].n, 'a cap-rejected grant must leave no ledger row behind');
+    });
+
+    it('a duplicate external id does not consume an allowance slot', async () => {
+      const userId = await makeUser();
+      const at = new Date('2026-04-02T10:00:00Z');
+      const id = extId();
+
+      const first = await grantGoldForAd({ userId, externalId: id, gold: 1, at, cap: ADS_PER_DAY });
+      assert.equal(first.ok, true);
+      assert.equal((await capsFor(userId, at)).adsWatched, 1);
+
+      const second = await grantGoldForAd({ userId, externalId: id, gold: 1, at, cap: ADS_PER_DAY });
+      assert.equal(second.ok, false);
+      assert.equal(second.ok === false && second.reason, 'duplicate');
+
+      assert.equal(await goldOf(userId), 1, 'a duplicate must not credit gold again');
+      assert.equal((await capsFor(userId, at)).adsWatched, 1, 'a duplicate must not consume a second allowance slot');
+    });
+
+    it('the cap is per UTC day: usage on one day does not consume the next day\'s allowance', async () => {
+      const userId = await makeUser();
+      const day1 = new Date('2026-04-03T23:00:00Z');
+      const day2 = new Date('2026-04-04T01:00:00Z');
+
+      for (let i = 0; i < ADS_PER_DAY; i += 1) {
+        const res = await grantGoldForAd({ userId, externalId: extId(), gold: 1, at: day1, cap: ADS_PER_DAY });
+        assert.equal(res.ok, true);
+      }
+      assert.equal((await capsFor(userId, day1)).adsWatched, ADS_PER_DAY);
+
+      const nextDay = await grantGoldForAd({ userId, externalId: extId(), gold: 1, at: day2, cap: ADS_PER_DAY });
+      assert.equal(nextDay.ok, true, 'a new UTC day must start with a fresh allowance');
+      assert.equal((await capsFor(userId, day2)).adsWatched, 1);
+    });
+
+    it('RACE: ADS_PER_DAY + 4 concurrent grants for one user credit exactly ADS_PER_DAY', async () => {
+      const userId = await makeUser();
+      const at = new Date('2026-04-05T12:00:00Z');
+      const attempts = ADS_PER_DAY + 4;
+
+      const results = await Promise.all(
+        Array.from({ length: attempts }, () => grantGoldForAd({
+          userId, externalId: extId(), gold: 1, at, cap: ADS_PER_DAY,
+        })),
+      );
+
+      const granted = results.filter((r) => r.ok).length;
+      assert.equal(granted, ADS_PER_DAY, 'concurrent grants overshot the daily cap');
+      assert.equal(await goldOf(userId), ADS_PER_DAY);
+      assert.equal((await capsFor(userId, at)).adsWatched, ADS_PER_DAY);
+    });
   });
 });
