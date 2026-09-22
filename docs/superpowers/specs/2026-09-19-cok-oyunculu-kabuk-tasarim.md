@@ -203,12 +203,26 @@ Sana kalan takımlar:
 Sunucu uygun lobileri toplar (region uyumlu, rütbe kapısından geçiyor,
 katılıma açık, boş koltuk var) ve **gerçek koltuk durumuna** göre puanlar:
 
+Bir koltuk **bir takımdır** (iki araç, tek yönetici) — aşağıdaki "en güçlü
+n. araç", güç sırasındaki n. TAKIM demektir.
+
 | Koşul | Hedef |
 |---|---|
-| En güçlü 1. ve 2. araç gerçekten dolu | Yüksek ağırlık — öncelikli aday |
-| En güçlü 3. araç dolu | Adayların **%85**'i |
-| En güçlü 4. araç dolu | Adayların **%75**'i |
+| En güçlü 1. ve 2. takım gerçekten dolu | Yüksek ağırlık — öncelikli aday |
+| En güçlü 3. takım dolu | Adayların **%75**'i |
+| En güçlü 4. takım dolu | Adayların **%65**'i |
 | Kalan koltuklar | Rastgele |
+
+**Bu oranlar neden %85/%75 değil.** İlk yazımda öyleydi; Faz 2 uygulanırken
+ölçüldü ve 11 koltuklu ızgarada ulaşılamaz oldukları görüldü. Oyuncular en
+iyi boş takımı aldığı için bir lobinin n. takımı ancak n. yöneticisiyle
+dolar; lobiyi dolduran 10 katılımcının ilk n−1'i o takım HENÜZ BOŞKEN gelmek
+zorundadır, yoksa lobi hiç büyümez. Dolayısıyla dürüst tavan
+`(11 − n) / (11 − 1)` = **%80 / %70**, ölçülen en iyi değer ~%76 / %66.
+Hedefi tavanın üstünde tutmanın tek yolu boş bir koltuğu dolu göstermek
+olurdu — aşağıdaki kural bunu zaten yasaklıyor. Tavanı yükseltmek için
+koltuğu takım yerine tek araç yapmak değerlendirildi ve **reddedildi**:
+yönetici bir takım yönetir, tek araba yönetmek oynanacak bir şey bırakmaz.
 
 Sunucu havuzdan bu dağılımı tutturmaya çalışarak seçim yapar.
 **Hiçbir koltuk sahte gösterilmez** — kart her zaman gerçek doluluğu yansıtır.
@@ -219,6 +233,10 @@ Dağılım doğal olarak oluşur: lobi kuranlar en iyi arabayı ilk kapar, dolay
 üst koltuklar zaten gerçekten doludur. Hedef oranı tutturacak aday yoksa
 sunucu sıralamayı olduğu gibi kullanır; hiç uygun aday yoksa **taze lobi**
 açılır (orada oyuncu her takımı seçebilir).
+
+Ölçüm `server/scripts/matchmaking-sim.ts` (`npm run sim:matchmaking`): hem
+hedeflerin tavanın altında kaldığını, hem de sunucunun havuzdaki her uygun
+adayı gösterip gerçeği hiçbir zaman aşmadığını kontrol eder.
 
 ### 3.5 AI zorluğu
 
@@ -390,7 +408,7 @@ değişmez** — yalnızca çağrıldıkları yer ve okudukları durum kaynağı
 | Faz | İçerik | Doğrulama kapısı |
 |---|---|---|
 | **1** | Postgres + auth + nickname + ülke/region + profil | Kayıt/giriş uçtan uca; nickname eşzamanlı tahsis testi (çakışma yok) |
-| **2** | Lobi + koltuk + slot + hızlı ara + takım seçim ekranı | Eşleştirme dağılımı simülasyonu: %85/%75 hedefleri tutuyor mu |
+| **2** | Lobi + koltuk + slot + hızlı ara + takım seçim ekranı | Eşleştirme dağılımı simülasyonu (§3.4): hedefler dürüst tavanın altında mı, sunucu havuzdakinin tamamını gösteriyor mu |
 | **3** | Ekonominin sunucuya taşınması | `npm run econ` sunucu ekonomisine karşı geçmeli |
 | **4** | Sezon sonu özeti + ayrılma cezası + dropdown navigasyonu | Ceza formülü sınır testleri (1/24 ve 24/24) |
 | **5** | Arkadaş sistemi + davetler | Gizlilik testi: kısmi arama sızıntısı yok |

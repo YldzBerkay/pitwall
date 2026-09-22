@@ -473,8 +473,14 @@ export function AuthScreen() {
                     countryCode,
                     region,
                   });
-            if (ok) haptic.success();
-            else haptic.error();
+            if (!ok) {
+              haptic.error();
+              return;
+            }
+            haptic.success();
+            // Signed in, the next thing a manager needs is a game: the
+            // general screen (§4.2) — find one, open one, or read an invite.
+            router.replace('/lobby');
           }}
         />
 

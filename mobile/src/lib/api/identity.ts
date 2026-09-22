@@ -35,7 +35,13 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 const TIMEOUT_MS = 8000;
 
-async function request<T>(baseUrl: string, path: string, init: RequestInit): Promise<ApiResult<T>> {
+/**
+ * Shared fetch wrapper: an 8-second timeout, JSON in and out, and a network
+ * or parse failure turned into an `ApiResult` rather than a thrown error, so
+ * callers have exactly one shape to branch on. Exported for the lobby client
+ * (`./lobby.ts`), which talks to the same server with the same session.
+ */
+export async function request<T>(baseUrl: string, path: string, init: RequestInit): Promise<ApiResult<T>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {

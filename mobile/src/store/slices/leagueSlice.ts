@@ -25,13 +25,20 @@ export interface LeagueSlice {
   league: {
     url?: string;
     connected: boolean;
+    /**
+     * The team this device drives in the live room. It comes from the active
+     * slot's seat (`lobbySlice.setActiveSlot`), which is the server's record
+     * of which team this account actually holds — it used to be a hard-coded
+     * constant back when there was exactly one lobby and one team.
+     */
+    teamKey: string;
     managerId: string;
     state?: LeaguePublicState;
     checkedIn: boolean;
     lastResult?: RaceResult;
     error?: string;
   };
-  connectLeague: (url: string) => Promise<void>;
+  connectLeague: (url: string, teamKey?: string) => Promise<void>;
   disconnectLeague: () => void;
   /** Send this weekend's choices (setup, tactics, risk, reliability) to the server. */
   syncLeagueWeekend: () => Promise<void>;
@@ -57,17 +64,21 @@ const post = async (url: string, path: string, body: unknown): Promise<Record<st
 
 const randomId = () => `mgr-${Math.random().toString(36).slice(2, 10)}`;
 
+/** Fallback for a device that has not activated a slot yet. */
+const DEFAULT_TEAM_KEY = 'bosphorus';
+
 export const createLeagueSlice: SliceCreator<LeagueSlice> = (set, get) => ({
-  league: { connected: false, managerId: randomId(), checkedIn: false },
+  league: { connected: false, teamKey: DEFAULT_TEAM_KEY, managerId: randomId(), checkedIn: false },
 
   effectiveManagerId: () => get().auth.user?.id ?? get().league.managerId,
 
-  connectLeague: async (url) => {
+  connectLeague: async (url, teamKey) => {
     const base = url.replace(/\/$/, '');
     const managerId = get().effectiveManagerId();
-    const teamKey = 'bosphorus';
+    const team = teamKey ?? get().league.teamKey;
+    set((s) => ({ league: { ...s.league, teamKey: team } }));
     try {
-      const joined = await post(base, '/join', { teamKey, managerId });
+      const joined = await post(base, '/join', { teamKey: team, managerId });
       if (joined.result !== 'ok') {
         set((s) => ({ league: { ...s.league, url: base, error: `Katılım başarısız: ${String(joined.result)}` } }));
         return;
@@ -86,7 +97,7 @@ export const createLeagueSlice: SliceCreator<LeagueSlice> = (set, get) => ({
           | { type: 'lap'; race: RaceState }
           | { type: 'result'; result: RaceResult };
         if (msg.type === 'phase') {
-          const mine = msg.state.teams.find((t) => t.teamKey === teamKey);
+          const mine = msg.state.teams.find((t) => t.teamKey === team);
           set((s) => ({ league: { ...s.league, state: msg.state, checkedIn: Boolean(mine?.checkedIn) } }));
         } else if (msg.type === 'lap') {
           // Mirror the server's race into the weekend so the live screen just works.
@@ -119,7 +130,7 @@ export const createLeagueSlice: SliceCreator<LeagueSlice> = (set, get) => ({
     const levels = Object.fromEntries(s.departments.map((d) => [d.code, d.level]));
     const reliability = Math.min(1, ((levels.manufacturing ?? 0) + (levels.engine_lab ?? 0)) / 10 + s.effects().reliabilityBonus);
     await post(s.league.url, '/weekend', {
-      teamKey: 'bosphorus',
+      teamKey: s.league.teamKey,
       managerId: s.effectiveManagerId(),
       setup: { ...s.setup(), compound: s.weekend.raceCompound } satisfies CarSetup,
       tactics: s.weekend.tactics satisfies TacticPreset,
@@ -132,7 +143,7 @@ export const createLeagueSlice: SliceCreator<LeagueSlice> = (set, get) => ({
     const s = get();
     if (!s.league.url) return 'offline';
     await s.syncLeagueWeekend();
-    const r = await post(s.league.url, '/checkin', { teamKey: 'bosphorus', managerId: s.effectiveManagerId() });
+    const r = await post(s.league.url, '/checkin', { teamKey: s.league.teamKey, managerId: s.effectiveManagerId() });
     const result = r.result as 'ok' | 'closed' | 'notOwner';
     if (result === 'ok') set((st) => ({ league: { ...st.league, checkedIn: true, state: r.state as LeaguePublicState } }));
     return result;
@@ -141,7 +152,7 @@ export const createLeagueSlice: SliceCreator<LeagueSlice> = (set, get) => ({
   leaguePit: async (driverIdx, compound) => {
     const s = get();
     if (!s.league.url) return;
-    await post(s.league.url, '/pit', { teamKey: 'bosphorus', managerId: s.effectiveManagerId(), driverIdx, compound });
+    await post(s.league.url, '/pit', { teamKey: s.league.teamKey, managerId: s.effectiveManagerId(), driverIdx, compound });
   },
 
   isLeagueLive: () => {

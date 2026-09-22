@@ -58,7 +58,7 @@
 - ✅ Garaj (kahraman yarış kartı, bugün yapılacaklar, araç, sürücüler), Yarış, Geliştirme, Padok, Sponsorluk, Şampiyona, Profil
 - ✅ **Dikey + yatay kabuk**: alt hap sekme çubuğu / yan kapsül, `Cols` ile uyarlanan düzen, açıklayıcı `ScreenHeader`; üç kalite ajanıyla incelenip düzeltildi (docs/design-system.md §7)
 - ✅ **Ayarlar** (`features/settings/SettingsScreen.tsx`, `/settings`, header menüsünden açılır): renk körü modu, yazı boyutu, HUD yoğunluğu (Tam/Sade — `LiveRacePanel`'e bağlı, sade modda aşınma yüzdesi/pit sayısı gizlenir) — `@react-native-async-storage/async-storage` üzerinden zustand `persist` ile cihazda kalıcı (yalnızca bu tercihler + hesap oturumu; kariyer/yarış durumu aşağıdaki "Kayıt/yükleme" maddesinin kapsamında, hâlâ yok) (docs/design-system.md §8)
-- ✅ **Hesap/lobi navigasyon ayrımı**: Profil artık bir sekme değil — header'daki kask ikonlu buton (`NavShell`) bir dropdown açar (Profilim/Ayarlar/Hesap). Alt gezinme sadece 6 yarış sekmesi (Garaj/Yarış/Geliştir/Sponsor/Padok/Lig); Profil ekranındayken alt gezinme "Oyuna dön" + "Lobi" (`LobbySwitcher` modalı, tek-lobi bağlan/ayrıl) gösterir (docs/design-system.md §10)
+- ✅ **Hesap/lobi navigasyon ayrımı**: Profil artık bir sekme değil — header'daki kask ikonlu buton (`NavShell`) bir dropdown açar (Profilim/Ayarlar/Hesap). Alt gezinme sadece 6 yarış sekmesi (Garaj/Yarış/Geliştir/Sponsor/Padok/Lig); Profil ekranındayken alt gezinme "Oyuna dön" + "Lobi" (`SlotSwitcher` — 5 slotluk gerçek liste) gösterir (docs/design-system.md §10)
 
 ## Kimlik (`server/src/auth/*`, `server/src/identity/*`) — Faz 1a
 - ✅ Postgres tabanlı hesap kimliği: `users` + `auth_identities`, sağlayıcı başına tek satır, hesap birleştirme e-posta özetinden
@@ -76,3 +76,18 @@
 - ⬜ Lig oluşturma/davet (şu an tek sabit takım `bosphorus`'a katılım var, takım seçimi/davet akışı yok)
 - ⬜ Kayıt/yükleme (persist) — kariyer/yarış/ekonomi durumu; hesap oturumu ve Ayarlar tercihleri zaten kalıcı (yukarı bakın)
 - ⬜ Mağaza ürünleri ve üretim AdMob kimlikleri (kod hazır)
+
+## Lobi, koltuk ve slot (`server/src/lobby/*`) — Faz 2
+
+Spec: [çok oyunculu kabuk tasarımı](superpowers/specs/2026-09-19-cok-oyunculu-kabuk-tasarim.md) §3, §4.1, §6.
+
+- ✅ **Şema** (`002_lobby.sql`): `account_slots`, `lobbies`, `lobby_seats`, `lobby_invites`. Koltuk sahipliği CHECK ile bağlı (sahipsiz koltuk `human` olamaz); hesabı silinen oyuncunun koltuğunu tetikleyici AI'ya devreder, lobinin 11 takımı hiç eksilmez.
+- ✅ **Slotlar** (§4.1): 3 ücretsiz + 250 Altınla açılan 4./5., kalıcı. Satın alma `users` satırını kilitleyerek yapılır — aynı Altınla iki slot alınamaz.
+- ✅ **Lobi kurma** (§3.1/§3.2): bölge, görünürlük, AI zorluğu, rütbe kapısı, sezon ortası katılım, davet zinciri. Ad bölge havuzundan otomatik (`Anadolu #14`); oyuncu isim yazmaz. Kurulur kurulmaz 11 koltuk AI olarak yazılır, **kurucu takımını seçene kadar lobi hiçbir havuzda görünmez**.
+- ✅ **Hızlı oyun bul** (§3.3/§3.4): tek önizleme kartı, "Başka bul" bedava ve sınırsız. **Slot yalnızca takım seçildiğinde harcanır** — koltuk yarışını kaybeden oyuncunun slotu aynı transaction'da geri döner.
+- ✅ **Dürüst doluluk** (§3.4): kartın gösterdiği her sayı gerçek koltuk satırlarından gelir. Dağıtım yalnızca HANGİ gerçek lobinin önerileceğini şekillendirir; sahte kıtlık üretilmez. Sunucu, havuzda o takımı dolu bir aday varsa onu gösteriyor ve hiçbir zaman havuzda gerçekten var olandan fazlasını göstermiyor — `npm run sim:matchmaking` ikisini de ölçüyor.
+- ✅ **§3.4 hedefleri ölçümle yeniden belirlendi: %75 / %65.** "En güçlü n. araç" = güç sırasındaki n. TAKIM (bir koltuk = bir takım = iki araç). İlk yazımdaki %85/%75, 11 koltuklu ızgarada ulaşılamıyordu: dürüst tavan `(11 − n) / (11 − 1)` = %80/%70, ölçülen en iyi ~%76/%66. Sebep seçim algoritması değil, ekosistem — lobiyi dolduran 10 katılımcının ilk n−1'i, n. takım henüz boşken gelmek zorunda, yoksa lobi hiç büyümez. Tavanı yükseltmek için koltuğu tek araç yapmak reddedildi (yönetici bir takım yönetir). `npm run sim:matchmaking` hem hedefin tavanın altında olduğunu hem de sunucunun havuzdakinin tamamını gösterdiğini doğruluyor.
+- ✅ **Davet** (§3.6): tam `Takma#1234` etiketiyle; kısmi arama yok. Davet koltuk ayırmaz — davetli geldiğinde kalanlardan seçer.
+- ✅ **İstemci**: `lib/api/lobby.ts`, `store/slices/lobbySlice.ts`, genel ekran (`features/lobby/LobbyHomeScreen.tsx`, rota `/lobby`), takım seçim kartı (`features/lobby/TeamSelect.tsx` — hedef ve karşılığındaki rütbe puanı satırda yazar), header dropdown'ı gerçek 5 slotluk liste (`components/organisms/SlotSwitcher.tsx`, eski tek-adres bağlan/ayrıl modalının yerine).
+- ⬜ Ekonominin sunucuya taşınması (Faz 3) — bugün yeni lobiler de ekonomiyi hâlâ istemci store'unda tutar
+- ⬜ Sezon sonu özeti, ayrılma cezası (Faz 4) · arkadaş sistemi (Faz 5)

@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { colors, layout, spacing } from '@/theme';
 import { AppText, Icon, PulseDot, type IconName } from '@/components/atoms';
-import { LobbySwitcher } from './LobbySwitcher';
+import { SlotSwitcher } from './SlotSwitcher';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
@@ -324,7 +324,7 @@ export function NavShell({ state, navigation }: TabBarProps) {
         </Pressable>
       </Modal>
 
-      <LobbySwitcher visible={lobbyOpen} onClose={() => setLobbyOpen(false)} />
+      <SlotSwitcher visible={lobbyOpen} onClose={() => setLobbyOpen(false)} />
     </>
   );
 }
