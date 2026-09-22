@@ -71,6 +71,63 @@
 - ✅ 195 sunucu testi, `npm run typecheck` temiz
 - ✅ **Faz 1b — mobil istemciye bağlandı** (`mobile/src/lib/api/identity.ts`, `store/slices/authSlice.ts`, `features/auth/AuthScreen.tsx`, rota `/auth`, Profil ekranındaki "Hesap" kartından açılır): e-posta+şifre ile giriş/kayıt, takma ad (bootstrap önerisiyle ön dolu, düzenlenebilir), bölge seçici (7 bölge + yarış saati), aranabilir ülke seçici (CLDR listesi), oturum tokenı + hesap profili cihazda kalıcı (`gameStore.ts` persist). Gerçek sunucuya karşı uçtan uca doğrulandı (register → me → login → patch). `leagueSlice`'daki `managerId` artık signed-in hesabın gerçek id'sini kullanıyor (`effectiveManagerId`), anonim değilse. **Google/Apple/Facebook bağlanmadı** — native SDK (client id, bundle id, cihaz testi) gerektiriyor, kapsam dışı bırakıldı; butonlar arayüzde "yakında" olarak görünüyor, `lib/api/identity.ts`'deki `loginWithSocial` sunucu tarafını çağırmaya hazır bekliyor.
 
+## Ekonomi — sunucuya taşıma (`server/src/economy/*`, `server/src/gold/*`, `server/src/notify/*`) — Faz 3a-1
+
+Spec: [ekonomi sunucuya taşıma tasarımı](superpowers/specs/2026-09-22-faz3a-ekonomi-sunucuya-tasarim.md).
+
+Bu fazın nedeni: ekonomi eskiden istemcinin `Date.now()`'ına dayanıyordu —
+cihaz saatini ileri almak 22 saatlik bir araç geliştirmeyi anında
+bitiriyordu. Faz 3a-1, her zamanlayıcıyı ve her yazmayı sunucuya taşıdı;
+istemcinin buna bağlanması (Faz 3a-2'nin sonrası) hâlâ sırada — **bu yüzden
+kazanma döngüsü bugün kapalı DEĞİL**: RP'nin ana kaynağı yarış ödül parası,
+ve yarış hâlâ istemcide koşuyor. Sunucudaki ekonomi bugün gerçek RP/Altın
+akışı olmadan test edilebilir durumda.
+
+- ✅ **`shared/` paketi**: oyunun saf formülleri (`economy.ts`, `factory.ts`)
+  artık `mobile` ve `server`'ın ORTAK bağımlılığı; sunucu artık
+  `mobile/src/data`'ya elini uzatmıyor. Saflığı `server/test/shared-purity.test.ts`
+  ile denetleniyor — saat yok, tohumsuz rastgelelik yok, dışa import yok.
+- ✅ **Şema** (`003_economy.sql`): `lobby_economy` (RP, araç, fabrika,
+  geliştirme sayaçları — takım başına), `pending_jobs` (geliştirme/antrenman/
+  casusluk kuyruğu), `gold_grants` (Altın musluğu deftreri, `(source,
+  external_id)` üzerinde tekilleştirme), `daily_caps` (reklam ve
+  Altın→RP günlük sayaçları, sunucunun UTC gününde).
+- ✅ **İş (claim) modeli** (`economy/jobs.ts`): `ends_at`'in geçmesi hiçbir
+  şey yazmaz — yalnızca oyuncunun açık CLAIM'i ekonomiyi mutasyona uğratır,
+  `claimed_at` bunu idempotent kılar. Yarış günü kilidi (bitmemiş iş → araç
+  sökük başlar) Faz 3a-2'nin işi; bu faz sadece bitmiş-ama-teslim-alınmamış
+  bir işi uygulanmamış tutmayı garanti ediyor.
+- ✅ **Tek komut ucu**: `POST /economy/action` — `startUpgrade`/`startTraining`/
+  `startSpyMission`, `claimUpgrade`/`claimTraining`/`claimSpyReport`,
+  `skipUpgrade`/`skipTraining`/`skipSpy`, `upgradeFactory`,
+  `convertGoldToRp`. Takım her zaman oyuncunun `lobby_seats` satırından
+  çözülür; her yanıt slotun TAMAMINI (rp, gold, car, factory, jobs,
+  teamValue, caps, `serverNow`) döner, ki istemci hiçbir şeyi kendi
+  hesaplamasın. Ayrıntı için `server/README.md`'nin "Ekonomi" bölümüne
+  bakın.
+- ✅ **Altın musluğu**: AdMob ödüllü reklam (`GET /gold/admob-ssv`, ECDSA
+  imza doğrulaması) ve mağaza fişi (`POST /gold/purchase`, Apple
+  `verifyReceipt` + Google Play `purchases.products.get`). SKU izin
+  listesi ve miktar her zaman kataloktan (`goldPacks`); her iki musluk da
+  `(source, external_id)` ile tekilleştirilir.
+- ✅ **Bildirici** (`notify/scheduler.ts`): biten işler için "işin bitti"
+  bildirimini tarar, yalnızca `notified_at`'ı yazar — ekonomiye asla
+  dokunmaz, bu yüzden iki sunucuda aynı anda ya da iki kez çalışması
+  güvenli.
+- ✅ `server/test/economy-invariants.test.ts` — yarışma koşulları ve
+  replay'lere karşı yedi değişmezin (idempotent claim, tekrarlanamaz Altın
+  musluğu, eşzamanlılıkta günlük tavan, vb.) kapanış kanıtı; `npm test`
+  413 sunucu testiyle geçiyor, `npm run typecheck` (server + shared +
+  mobile) temiz.
+- ⬜ **Yarış koşucusu, yarış sonuçlandırma, parc fermé / pit-lane başlangıcı**
+  (Faz 3a-2) — bitmemiş bir iş yarışa nasıl gireceğini bu faz kararlaştırmadı,
+  sadece mümkün kılacak veri modelini kurdu.
+- ⬜ **Eski ligin kaldırılması** (Faz 3a-2) — `server/src/lobby`'nin canlı
+  yarış motoru hâlâ eski (istemci tarafı) ekonomiye bağlı; yeni ekonomi
+  onun yerini alana kadar ikisi bir arada duruyor.
+- ⬜ **İstemci bağlanması** — kendi planı var, bu fazın kapsamında değil;
+  mobil hâlâ kendi store'undaki ekonomiyi kullanıyor.
+
 ## Kapsam dışı / sırada
 - ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)
 - ⬜ Lig oluşturma/davet (şu an tek sabit takım `bosphorus`'a katılım var, takım seçimi/davet akışı yok)
@@ -89,5 +146,5 @@ Spec: [çok oyunculu kabuk tasarımı](superpowers/specs/2026-09-19-cok-oyunculu
 - ✅ **§3.4 hedefleri ölçümle yeniden belirlendi: %75 / %65.** "En güçlü n. araç" = güç sırasındaki n. TAKIM (bir koltuk = bir takım = iki araç). İlk yazımdaki %85/%75, 11 koltuklu ızgarada ulaşılamıyordu: dürüst tavan `(11 − n) / (11 − 1)` = %80/%70, ölçülen en iyi ~%76/%66. Sebep seçim algoritması değil, ekosistem — lobiyi dolduran 10 katılımcının ilk n−1'i, n. takım henüz boşken gelmek zorunda, yoksa lobi hiç büyümez. Tavanı yükseltmek için koltuğu tek araç yapmak reddedildi (yönetici bir takım yönetir). `npm run sim:matchmaking` hem hedefin tavanın altında olduğunu hem de sunucunun havuzdakinin tamamını gösterdiğini doğruluyor.
 - ✅ **Davet** (§3.6): tam `Takma#1234` etiketiyle; kısmi arama yok. Davet koltuk ayırmaz — davetli geldiğinde kalanlardan seçer.
 - ✅ **İstemci**: `lib/api/lobby.ts`, `store/slices/lobbySlice.ts`, genel ekran (`features/lobby/LobbyHomeScreen.tsx`, rota `/lobby`), takım seçim kartı (`features/lobby/TeamSelect.tsx` — hedef ve karşılığındaki rütbe puanı satırda yazar), header dropdown'ı gerçek 5 slotluk liste (`components/organisms/SlotSwitcher.tsx`, eski tek-adres bağlan/ayrıl modalının yerine).
-- ⬜ Ekonominin sunucuya taşınması (Faz 3) — bugün yeni lobiler de ekonomiyi hâlâ istemci store'unda tutar
+- 🔶 Ekonominin sunucuya taşınması (Faz 3a) — sunucu tarafı bitti, aşağıdaki "Ekonomi — sunucuya taşıma" bölümüne bakın; istemci hâlâ kendi store'undaki ekonomiyi kullanıyor, bağlanma sırada
 - ⬜ Sezon sonu özeti, ayrılma cezası (Faz 4) · arkadaş sistemi (Faz 5)

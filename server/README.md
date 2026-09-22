@@ -131,6 +131,129 @@ yerine tek araç yapmak tavanı yükseltirdi, tasarım gereği reddedildi.
 Her iki dosya da **ÜRETİLMİŞTİR** — elle düzenlemeyin, ilgili script'i
 çalıştırıp çıktıyı commit'leyin.
 
+## Ekonomi (`src/economy/*`, `src/gold/*`, `src/notify/*`)
+
+Spec: `docs/superpowers/specs/2026-09-22-faz3a-ekonomi-sunucuya-tasarim.md`.
+
+Faz 3a-1, ekonomiyi telefondan sunucuya taşıdı. Sebep basit: eskiden her
+sayaç istemcinin kendi `Date.now()`'ını okuyordu — cihaz saatini ileri almak
+22 saatlik bir araç geliştirmeyi anında bitiriyordu. Artık her zamanlayıcı ve
+her yazma sunucuda; `shared/` ise iki tarafın (mobil + sunucu) AYNI formülü
+okumasını sağlıyor — bkz. aşağıdaki "Paylaşılan paket".
+
+### `POST /economy/action`
+
+Tek uç nokta, tek gövde şekli — `Authorization: Bearer <token>` ister.
+`lobbyId` gövdede taşınır, çünkü router'ın path parametresi yok
+(`src/http/router.ts` tam yol eşlemesi yapar). Eylem türü `type` alanıyla
+seçilir:
+
+| `type` | Ek alanlar | Ne yapar |
+|---|---|---|
+| `startUpgrade` | `label` (`motor\|aero\|grip`) | Araç geliştirmesi başlatır, RP düşer |
+| `startTraining` | `driverIdx` | Sürücü antrenmanı başlatır |
+| `startSpyMission` | (serbest, olduğu gibi saklanır) | Casusluk görevi başlatır |
+| `claimUpgrade` / `claimTraining` / `claimSpyReport` | `jobId` | Biten işi teslim alır, etkisini uygular |
+| `skipUpgrade` / `skipTraining` / `skipSpy` | `jobId` | Kalan süreyi Altınla atlar |
+| `upgradeFactory` | `code` | Fabrika departmanını bir seviye yükseltir |
+| `convertGoldToRp` | `gold` | Altını RP'ye çevirir (günlük tavan içinde) |
+
+Takım her zaman **oyuncunun kendi `lobby_seats` satırından** çözülür —
+gövdede gönderilen bir `teamKey` hiçbir yerde okunmaz.
+
+**Her yanıt slotun TAMAMINI döner** — `rp`, `gold`, `car`, `factory`,
+`upgradesDone`, açık `jobs`, `teamValue`, günlük `caps`, ve `serverNow`.
+Sebep: istemci hiçbir şeyi kendi hesaplamıyor, sadece sunucunun tam
+anlık görüntüsünü çiziyor. Parça parça yanıtlarla istemcinin kendi
+başına "slotum şu an nasıl görünüyor"yu birleştirmesi gerekirdi, ve tek bir
+kaçırılmış/sıra dışı gelen parça iki tarafı sessizce ayırırdı — oyuncu
+ekranının sunucuyla uyuşmadığını fark edene kadar görünmeyen bir hata.
+Tek bir tam anlık görüntüyle birleştirilecek hiçbir şey kalmıyor.
+`serverNow`, istemcinin geri sayımlarını KENDİ saatiyle `serverNow`
+arasındaki farktan türetmesi için var — cihaz saatini ileri almak artık
+hiçbir şeyi değiştirmiyor (bkz. `src/economy/state.ts`'in docblock'u).
+
+### İş (job) modeli
+
+`pending_jobs` (araç geliştirme, sürücü antrenmanı, casus görevi) tek bir
+kurala dayanıyor: **`ends_at`'in geçmesi HİÇBİR ŞEY yazmaz.** Ekonomiyi
+mutasyona uğratan tek şey oyuncunun açık CLAIM'i, ve `claimed_at` bunu
+idempotent kılıyor — tekrar bir claim hiçbir şeye mal olmaz ve hiçbir şeyi
+değiştirmez. Bitmiş ama teslim alınmamış bir iş yarışa girer ama araç
+sökük başlar (parc fermé cezası, Faz 3a-2) — motor bu mekaniği devreye
+sokmak için işin claim'e kadar uygulanmamış kalmasını garanti etmek
+zorunda, o kadar. Ayrıntı ve eşzamanlılık kanıtı için `src/economy/jobs.ts`'in
+docblock'una ve `server/test/economy-jobs.test.ts`'e bakın.
+
+### Altın musluğu iki yoldan doluyor
+
+- **AdMob ödüllü reklam** (`GET /gold/admob-ssv`): Google'ın imzaladığı
+  callback'in imzası ECDSA (P-256) ile doğrulanır (`src/gold/ssv.ts`).
+  İstemcinin "reklamı izledim" demesi hiçbir zaman yeterli değil.
+- **Mağaza ödemesi** (`POST /gold/purchase`): Apple `verifyReceipt` /
+  Google Play `purchases.products.get` ile fiş doğrulanır
+  (`src/gold/receipts.ts`).
+
+İkisi için de iki sabit kural var: **SKU izin listesi** — `goldPacks`'ta
+olmayan bir SKU, fiş ne kadar gerçek olursa olsun hiçbir Altın vermez — ve
+**miktar her zaman kataloktan gelir** (`@pitwall/shared/economy`'deki
+`goldPacks`), asla istekten ya da mağaza yanıtındaki bir alandan değil. Her
+iki musluk da `(source, external_id)` üzerindeki bir veritabanı kısıtıyla
+tekilleştirilir — replay olan bir callback/fiş 200 döner ama Altın vermez.
+
+### Yerel kurulum, test, tip kontrolü
+
+```bash
+cd server && npm install
+DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test
+npm run typecheck
+```
+
+### Paylaşılan paket (`shared/`)
+
+`shared/`, oyunun saf formüllerinin (ekonomi, fabrika, vb.) tek kopyası —
+hem `mobile` hem `server` ONU tüketir (sunucu artık `mobile/src/data`'ya
+elini uzatmıyor). Saf kalması şart: bir tarafın saati ya da tohumsuz
+rastgeleliği okuması, iki tarafın farklı sonuç hesaplamasına yol açar ve bu
+sessizce olur — `server/test/shared-purity.test.ts` bunu kaynak ağacı
+üzerinde denetler. `src/identity/countries.ts` ve
+`src/identity/ip-region-v4.bin` hâlâ üretilmiş dosyalar; yukarıdaki
+"Üretici script'ler" bölümüne bakın.
+
+### Dört sözleşme — bu fazda ortaya çıktı, koda göçmeden önce buraya yazıldı
+
+1. **`now` sadece route'ta `new Date()` ile örneklenir, istekten asla
+   okunmaz.** `src/economy/jobs.ts` kasıtlı olarak saati kendisi hiç okumaz
+   — her giriş noktası `now`'ı çağırandan alır, ki bu test edilebilirlik
+   sağlar ama tüm hile-önleme garantisini çağrı noktasına yükler.
+   Somut olarak: `skipCostGold(ends_at − now)`, `ends_at`'i geçmiş bir
+   `now` için **0** döner — yani `now`'ı şişirebilen bir çağıran bedava
+   atlama kazanır; aynı `now`, `claimJob`'ın hazır olma kontrolünü de
+   sürüyor. `src/economy/routes.ts` bu yüzden `now`'ı SADECE kendi
+   `new Date()`'inden okur; gövdedeki bir `now`/`serverNow`/`timestamp`
+   hiçbir yerde okunmaz.
+2. **`shared/` saftır.** G/Ç yok, saat yok, tohumsuz rastgelelik yok —
+   yukarıya bakın.
+3. **Bir para birimi yazması ve onun sayaç kaydı TEK transaction'da
+   olmalı.** Bu faz aynı hatayı üç kez üretti: `skipJob`'ın zaten claim
+   edilmiş bir işten Altın kesmesi, reklam kredisinin günlük tavan
+   sayacı olmadan yazılması, Altın→RP harcamasının RP'yi kredilemeden
+   Altını düşmesi. Üçü de aynı şey: "başarılı görünen ama hiçbir şey
+   satın almayan harcama". Desen: koru YAZMANIN KENDİ `where`'inde olsun
+   (`spendGold`'ın `where gold >= $2`'si ve `grantGoldForAd`'ın
+   `where ads_watched < cap`'i gibi), önceki bir okumada değil.
+4. **`withTransaction` sadece bir throw'da geri alır.** Callback'in içinden
+   bir başarısızlık sonucu `return` etmek, o ana kadar yazılmış her şeyi
+   COMMIT eder. Bu fazda üç ayrı ajan buna çarptı; ikisi geri almayı
+   zorlamak için bir sentinel hata fırlatmak zorunda kaldı. Yeni bir
+   transactional yol yazan biri bunu yazmadan ÖNCE bilmeli, sonra değil.
+
+Bilinen bir sınır: `grantGold` kendi transaction'ını açar ve çağıranınkine
+katılamaz. Bugün bu sorun değil çünkü satın alma yolunun günlük tavanı yok
+— ama satın almaya bir tavan eklenirse, `grantGoldForAd`'ın deseni (tek
+transaction içinde koşullu upsert) tekrarlanmalı, iki transaction art arda
+dizilmemeli.
+
 ## Uç noktalar
 
 | Yöntem | Yol | Gövde | Açıklama |
