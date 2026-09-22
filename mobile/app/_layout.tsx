@@ -1,6 +1,6 @@
 import '../global.css';
 import { useEffect, useState } from 'react';
-import { LogBox, Platform, StyleSheet, View } from 'react-native';
+import { LogBox, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -33,54 +33,21 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
   });
 
-  /**
-   * On web, Skia runs on CanvasKit, which has to be fetched before any Skia
-   * drawing happens; the wasm is served from `public/canvaskit.wasm`. Native
-   * has Skia compiled in, so it starts ready.
-   *
-   * NOTE: this alone is not enough for the web target. Screens that import
-   * Skia statically evaluate their module — and bind `Skia` — before this
-   * resolves, so they still see an uninitialised CanvasKit. Finishing web
-   * support means loading those screens through Skia's `WithSkiaWeb` lazy
-   * wrapper. Web is not a shipping target today; iOS/Android are unaffected.
-   */
-  const [skiaReady, setSkiaReady] = useState(Platform.OS !== 'web');
-  useEffect(() => {
-    if (Platform.OS !== 'web') {
-      return;
-    }
-    let cancelled = false;
-    import('@shopify/react-native-skia/lib/module/web')
-      .then(({ LoadSkiaWeb }) => LoadSkiaWeb())
-      .then(() => {
-        if (!cancelled) {
-          setSkiaReady(true);
-        }
-      })
-      .catch((error) => {
-        console.error('CanvasKit failed to load; Skia views will not render.', error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Real progress from the two known stages — never a decoy animation. Shown
-  // only past a short grace window so a sub-second native boot never flashes
-  // it. Once both stages finish this branch stops rendering for good, so
-  // there is nothing to reset `showLoader` back to.
-  const stagesDone = Number(fontsLoaded) + Number(skiaReady);
+  // Real progress from font loading — never a decoy animation. Shown only
+  // past a short grace window so a sub-second native boot never flashes it.
+  // Once fonts finish this branch stops rendering for good, so there is
+  // nothing to reset `showLoader` back to.
   const [showLoader, setShowLoader] = useState(false);
   useEffect(() => {
-    if (fontsLoaded && skiaReady) return;
+    if (fontsLoaded) return;
     const id = setTimeout(() => setShowLoader(true), 400);
     return () => clearTimeout(id);
-  }, [fontsLoaded, skiaReady]);
+  }, [fontsLoaded]);
 
-  if (!fontsLoaded || !skiaReady) {
+  if (!fontsLoaded) {
     return (
       <View style={[styles.root, styles.loadingCenter]}>
-        {showLoader && <ProgressLoader value={10 + (stagesDone / 2) * 90} tips={LOADING_TIPS} label="Pit Wall hazırlanıyor" />}
+        {showLoader && <ProgressLoader value={10} tips={LOADING_TIPS} label="Pit Wall hazırlanıyor" />}
       </View>
     );
   }
