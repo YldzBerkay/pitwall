@@ -1,6 +1,7 @@
 import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { runMigrations } from '../src/db/migrate.ts';
+import { useIsolatedDatabase } from './helpers/isolatedDatabase.ts';
 import { query, closePool, withTransaction } from '../src/db/pool.ts';
 import {
   candidatePool,
@@ -33,15 +34,20 @@ const SETTINGS: LobbySettings = {
   midSeasonJoin: true,
 };
 
-let seq = 0;
-
-/** A user with a unique nickname; `gold` defaults to nothing in the bank. */
+/**
+ * A user with a nickname nothing else can collide with.
+ *
+ * The suite shares one database with every other test file, and the runner
+ * is free to run those files in parallel, so a fixture must be unique across
+ * PROCESSES — not just within this one. Hence the random tag rather than a
+ * counter.
+ */
 async function makeUser(gold = 0): Promise<string> {
-  seq += 1;
+  const unique = Math.random().toString(36).slice(2, 10);
   const res = await query<{ id: string }>(
     `insert into users (nickname_base, nickname_tag, gold, region)
      values ($1, $2, $3, 'EU') returning id`,
-    [`Tester${seq}`, String(1000 + (seq % 9000)).padStart(4, '0'), gold],
+    [`Tester_${unique}`, String(Math.floor(Math.random() * 9000) + 1000), gold],
   );
   return res.rows[0].id;
 }
@@ -58,13 +64,24 @@ async function lobbyWithCreator(
   return { lobbyId: lobby.id, creatorId };
 }
 
+/**
+ * This file runs against a database of its OWN (`useIsolatedDatabase`), which
+ * is what makes the wipe below safe.
+ *
+ * It matters because several tests here assert about a global query — the
+ * matchmaking pool — and cannot filter another file's lobbies out of the
+ * server's answer. Sharing one database with files that clear `users`
+ * between cases would let them pull the rug out from under each other, in
+ * whichever direction the runner happened to interleave them.
+ */
 describe('lobby repository', () => {
-  before(async () => { await runMigrations(); });
-  beforeEach(async () => {
-    // account_slots, lobbies, lobby_seats and lobby_invites all cascade from
-    // users, so one delete clears the whole fixture.
-    await query('delete from users');
+  before(async () => {
+    await useIsolatedDatabase('pitwall_test_lobby_repo');
+    await runMigrations();
   });
+  // Safe only because the database is this file's alone: every lobby table
+  // cascades from `users`, so one delete gives each test an empty world.
+  beforeEach(async () => { await query('delete from users'); });
   after(async () => { await closePool(); });
 
   describe('account slots (§4.1)', () => {
@@ -271,21 +288,25 @@ describe('lobby repository', () => {
   });
 
   describe('candidatePool (§3.4)', () => {
+    /** The pool, narrowed to the lobbies this test made. */
+    const poolOf = async (seeker: string, ids: string[]) =>
+      (await candidatePool(seeker, 'EU', 1)).filter((p) => ids.includes(p.lobbyId));
+
     it('hides a lobby whose creator has not taken a team yet (§3.2)', async () => {
       const creatorId = await makeUser();
-      await createLobby(creatorId, SETTINGS);
+      const unseated = await createLobby(creatorId, SETTINGS);
       const seeker = await makeUser();
-      assert.equal((await candidatePool(seeker, 'EU', 1)).length, 0);
+      assert.deepEqual(await poolOf(seeker, [unseated.id]), []);
 
       const { lobbyId } = await lobbyWithCreator();
-      const pool = await candidatePool(seeker, 'EU', 1);
+      const pool = await poolOf(seeker, [unseated.id, lobbyId]);
       assert.deepEqual(pool.map((p) => p.lobbyId), [lobbyId]);
     });
 
     it('reports the real seat split', async () => {
       const { lobbyId, creatorId } = await lobbyWithCreator();
       const seeker = await makeUser();
-      const [entry] = await candidatePool(seeker, 'EU', 1);
+      const [entry] = await poolOf(seeker, [lobbyId]);
       assert.deepEqual(entry.humanTeamKeys, [SEAT_LADDER[0]]);
       assert.equal(entry.freeTeamKeys.length, TEAM_COUNT - 1);
       assert.ok(!entry.freeTeamKeys.includes(SEAT_LADDER[0]));
@@ -294,13 +315,15 @@ describe('lobby repository', () => {
 
     it('excludes private lobbies, other regions, closed rank gates and lobbies you are in', async () => {
       const seeker = await makeUser();
-      await lobbyWithCreator({ visibility: 'private' });
-      await lobbyWithCreator({ region: 'APAC' });
-      await lobbyWithCreator({ rankMin: 7, rankMax: 10 });
+      const excluded = [
+        (await lobbyWithCreator({ visibility: 'private' })).lobbyId,
+        (await lobbyWithCreator({ region: 'APAC' })).lobbyId,
+        (await lobbyWithCreator({ rankMin: 7, rankMax: 10 })).lobbyId,
+      ];
       const { lobbyId: mine } = await lobbyWithCreator();
       assert.equal((await takeSeat({ userId: seeker, lobbyId: mine, teamKey: SEAT_LADDER[1], rankLevel: 1 })).ok, true);
 
-      assert.equal((await candidatePool(seeker, 'EU', 1)).length, 0);
+      assert.deepEqual(await poolOf(seeker, [...excluded, mine]), []);
     });
 
     it('drops a lobby once every seat is taken', async () => {
@@ -310,7 +333,7 @@ describe('lobby repository', () => {
         assert.equal((await takeSeat({ userId, lobbyId, teamKey, rankLevel: 1 })).ok, true, teamKey);
       }
       const seeker = await makeUser();
-      assert.equal((await candidatePool(seeker, 'EU', 1)).length, 0);
+      assert.deepEqual(await poolOf(seeker, [lobbyId]), []);
     });
   });
 

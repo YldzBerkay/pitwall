@@ -6,6 +6,7 @@ import { registerAuthRoutes } from '../src/auth/routes.ts';
 import { registerIdentityRoutes } from '../src/identity/routes.ts';
 import { registerLobbyRoutes } from '../src/lobby/routes.ts';
 import { runMigrations } from '../src/db/migrate.ts';
+import { useIsolatedDatabase } from './helpers/isolatedDatabase.ts';
 import { query, closePool } from '../src/db/pool.ts';
 import { SEAT_LADDER, TEAM_COUNT } from '../src/lobby/grid.ts';
 import { SLOT_PRICE_GOLD } from '../src/lobby/slotRepo.ts';
@@ -32,16 +33,23 @@ async function json(
 const post = (path: string, body: unknown, token?: string) =>
   json(path, { method: 'POST', body: JSON.stringify(body), token });
 
-let seq = 0;
-
 interface Player { token: string; id: string; nickname: string }
 
-async function signUp(): Promise<Player> {
-  seq += 1;
+/**
+ * A fresh account. The e-mail carries a random component because this suite
+ * shares one database with every other test file and the runner may run them
+ * side by side — a counter would collide across processes.
+ *
+ * `region` matters more than it looks: matchmaking pools are per region, so
+ * giving a test its own region is how a test gets a pool containing only its
+ * own lobbies. See QUICK_MATCH_REGIONS below.
+ */
+async function signUp(region = 'EU'): Promise<Player> {
+  const unique = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const { status, body } = await post('/auth/password/register', {
-    email: `player${seq}-${Date.now()}@example.test`,
+    email: `player-${unique}@example.test`,
     password: 'correct horse battery',
-    region: 'EU',
+    region,
   });
   assert.equal(status, 201, JSON.stringify(body));
   return { token: body.token, id: body.user.id, nickname: body.user.nickname };
@@ -52,7 +60,7 @@ async function openLobby(
   settings: Record<string, unknown> = {},
   teamKey = SEAT_LADDER[0],
 ): Promise<{ owner: Player; lobbyId: string }> {
-  const owner = await signUp();
+  const owner = await signUp(typeof settings.region === 'string' ? settings.region : 'EU');
   const created = await post('/lobby/create', settings, owner.token);
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const lobbyId = created.body.lobby.id;
@@ -61,10 +69,21 @@ async function openLobby(
   return { owner, lobbyId };
 }
 
+/**
+ * This file runs against a database of its OWN (`useIsolatedDatabase`) and
+ * clears it between cases — see the matching note in lobby-repo.test.ts.
+ *
+ * The quick-match tests need one more layer on top of that: they cannot
+ * filter the server's answer after the fact, so each takes a region of its
+ * own, and the pool it is offered holds only the lobbies it created.
+ */
+const QUICK_MATCH_REGIONS = { empty: 'OCE', card: 'SEA', another: 'LATAM' } as const;
+
 describe('lobby http', () => {
   before(async () => {
     process.env.SESSION_SECRET = 'b'.repeat(32);
     process.env.EMAIL_HASH_PEPPER = 'test-pepper-value';
+    await useIsolatedDatabase('pitwall_test_lobby_http');
     await runMigrations();
 
     const router = new Router();
@@ -206,15 +225,17 @@ describe('lobby http', () => {
 
   describe('POST /lobby/quick-match', () => {
     it('offers nothing when no lobby is joinable', async () => {
-      const player = await signUp();
+      // This region has no lobby in it, by convention of this file.
+      const player = await signUp(QUICK_MATCH_REGIONS.empty);
       const { status, body } = await post('/lobby/quick-match', {}, player.token);
       assert.equal(status, 200);
       assert.equal(body.candidate, null);
     });
 
     it('returns one card whose counts match the real seats', async () => {
-      const { lobbyId } = await openLobby();
-      const player = await signUp();
+      const region = QUICK_MATCH_REGIONS.card;
+      const { lobbyId } = await openLobby({ region });
+      const player = await signUp(region);
       const { body } = await post('/lobby/quick-match', {}, player.token);
       assert.equal(body.candidate.lobby.id, lobbyId);
       assert.equal(body.candidate.humans, 1);
@@ -227,9 +248,10 @@ describe('lobby http', () => {
     });
 
     it('moves on when the player says "başka bul"', async () => {
-      const first = await openLobby();
-      const second = await openLobby();
-      const player = await signUp();
+      const region = QUICK_MATCH_REGIONS.another;
+      const first = await openLobby({ region });
+      const second = await openLobby({ region });
+      const player = await signUp(region);
       const a = await post('/lobby/quick-match', {}, player.token);
       const b = await post('/lobby/quick-match', { exclude: [a.body.candidate.lobby.id] }, player.token);
       assert.notEqual(b.body.candidate.lobby.id, a.body.candidate.lobby.id);

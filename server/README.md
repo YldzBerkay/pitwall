@@ -100,6 +100,18 @@ DATABASE_URL=postgres://pitwall:pitwall@localhost:5432/pitwall_test npm test
 npm run typecheck
 ```
 
+### Denge ve doğrulama script'leri
+
+```bash
+npm run sim:matchmaking   # §8 Faz 2 kapısı: eşleştirme dağılımı
+```
+
+Spec §3.4, önerilen adayların %85'inde en güçlü 3., %75'inde en güçlü 4.
+aracın gerçekten dolu olmasını ister. Bu, tek bir kartın değil kartlar
+AKIŞININ özelliğidir; script akışı üç gerçekçi havuzda koşturup sayar, sonra
+havuzun kıt olduğu bir dünyada sunucunun hedefin altında kaldığını ama
+havuzda gerçekten var olanı hiçbir zaman aşmadığını gösterir.
+
 ### Üretici script'ler — asla elle düzenlenmez
 
 - `npm run gen:countries` → `src/identity/countries.ts` (endonym ülke listesi,
@@ -120,6 +132,23 @@ Her iki dosya da **ÜRETİLMİŞTİR** — elle düzenlemeyin, ilgili script'i
 | POST | `/checkin` | `teamKey, managerId` | Sadece `checkin` fazında; yoksa `closed` |
 | POST | `/pit` | `teamKey, managerId, driverIdx, compound\|null` | Sonraki tur için pit çağrısı; check-in yapmamış takım için reddedilir |
 | WS | `/live` | — | `{type:'phase'}`, `{type:'lap', race}`, `{type:'result', result}` |
+
+### Lobi ve slot (Faz 2 — hepsi `Authorization: Bearer <token>` ister)
+
+| Yöntem | Yol | Gövde | Açıklama |
+|---|---|---|---|
+| GET | `/slots` | — | Hesabın beş slotu, dolu olanların lobi/takım özeti |
+| POST | `/slots/unlock` | `slotIndex` | 4. ya da 5. slotu 250 Altına açar; yetmezse `402 insufficient_gold` |
+| POST | `/lobby/create` | `region?, visibility?, aiDifficulty?, rankMin?, rankMax?, guestsCanInvite?, midSeasonJoin?` | Lobi kurar, 11 koltuğu AI olarak yazar. **Slot harcanmaz** |
+| POST | `/lobby/quick-match` | `exclude?: lobbyId[]` | Tek bir önizleme kartı; havuz boşsa `{candidate: null}` (taze lobi aç) |
+| POST | `/lobby/join` | `lobbyId, teamKey, slotIndex?` | Takımı al — **slot tam burada harcanır** |
+| GET | `/lobby?id=` | — | Lobinin koltuk listesi; özel lobiyi yalnızca içindekiler görür |
+| POST | `/lobby/invite` | `lobbyId, nickname` | Tam `Takma#1234` etiketiyle davet; kısmi arama yok |
+| GET | `/invites` | — | Bekleyen davetler ve o an boş takımlar |
+
+Kurucusu takım seçmemiş lobi hiçbir havuzda görünmez (§3.2). Bir önizleme
+kartının gösterdiği insan/AI sayıları ve boş takım listesi **gerçek koltuk
+satırlarıdır** — sahte doluluk üretilmez (§3.4).
 
 Faz akışı: `open → checkin (T−5dk) → live (T) → result → open (sonraki tur)`.
 Check-in yapmayan takımı motor `managed: 'assistant'` ile koşturur; kimsenin
