@@ -4,9 +4,9 @@
     "strict": true,
     "noEmit": true,
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"],
+      "@pitwall/shared": ["../shared/src/index.ts"],
+      "@pitwall/shared/*": ["../shared/src/*.ts"]
     }
   },
   "include": [

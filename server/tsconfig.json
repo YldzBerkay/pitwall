@@ -10,16 +10,17 @@
     "allowImportingTsExtensions": true,
     "types": [
       "node"
-    ]
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@pitwall/shared": ["../shared/src/index.ts"],
+      "@pitwall/shared/*": ["../shared/src/*.ts"]
+    }
   },
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",
-    "scripts/**/*.ts",
-    "../mobile/src/data/**/*.ts"
+    "scripts/**/*.ts"
   ],
-  "exclude": [
-    "../mobile/src/data/mock.ts",
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

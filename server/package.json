@@ -15,6 +15,7 @@
     "gen:ip-region": "npx tsx scripts/gen-ip-region.ts"
   },
   "dependencies": {
+    "@pitwall/shared": "file:../shared",
     "jose": "^5.10.0",
     "pg": "^8.23.0",
     "ws": "^8.18.0"
