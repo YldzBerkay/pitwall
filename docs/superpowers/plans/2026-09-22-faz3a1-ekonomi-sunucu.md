@@ -69,6 +69,50 @@ temiz.
 
 Geri kalan sıra doğrudur: 1 → 2 → 3 → 4 → 5 → **8** → 6 → 7 → 9 → 10 → 11 → 12 → 13 → 14 → 15.
 
+## Test yardımcısı: bir lobi kurmak
+
+> **Düzeltme (Görev 3'ten sonra):** Bu planın görevlerindeki `makeLobby()`
+> örnekleri `lobbies` tablosunun gerçek şeklini yanlış varsayıyordu. Aşağıdaki
+> **doğru** sürümdür; bir lobi satırı gereken her görevde bunu kullan, görev
+> metnindeki eski sürümü değil.
+
+`lobbies` üç zorunlu alanı vardır ki plan bunları atlamıştı: `name_base` ve
+`name_seq` (`(name_base, name_seq)` üzerinde benzersiz indeks var — aynı çifti
+iki kez yazma), ve **`creator_user_id` NOT NULL'dur**, yani önce gerçek bir
+kullanıcı satırı gerekir.
+
+```ts
+import { createUserWithIdentity } from '../src/auth/userRepo.ts';
+import { query } from '../src/db/pool.ts';
+
+let seq = 0;
+
+/** Testin ihtiyaç duyduğu en küçük lobi. `seq` her çağrıda artar ki
+ *  `(name_base, name_seq)` benzersizliği aynı test dosyasında çakışmasın. */
+async function makeLobby(label = 'Test'): Promise<string> {
+  const owner = await createUserWithIdentity({
+    base: 'GridHunter',
+    provider: 'google',
+    providerUid: `g-${label}-${++seq}`,
+    emailHash: null,
+  });
+  const res = await query<{ id: string }>(
+    `insert into lobbies (name, name_base, name_seq, region, visibility, ai_difficulty,
+                          rank_min, rank_max, guests_can_invite, mid_season_join,
+                          creator_user_id, next_race_at)
+     values ($1, $2, $3, 'EU', 'private', 'normal', 1, 10, false, true, $4,
+             now() + interval '1 day')
+     returning id`,
+    [`${label} #${seq}`, label, seq, owner.id],
+  );
+  return res.rows[0].id;
+}
+```
+
+`beforeEach`'te `delete from lobbies` **ve** `delete from users` çağır — lobi
+kullanıcıya bağlı olduğu için yalnızca birini silmek yabancı anahtar hatası ya
+da birikmiş çöp satır bırakır.
+
 ## Dosya yapısı
 
 | Dosya | Sorumluluk |
