@@ -30,7 +30,7 @@ export interface Point {
   y: number;
 }
 
-export type Region = 'europe' | 'middleEast' | 'asiaPacific' | 'americas';
+export type TrackRegion = 'europe' | 'middleEast' | 'asiaPacific' | 'americas';
 
 /**
  * How often race control has to step in here, per race. Calibrated from the
@@ -77,7 +77,7 @@ export interface Track {
   /** Sprint weekend: FP1 → sprint qualifying → sprint → qualifying → race. */
   sprint: boolean;
   /** Sets the session clock (see `weekendSchedule`). */
-  region: Region;
+  region: TrackRegion;
 }
 
 const p = (x: number, y: number): Point => ({ x, y });
@@ -101,7 +101,7 @@ const t = (
   layout: Point[],
   raceControl: RaceControlProfile,
   sprint: boolean,
-  region: Region,
+  region: TrackRegion,
 ): Track => ({ key, gp, country, circuit, demand, label, rainChance, attrition, overtaking, laps, baseLapSec, pitLossSec, layout, raceControl, sprint, region });
 
 export const calendar: Track[] = [
@@ -175,7 +175,7 @@ export interface ScheduledSession {
  * owner asked for — an hour between practices, half an hour before
  * qualifying, ninety minutes before the race.
  */
-const REGION_FP1_UTC_MIN: Record<Region, number> = {
+const REGION_FP1_UTC_MIN: Record<TrackRegion, number> = {
   europe: 12 * 60,
   middleEast: 13 * 60,
   asiaPacific: 5 * 60,

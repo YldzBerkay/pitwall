@@ -3,13 +3,14 @@
  *
  * A region is a matchmaking + race-hour bucket, NOT an identity. The player's
  * country is separate and purely cosmetic.
+ *
+ * The list itself (`REGIONS`/`Region`/`isRegion`) lives in `@pitwall/shared`
+ * and is re-exported here so every existing importer of this file keeps
+ * working unchanged. What's genuinely server-side — race-hour timezones and
+ * Turkish display labels — stays declared in this file.
  */
-export const REGIONS = ['EU', 'NA', 'LATAM', 'MENA', 'APAC', 'SEA', 'OCE'] as const;
-export type Region = (typeof REGIONS)[number];
-
-export function isRegion(value: unknown): value is Region {
-  return typeof value === 'string' && (REGIONS as readonly string[]).includes(value);
-}
+export { REGIONS, type Region, isRegion } from '@pitwall/shared/regions';
+import type { Region } from '@pitwall/shared/regions';
 
 /**
  * The daily race hour for each bucket, as an IANA zone plus a local hour.
