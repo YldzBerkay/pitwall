@@ -107,10 +107,19 @@ npm run sim:matchmaking   # §8 Faz 2 kapısı: eşleştirme dağılımı
 ```
 
 Spec §3.4, önerilen adayların %85'inde en güçlü 3., %75'inde en güçlü 4.
-aracın gerçekten dolu olmasını ister. Bu, tek bir kartın değil kartlar
-AKIŞININ özelliğidir; script akışı üç gerçekçi havuzda koşturup sayar, sonra
-havuzun kıt olduğu bir dünyada sunucunun hedefin altında kaldığını ama
-havuzda gerçekten var olanı hiçbir zaman aşmadığını gösterir.
+takımın gerçekten dolu olmasını ister ("n. araç" = güç sırasındaki n. takım;
+bir koltuk = bir takım = iki araç). Bu, tek bir kartın değil kartlar
+AKIŞININ özelliğidir, o yüzden ölçülerek doğrulanır.
+
+**Script bugün başarısız dönüyor ve dönmeye devam etmeli.** 11 koltuklu
+ızgarada dürüst tavan `(11 − n) / (11 − 1)` = %80 / %70, ölçülen ~%76 / %66 —
+yani §3.4'ün hedefleri tavanın üstünde. Sebep seçim algoritması değil:
+lobiyi dolduran 10 katılımcının ilk n−1'i, n. takım henüz boşken gelmek
+zorunda, yoksa lobi hiç büyümez. Script (1) sunucunun havuzdaki her uygun
+adayı gösterdiğini ve gerçeği hiç aşmadığını doğrular, (2) ölçülen dağılımı
+yazar, (3) §3.4 hedefiyle farkı açıkça raporlar. Kararı spec sahibi verir:
+hedefleri tavanın altına çekmek ya da koltuğu tek araç yapmak
+(22 koltukta tavan %90/%86).
 
 ### Üretici script'ler — asla elle düzenlenmez
 

@@ -1,11 +1,19 @@
 /**
  * Eşleştirme dağılımı simülasyonu — spec §8, Faz 2 doğrulama kapısı.
  *
- * İddia şu: "Hızlı oyun bul"un ÖNERDİĞİ adayların %85'inde en güçlü 3.
- * araç, %75'inde en güçlü 4. araç GERÇEKTEN dolu olsun (§3.4). Bu tek bir
- * kartın değil, kartlar akışının özelliğidir; dolayısıyla tek doğrulama yolu
- * akışı koşturup saymaktır — `npm run econ` ile aynı disiplin: denge bir
- * görüş değil, bir eşik meselesidir.
+ * İddia şu: "Hızlı oyun bul"un ÖNERDİĞİ adayların %85'inde en güçlü 3.,
+ * %75'inde en güçlü 4. TAKIM gerçekten dolu olsun (§3.4; "n. araç" = güç
+ * sırasındaki n. takım, bkz. grid.ts'teki SEAT_LADDER). Bu tek bir kartın
+ * değil, kartlar akışının özelliğidir; dolayısıyla tek doğrulama yolu akışı
+ * koşturup saymaktır — `npm run econ` ile aynı disiplin: denge bir görüş
+ * değil, bir eşik meselesidir.
+ *
+ * ÖLÇÜM SONUCU: §3.4'ün %85/%75'i 11 koltuklu ızgarada ulaşılamıyor. Dürüst
+ * tavan %80/%70 (matchmaking.ts'teki `honestCeiling`), ölçülen ~%76/%66 ve
+ * bu rakam havuzun sunabildiğinin TAMAMI — seçim algoritması kusurlu değil,
+ * ekosistem o kadarını üretiyor. Script bu farkı 3. bölümde açıkça raporlar
+ * ve başarısız sayar: sessizce geçmek, tutulmayan bir sözü tutuluyor
+ * göstermek olurdu.
  *
  *   npm run sim:matchmaking
  *
@@ -16,7 +24,13 @@
  * kendisidir.
  */
 import { fileURLToPath } from 'node:url';
-import { CandidateShaper, occupancyOf, DEFAULT_TARGETS, type Candidate } from '../src/lobby/matchmaking.ts';
+import {
+  CandidateShaper,
+  DEFAULT_TARGETS,
+  honestCeiling,
+  occupancyOf,
+  type Candidate,
+} from '../src/lobby/matchmaking.ts';
 import { SEAT_LADDER } from '../src/lobby/grid.ts';
 
 /** Tekrarlanabilir rastgelelik — aynı tohum, aynı rapor. */
@@ -60,22 +74,22 @@ export interface SimOptions {
 export interface SimReport {
   /** Gösterilen kart sayısı — oranların paydası. */
   served: number;
-  /** En güçlü 3. aracı dolu olan kartların oranı. */
-  car3: number;
-  /** En güçlü 4. aracı dolu olan kartların oranı. */
-  car4: number;
-  /** İlk iki aracı da dolu olan kartların oranı (§3.4, "yüksek ağırlık"). */
+  /** En güçlü 3. takımı dolu olan kartların oranı. */
+  team3: number;
+  /** En güçlü 4. takımı dolu olan kartların oranı. */
+  team4: number;
+  /** İlk iki takımı da dolu olan kartların oranı (§3.4, "yüksek ağırlık"). */
   topPair: number;
-  /** İlk 3 / ilk 4 aracın TAMAMI dolu olan kartların oranı. */
+  /** İlk 3 / ilk 4 takımın TAMAMI dolu olan kartların oranı. */
   cumulativeTop3: number;
   cumulativeTop4: number;
   /**
-   * Üst sınır: seçim anında havuzda o aracı GERÇEKTEN dolu en az bir aday
+   * Üst sınır: seçim anında havuzda o takımı GERÇEKTEN dolu en az bir aday
    * bulunma oranı. Hedefin tutulup tutulamayacağını belirleyen şey budur —
    * havuzda yoksa sunucunun yapabileceği bir şey yoktur ve uydurmaz (§3.4).
    */
-  feasibleCar3: number;
-  feasibleCar4: number;
+  feasibleTeam3: number;
+  feasibleTeam4: number;
   /** Seçim anındaki ortalama havuz büyüklüğü. */
   poolSize: number;
   /** Havuzda hiç aday kalmadığı için açılan taze lobi sayısı (§3.4). */
@@ -118,23 +132,23 @@ export function simulate(options: SimOptions): SimReport {
   };
 
   let served = 0;
-  let car3 = 0;
-  let car4 = 0;
+  let team3 = 0;
+  let team4 = 0;
   let topPair = 0;
   let cumulativeTop3 = 0;
   let cumulativeTop4 = 0;
-  let feasibleCar3 = 0;
-  let feasibleCar4 = 0;
+  let feasibleTeam3 = 0;
+  let feasibleTeam4 = 0;
   let poolTotal = 0;
 
   const record = (c: SimLobby) => {
     const o = occupancyOf(c.humanTeamKeys);
     served += 1;
-    if (o.car3) car3 += 1;
-    if (o.car4) car4 += 1;
+    if (o.team3) team3 += 1;
+    if (o.team4) team4 += 1;
     if (o.topPair) topPair += 1;
-    if (o.topPair && o.car3) cumulativeTop3 += 1;
-    if (o.topPair && o.car3 && o.car4) cumulativeTop4 += 1;
+    if (o.topPair && o.team3) cumulativeTop3 += 1;
+    if (o.topPair && o.team3 && o.team4) cumulativeTop4 += 1;
   };
 
   for (let tick = 0; tick < requests; tick += 1) {
@@ -161,8 +175,8 @@ export function simulate(options: SimOptions): SimReport {
       }
 
       poolTotal += pool.length;
-      if (pool.some((p) => occupancyOf(p.humanTeamKeys).car3)) feasibleCar3 += 1;
-      if (pool.some((p) => occupancyOf(p.humanTeamKeys).car4)) feasibleCar4 += 1;
+      if (pool.some((p) => occupancyOf(p.humanTeamKeys).team3)) feasibleTeam3 += 1;
+      if (pool.some((p) => occupancyOf(p.humanTeamKeys).team4)) feasibleTeam4 += 1;
 
       const chosen: SimLobby | null = naive
         ? pool[Math.floor(random() * pool.length)]
@@ -182,13 +196,13 @@ export function simulate(options: SimOptions): SimReport {
   const over = (n: number) => (served ? n / served : 0);
   return {
     served,
-    car3: over(car3),
-    car4: over(car4),
+    team3: over(team3),
+    team4: over(team4),
     topPair: over(topPair),
     cumulativeTop3: over(cumulativeTop3),
     cumulativeTop4: over(cumulativeTop4),
-    feasibleCar3: over(feasibleCar3),
-    feasibleCar4: over(feasibleCar4),
+    feasibleTeam3: over(feasibleTeam3),
+    feasibleTeam4: over(feasibleTeam4),
     poolSize: over(poolTotal),
     freshLobbies,
     lobbies: nextId - 1,
@@ -241,9 +255,9 @@ const SKEWED: World[] = [
 
 function line(r: SimReport): string {
   return (
-    `     3. araç ${pct(r.car3)} · 4. araç ${pct(r.car4)} · ilk ikisi ${pct(r.topPair)}` +
+    `     3. takım ${pct(r.team3)} · 4. takım ${pct(r.team4)} · ilk ikisi ${pct(r.topPair)}` +
     ` · üst3 tamamı ${pct(r.cumulativeTop3)} · üst4 tamamı ${pct(r.cumulativeTop4)}` +
-    `\n     havuzda vardı: 3. araç ${pct(r.feasibleCar3)} · 4. araç ${pct(r.feasibleCar4)}` +
+    `\n     havuzda vardı: 3. takım ${pct(r.feasibleTeam3)} · 4. takım ${pct(r.feasibleTeam4)}` +
     ` · ortalama havuz ${r.poolSize.toFixed(1)} lobi`
   );
 }
@@ -255,60 +269,73 @@ function main(): void {
     console.log(`${ok ? 'OK  ' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
   };
 
-  console.log('§8 Faz 2 doğrulama kapısı — eşleştirme dağılımı\n');
-  console.log('── 1. Hedefler tutuyor mu (gerçekçi havuzlar) ──');
-  for (const { label, options } of REALISTIC) {
-    const r = simulate(options);
-    console.log(`\n${label} · ${r.served} kart · ${r.lobbies} lobi (${r.freshLobbies} taze)`);
-    console.log(line(r));
-    // Hedef bir TABANDIR: sözü verilen doluluk. Üstüne çıkmak sözü bozmaz,
-    // altına düşmek bozar.
-    check(`${label}: 3. araç ≥ %85`, r.car3 >= DEFAULT_TARGETS.car3 - TOLERANCE, pct(r.car3));
-    check(`${label}: 4. araç ≥ %75`, r.car4 >= DEFAULT_TARGETS.car4 - TOLERANCE, pct(r.car4));
-  }
+  const ceiling = { team3: honestCeiling(3), team4: honestCeiling(4) };
 
-  console.log('\n── 2. Sunucu havuzdan alabileceğinin tamamını alıyor mu ──');
-  // Beklenen oran min(hedef, havuzda var olan)'dır. Havuz bollaştığında
-  // sunucu hedefin üstüne ÇIKMAZ (§3.4 bir dağılımdır, "hep en dolusunu
-  // göster" değil); havuz kıtlaştığında da altında kalmaz — elindekinin
-  // tamamını gösterir.
+  console.log('§8 Faz 2 doğrulama kapısı — eşleştirme dağılımı\n');
+
+  // ── 1. Sunucunun kontrol ettiği şey ──────────────────────────────────────
+  // Sunucu havuzda o takımı dolu bir aday VARSA onu gösteriyor mu, ve hiçbir
+  // zaman havuzda gerçekten var olandan fazlasını göstermiyor mu. Hedefin
+  // tutulup tutulmaması havuzun işi; bu iki satır sunucunun işi.
+  console.log('── 1. Sunucu elindekinin tamamını gösteriyor, fazlasını değil ──');
   for (const { label, options } of [...REALISTIC, ...SKEWED]) {
     const r = simulate(options);
     check(
-      `${label}: 3. araç = min(hedef, havuz)`,
-      r.car3 >= Math.min(DEFAULT_TARGETS.car3, r.feasibleCar3) - TOLERANCE,
-      `${pct(r.car3)} ≥ ${pct(Math.min(DEFAULT_TARGETS.car3, r.feasibleCar3))}`,
+      `${label}: 3. takım = min(hedef, havuz)`,
+      r.team3 >= Math.min(DEFAULT_TARGETS.team3, r.feasibleTeam3) - TOLERANCE,
+      `${pct(r.team3)} ≥ ${pct(Math.min(DEFAULT_TARGETS.team3, r.feasibleTeam3))}`,
     );
-    // 4. araç aynı ölçüyle yalnızca 3. araç hedefi tutuyorken ölçülebilir.
-    // Kıt havuzda iki ölçüt AYNI kartı ister ama farklı lobilerde bulunur:
-    // 4. aracı dolu ama 3. aracı boş bir lobiyi göstermek, 3. araç oranını
-    // düşürmeden olmaz. §3.4 sıralaması nettir — 3. araç üstte yazar, o
-    // yüzden çakışmada o kazanır ve burada 4. araç ölçülmez, raporlanır.
-    if (r.feasibleCar3 >= DEFAULT_TARGETS.car3) {
-      check(
-        `${label}: 4. araç = min(hedef, havuz)`,
-        r.car4 >= Math.min(DEFAULT_TARGETS.car4, r.feasibleCar4) - TOLERANCE,
-        `${pct(r.car4)} ≥ ${pct(Math.min(DEFAULT_TARGETS.car4, r.feasibleCar4))}`,
-      );
-    } else {
-      console.log(`     (${label}: 3. araç kıt — 4. araç ${pct(r.car4)}, havuzda ${pct(r.feasibleCar4)})`);
-    }
+    check(
+      `${label}: gerçeği aşmıyor`,
+      r.team3 <= r.feasibleTeam3 + 1e-9 && r.team4 <= r.feasibleTeam4 + 1e-9,
+      `${pct(r.team3)} ≤ ${pct(r.feasibleTeam3)} · ${pct(r.team4)} ≤ ${pct(r.feasibleTeam4)}`,
+    );
   }
 
-  console.log('\n── 3. Kıtlıkta uydurmuyor (§3.4 dürüst doluluk) ──');
-  for (const { label, options } of SKEWED) {
+  // ── 2. Ölçülen dağılım ───────────────────────────────────────────────────
+  console.log('\n── 2. Ölçülen dağılım ──');
+  const measured: SimReport[] = [];
+  for (const { label, options } of [...REALISTIC, ...SKEWED]) {
     const r = simulate(options);
-    console.log(`\n${label} · ${r.served} kart`);
+    measured.push(r);
+    console.log(`\n${label} · ${r.served} kart · ${r.lobbies} lobi (${r.freshLobbies} taze)`);
     console.log(line(r));
-    // Hedefin ALTINDA kalması beklenir: havuzda o aday yok. Kritik olan,
-    // oranın havuzda gerçekten var olanı BİR PUAN BİLE aşmamasıdır — aşsaydı
-    // sunucu dolu olmayan bir koltuğu dolu göstermiş olurdu.
-    check(`${label}: hedefin altında (havuz kıt)`, r.car3 < DEFAULT_TARGETS.car3 - TOLERANCE, pct(r.car3));
-    check(`${label}: gerçeği aşmıyor`, r.car3 <= r.feasibleCar3 + 1e-9, `${pct(r.car3)} ≤ ${pct(r.feasibleCar3)}`);
-    check(`${label}: 4. araç gerçeği aşmıyor`, r.car4 <= r.feasibleCar4 + 1e-9, `${pct(r.car4)} ≤ ${pct(r.feasibleCar4)}`);
   }
 
-  console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
+  // ── 3. §3.4 hedefi ───────────────────────────────────────────────────────
+  // En iyi gerçekçi dünyayı hedefe karşı tartıyoruz. Bu kontrol BUGÜN
+  // BAŞARISIZ ve öyle kalması gerekiyor: hedef, dürüst tavanın üstünde.
+  console.log('\n── 3. §3.4 hedefi (%85 / %75) ──');
+  const best = {
+    team3: Math.max(...measured.map((r) => r.team3)),
+    team4: Math.max(...measured.map((r) => r.team4)),
+  };
+  for (const rank of [3, 4] as const) {
+    const key = `team${rank}` as const;
+    console.log(
+      `     ${rank}. takım · hedef ${pct(DEFAULT_TARGETS[key])}` +
+        ` · dürüst tavan ${pct(ceiling[key])} · en iyi ölçüm ${pct(best[key])}`,
+    );
+  }
+  console.log(
+    `     Tavan = (${11} - n) / (${11} - 1): lobiyi dolduran 10 katılımcının ilk n-1'i,\n` +
+      "     n. takım HENÜZ BOŞKEN gelmek zorunda — yoksa lobi hiç büyümez.\n" +
+      '     Hedefe ulaşmanın tek yolu boş koltuğu dolu göstermek olurdu; §3.4 bunu yasaklıyor.',
+  );
+  check('§3.4: 3. takım ≥ %85', best.team3 >= DEFAULT_TARGETS.team3 - TOLERANCE, pct(best.team3));
+  check('§3.4: 4. takım ≥ %75', best.team4 >= DEFAULT_TARGETS.team4 - TOLERANCE, pct(best.team4));
+
+  if (failed > 0) {
+    console.log(
+      `\n${failed} KONTROL BAŞARISIZ.\n` +
+        'Yukarıdaki §3.4 satırları geçmiyorsa karar spec sahibinindir: hedefleri\n' +
+        `dürüst tavanın altına çekmek (örn. %${Math.floor(ceiling.team3 * 100)} / %${Math.floor(ceiling.team4 * 100)}) ya da bir koltuğu\n` +
+        'takım yerine TEK ARAÇ yapmak (22 koltukta tavan %90/%86). Kod bugünkü\n' +
+        'haliyle doğru çalışıyor; tutmayan şey hedefin kendisi.',
+    );
+  } else {
+    console.log('\nTÜMÜ GEÇTİ');
+  }
   process.exit(failed === 0 ? 0 : 1);
 }
 

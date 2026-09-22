@@ -244,7 +244,9 @@ describe('lobby http', () => {
       // seat, nothing withheld and nothing invented (§3.4).
       assert.equal(body.candidate.seats.length, TEAM_COUNT - 1);
       assert.ok(!body.candidate.seats.some((s: any) => s.teamKey === SEAT_LADDER[0]));
-      assert.equal(body.candidate.occupancy.topPair, true);
+      // Only the creator is seated, so none of §3.4's rows is satisfied yet:
+      // `topPair` wants the strongest TWO teams held, not just the first.
+      assert.deepEqual(body.candidate.occupancy, { topPair: false, team3: false, team4: false });
     });
 
     it('moves on when the player says "başka bul"', async () => {

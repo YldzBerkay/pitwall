@@ -31,21 +31,19 @@ export const AI_DEVELOPMENT_RATE: Record<AiDifficulty, number> = {
 };
 
 /**
- * The grid's 22 cars, strongest first, using the race engine's OWN pace
- * formula — `aiStrength(team, round 1) * CAR_WEIGHT + driver.skill *
- * DRIVER_WEIGHT` (raceEngine.ts, `paceFor`). The weights are re-stated here
- * rather than imported because they are module-private in the engine; the
- * engine is not modified by this phase, so keep these two lines in step with
- * it if it ever re-balances.
+ * THE SEAT LADDER — the grid's eleven teams, strongest first.
  *
- * This ladder is what §3.4 means by "the strongest 1st / 2nd / 3rd / 4th
- * car". It matters that it is CARS and not teams: a seat in a lobby is a
- * whole team (both its cars), so if the top four cars were simply the top two
- * teams' pairs, §3.4's "3rd car" and "4th car" rows would be the same
- * condition and could not carry two different targets. On the real grid they
- * are not — the top four cars belong to three different teams (Aurelia takes
- * cars 1 and 2, then Bravado's and Silberpfad's lead cars), because a strong
- * team's second driver can sit behind a rival's first.
+ * §3.4 phrases its rows as "the strongest 1st / 2nd / 3rd / 4th car". A seat
+ * in a lobby is a whole TEAM (both of its cars, one manager), and the spec
+ * means the n-th team on this ladder — not the n-th of the 22 individual
+ * cars. So "the strongest 3rd car is taken" reads here as SEAT_LADDER[2]
+ * being held by a human.
+ *
+ * A team's strength is the pace of its best car under the race engine's own
+ * formula, so the ladder, the preview card's order and the "araç NN" it
+ * prints are all one number. CAR_WEIGHT/DRIVER_WEIGHT are module-private in
+ * raceEngine.ts (which this phase does not touch), so they are restated here
+ * and must be kept in step with it if the engine is ever re-balanced.
  */
 const CAR_WEIGHT = 0.75;
 const DRIVER_WEIGHT = 0.25;
@@ -53,29 +51,10 @@ const DRIVER_WEIGHT = 0.25;
 const carPace = (team: Team, driver: Team['drivers'][number]): number =>
   aiStrength(team, 1) * CAR_WEIGHT + driver.skill * DRIVER_WEIGHT;
 
-/** Which team fields the n-th strongest car, n = 1..22. */
-export const CAR_LADDER: readonly string[] = teams
-  .flatMap((team) => team.drivers.map((driver) => ({ key: team.key, pace: carPace(team, driver) })))
-  .sort((a, b) => b.pace - a.pace || a.key.localeCompare(b.key))
-  .map((c) => c.key);
-
-/** The team fielding the n-th strongest car (1-based), or '' past the grid. */
-export function teamOfCar(n: number): string {
-  return CAR_LADDER[n - 1] ?? '';
-}
-
-/**
- * A team's rating as the preview card prints it ("araç 81"): the pace of its
- * strongest car. Using the best car rather than the bare chassis keeps ONE
- * ordering across the whole feature — the card's list, the seat ladder and
- * §3.4's car ladder are the same order, so "the 3rd car is taken" and "the
- * 3rd row of the card is gone" are always the same statement.
- */
 const BEST_CAR_PACE = new Map(
   teams.map((team) => [team.key, Math.max(...team.drivers.map((d) => carPace(team, d)))]),
 );
 
-/** Team keys, strongest car first. One seat = one team. */
 export const SEAT_LADDER: readonly string[] = [...teams]
   .map((t) => t.key)
   .sort((a, b) => (BEST_CAR_PACE.get(b) ?? 0) - (BEST_CAR_PACE.get(a) ?? 0) || a.localeCompare(b));
@@ -88,7 +67,7 @@ export function isTeamKey(v: unknown): v is string {
   return typeof v === 'string' && BEST_CAR_PACE.has(v);
 }
 
-/** 0-100 pre-season car rating, the "araç 81" on the preview card (§3.3). */
+/** The "araç 81" on the preview card (§3.3): the pace of the team's best car. */
 export function carRating(teamKey: string): number {
   return Math.round(BEST_CAR_PACE.get(teamKey) ?? 0);
 }
