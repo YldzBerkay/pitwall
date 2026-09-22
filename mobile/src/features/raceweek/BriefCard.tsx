@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassCard } from '@/components/atoms';
-import { BRIEF_RP_EACH } from '@/data/brief';
+import { BRIEF_RP_EACH } from '@pitwall/shared/brief';
 import { useGameStore } from '@/store/gameStore';
 
 /**

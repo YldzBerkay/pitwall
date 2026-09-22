@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassButton, GlassCard, Icon, RankIcon, Cols, ScreenHeader } from '@/components/atoms';
 import { haptic } from '@/lib/haptics';
-import { playerTeam } from '@/data/teams';
+import { playerTeam } from '@pitwall/shared/teams';
 import {
   achievementDefs,
   nextRank,
@@ -12,8 +12,8 @@ import {
   rankProgress,
   ranks,
   underdogMultiplier,
-} from '@/data/achievements';
-import { strengthRank } from '@/data/raceEngine';
+} from '@pitwall/shared/achievements';
+import { strengthRank } from '@pitwall/shared/raceEngine';
 import { useGameStore } from '@/store/gameStore';
 import { useShellLayout } from '@/lib/useShellLayout';
 

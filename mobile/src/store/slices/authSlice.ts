@@ -8,7 +8,7 @@ import {
   type OnboardingFields,
   type PublicProfile,
 } from '@/lib/api/identity';
-import type { Region } from '@/data/regions';
+import type { Region } from '@pitwall/shared/regions';
 import type { SliceCreator } from './types';
 
 export const DEFAULT_AUTH_SERVER = 'http://localhost:8787';

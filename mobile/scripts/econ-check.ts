@@ -7,17 +7,17 @@
  *
  *   npm run econ
  */
-import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPacks, goldPrices, rpPrices, skipCostGold } from '../src/data/economy';
-import { racePrize } from '../src/data/sponsors';
-import { championshipPrize, regressCar, rivalFactoryLevel } from '../src/data/season';
-import { CRIPPLED_DNF_SCALE, crippleSetup } from '../src/data/raceEngine';
-import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS } from '../src/data/espionage';
-import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryEffects } from '../src/data/factory';
-import { aiStrength } from '../src/data/raceEngine';
-import { teams } from '../src/data/teams';
-import { wageFor } from '../src/data/staff';
-import { SQUAD_MAX, SQUAD_MIN, TRAINING_MS, driverFee, driverWage, saleValue, trainingGain } from '../src/data/driverMarket';
-import { UPGRADE_GAIN, UPGRADE_MAX_MS, upgradeCostFor, upgradeDurationMs } from '../src/data/carCustomisation';
+import { ECONOMY_SCALE, GOLD_PER_HOUR, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPacks, goldPrices, rpPrices, skipCostGold } from '@pitwall/shared/economy';
+import { racePrize } from '@pitwall/shared/sponsors';
+import { championshipPrize, regressCar, rivalFactoryLevel } from '@pitwall/shared/season';
+import { CRIPPLED_DNF_SCALE, crippleSetup } from '@pitwall/shared/raceEngine';
+import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS } from '@pitwall/shared/espionage';
+import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryEffects } from '@pitwall/shared/factory';
+import { aiStrength } from '@pitwall/shared/raceEngine';
+import { teams } from '@pitwall/shared/teams';
+import { wageFor } from '@pitwall/shared/staff';
+import { SQUAD_MAX, SQUAD_MIN, TRAINING_MS, driverFee, driverWage, saleValue, trainingGain } from '@pitwall/shared/driverMarket';
+import { UPGRADE_GAIN, UPGRADE_MAX_MS, upgradeCostFor, upgradeDurationMs } from '@pitwall/shared/carCustomisation';
 
 /** Yarışlar arası gerçek süre, ~2,5 gün. */
 const RACE_GAP_MS = 60 * 3600_000;

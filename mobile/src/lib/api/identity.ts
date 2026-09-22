@@ -4,7 +4,7 @@
  * URL as the league server (`server/src/index.ts` serves both from one
  * process) — the address the player already enters to join a league.
  */
-import type { Region } from '@/data/regions';
+import type { Region } from '@pitwall/shared/regions';
 
 export interface PublicProfile {
   id: string;

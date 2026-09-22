@@ -8,7 +8,7 @@
  * seat rows: the client must render them as they arrive and must never pad,
  * round or withhold a number to make a lobby look busier (spec §3.4).
  */
-import type { Region } from '@/data/regions';
+import type { Region } from '@pitwall/shared/regions';
 import { request, type ApiResult } from './identity';
 
 export type AiDifficulty = 'easy' | 'normal' | 'hard';

@@ -1,8 +1,8 @@
 import { View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassButton, GlassCard, Cols } from '@/components/atoms';
-import { playerTeam } from '@/data/teams';
-import { carId, effectiveStats, setupRiskFactor } from '@/data/raceEngine';
+import { playerTeam } from '@pitwall/shared/teams';
+import { carId, effectiveStats, setupRiskFactor } from '@pitwall/shared/raceEngine';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { Chip, DriverCell, Pos, fmtSec } from './shared';

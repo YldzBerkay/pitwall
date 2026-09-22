@@ -1,4 +1,4 @@
-import { goldPrices, rpPrices, skipCostGold } from '@/data/economy';
+import { goldPrices, rpPrices, skipCostGold } from '@pitwall/shared/economy';
 import {
   BAD_INTEL_FACTOR,
   CAUGHT_FINE_MIN,
@@ -13,10 +13,10 @@ import {
   type AgentKind,
   type GarageHide,
   type SpyMission,
-} from '@/data/espionage';
-import { aiStrength, type AiBonus } from '@/data/raceEngine';
-import { teamByKey, teams } from '@/data/teams';
-import type { StatKey } from '@/data/driverMarket';
+} from '@pitwall/shared/espionage';
+import { aiStrength, type AiBonus } from '@pitwall/shared/raceEngine';
+import { teamByKey, teams } from '@pitwall/shared/teams';
+import type { StatKey } from '@pitwall/shared/driverMarket';
 import type { SliceCreator } from './types';
 
 export type SpyStart = 'ok' | 'cooldown' | 'noGold' | 'noRp' | 'pending';

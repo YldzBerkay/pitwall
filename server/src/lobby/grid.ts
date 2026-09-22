@@ -6,8 +6,8 @@
  * simulation (`scripts/matchmaking-sim.ts`) and the real server read exactly
  * the same numbers.
  */
-import { teams, type Team } from '../../../mobile/src/data/teams.ts';
-import { aiStrength } from '../../../mobile/src/data/raceEngine.ts';
+import { teams, type Team } from '@pitwall/shared/teams';
+import { aiStrength } from '@pitwall/shared/raceEngine';
 
 export const AI_DIFFICULTIES = ['easy', 'normal', 'hard'] as const;
 export type AiDifficulty = (typeof AI_DIFFICULTIES)[number];

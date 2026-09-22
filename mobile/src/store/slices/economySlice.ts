@@ -1,4 +1,4 @@
-import { ADS_PER_DAY, GOLD_PER_AD, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, dayKey, goldPacks } from '@/data/economy';
+import { ADS_PER_DAY, GOLD_PER_AD, GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, dayKey, goldPacks } from '@pitwall/shared/economy';
 import type { SliceCreator } from './types';
 
 /**
@@ -29,17 +29,17 @@ export interface EconomySlice {
 
 export const createEconomySlice: SliceCreator<EconomySlice> = (set, get) => ({
   gold: 2,
-  adsToday: { day: dayKey(), count: 0 },
-  convertedToday: { day: dayKey(), gold: 0 },
+  adsToday: { day: dayKey(new Date()), count: 0 },
+  convertedToday: { day: dayKey(new Date()), gold: 0 },
 
   adsLeft: () => {
     const { adsToday } = get();
-    return adsToday.day === dayKey() ? Math.max(0, ADS_PER_DAY - adsToday.count) : ADS_PER_DAY;
+    return adsToday.day === dayKey(new Date()) ? Math.max(0, ADS_PER_DAY - adsToday.count) : ADS_PER_DAY;
   },
 
   watchAd: () => {
     const state = get();
-    const today = dayKey();
+    const today = dayKey(new Date());
     const count = state.adsToday.day === today ? state.adsToday.count : 0;
     if (count >= ADS_PER_DAY) return false;
     set({ gold: state.gold + GOLD_PER_AD, adsToday: { day: today, count: count + 1 } });
@@ -61,13 +61,13 @@ export const createEconomySlice: SliceCreator<EconomySlice> = (set, get) => ({
 
   convertibleLeft: () => {
     const { convertedToday } = get();
-    const used = convertedToday.day === dayKey() ? convertedToday.gold : 0;
+    const used = convertedToday.day === dayKey(new Date()) ? convertedToday.gold : 0;
     return Math.max(0, GOLD_TO_RP_DAILY_CAP - used);
   },
 
   convertGoldToRp: (gold) => {
     const state = get();
-    const today = dayKey();
+    const today = dayKey(new Date());
     const used = state.convertedToday.day === today ? state.convertedToday.gold : 0;
     const allowed = Math.min(gold, state.convertibleLeft(), state.gold);
     if (allowed <= 0) return 0;

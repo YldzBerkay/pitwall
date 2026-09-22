@@ -7,7 +7,7 @@ import {
   type StaffMember,
   type StaffRole,
   type StaffRoster,
-} from '@/data/staff';
+} from '@pitwall/shared/staff';
 import type { SliceCreator } from './types';
 
 export type HireResult = 'ok' | 'seatTaken' | 'noRp' | 'missing';

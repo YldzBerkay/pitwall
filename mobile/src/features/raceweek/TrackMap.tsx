@@ -3,9 +3,9 @@ import { View } from 'react-native';
 import { Canvas, Circle, Group, Path, Skia } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { colors } from '@/theme';
-import { teamByKey } from '@/data/teams';
-import { pointAlong, type Point, type Track } from '@/data/tracks';
-import type { CarState, RaceState } from '@/data/raceEngine';
+import { teamByKey } from '@pitwall/shared/teams';
+import { pointAlong, type Point, type Track } from '@pitwall/shared/tracks';
+import type { CarState, RaceState } from '@pitwall/shared/raceEngine';
 
 /**
  * The circuit as a line and the twenty-two cars as dots on it.

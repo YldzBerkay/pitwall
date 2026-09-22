@@ -18,8 +18,8 @@ import { CarTurntable } from './CarTurntable';
 import { CarIllustration } from './CarIllustration';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
-import { describeSpec, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
-import type { Sponsorship } from '@/data/sponsors';
+import { describeSpec, type CompoundKey, type SpokeStyle } from '@pitwall/shared/carCustomisation';
+import type { Sponsorship } from '@pitwall/shared/sponsors';
 
 /**
  * The car on its garage stage, with the upgrade sequence.

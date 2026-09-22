@@ -1,5 +1,5 @@
-import type { CarSetup, QualiRisk, RaceResult, RaceState, TacticPreset } from '@/data/raceEngine';
-import type { TeamStanding } from '@/data/teams';
+import type { CarSetup, QualiRisk, RaceResult, RaceState, TacticPreset } from '@pitwall/shared/raceEngine';
+import type { TeamStanding } from '@pitwall/shared/teams';
 import type { SliceCreator } from './types';
 
 /** Mirror of the server's public state (see server/src/league.ts). */

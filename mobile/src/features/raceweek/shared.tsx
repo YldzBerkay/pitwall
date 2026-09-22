@@ -1,10 +1,10 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '@/theme';
 import { AppText } from '@/components/atoms';
-import { compoundByKey, compounds, type CompoundKey } from '@/data/carCustomisation';
-import { teamByKey } from '@/data/teams';
+import { compoundByKey, compounds, type CompoundKey } from '@pitwall/shared/carCustomisation';
+import { teamByKey } from '@pitwall/shared/teams';
 import { haptic } from '@/lib/haptics';
-import type { GridEntry } from '@/data/raceEngine';
+import type { GridEntry } from '@pitwall/shared/raceEngine';
 
 /** One option in a segmented choice. */
 export function Chip({

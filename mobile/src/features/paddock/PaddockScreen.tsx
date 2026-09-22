@@ -7,10 +7,10 @@ import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
 import { useGameStore } from '@/store/gameStore';
 import { Chip } from '@/features/raceweek/shared';
-import { ADS_PER_DAY, goldPacks, goldPrices, rpPrices } from '@/data/economy';
-import { hiringFee, staffRoles, type StaffRole } from '@/data/staff';
-import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS, agentProfiles, type AgentKind } from '@/data/espionage';
-import { formatDuration } from '@/data/carCustomisation';
+import { ADS_PER_DAY, goldPacks, goldPrices, rpPrices } from '@pitwall/shared/economy';
+import { hiringFee, staffRoles, type StaffRole } from '@pitwall/shared/staff';
+import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS, agentProfiles, type AgentKind } from '@pitwall/shared/espionage';
+import { formatDuration } from '@pitwall/shared/carCustomisation';
 import {
   contractTerms,
   contractWage,
@@ -23,10 +23,10 @@ import {
   SQUAD_MAX,
   type DriverStatKey,
   type StatKey,
-} from '@/data/driverMarket';
-import { overallOf, teams, teamByKey } from '@/data/teams';
-import { explainPace } from '@/data/raceEngine';
-import { trackForRound } from '@/data/tracks';
+} from '@pitwall/shared/driverMarket';
+import { overallOf, teams, teamByKey } from '@pitwall/shared/teams';
+import { explainPace } from '@pitwall/shared/raceEngine';
+import { trackForRound } from '@pitwall/shared/tracks';
 import { adsAvailable, showRewardedAd } from '@/lib/monetization/ads';
 import { fetchPackPrices, iapAvailable, purchaseGoldPack } from '@/lib/monetization/iap';
 

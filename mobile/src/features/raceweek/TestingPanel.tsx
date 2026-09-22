@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassButton, GlassCard, Cols } from '@/components/atoms';
-import { TEST_DAYS, type TestFocus } from '@/data/season';
+import { TEST_DAYS, type TestFocus } from '@pitwall/shared/season';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';

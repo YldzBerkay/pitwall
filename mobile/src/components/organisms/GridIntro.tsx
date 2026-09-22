@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { colors, spacing } from '@/theme';
 import { AppText } from '@/components/atoms';
-import { teamByKey } from '@/data/teams';
+import { teamByKey } from '@pitwall/shared/teams';
 
 interface GridCar {
   teamKey: string;

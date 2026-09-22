@@ -10,7 +10,7 @@ import {
   spokeStyles,
   type CompoundKey,
   type SpokeStyle,
-} from '@/data/carCustomisation';
+} from '@pitwall/shared/carCustomisation';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import { DEPARTMENT_MAX_LEVEL, departmentCost, type FactoryDepartment } from '@/data/factory';
+import { DEPARTMENT_MAX_LEVEL, departmentCost, type FactoryDepartment } from '@pitwall/shared/factory';
 import { AppText, GlassCard, Cols, ScreenHeader, SegmentTabs } from '@/components/atoms';
 import { CarUpgradeStage, type CarUpgradeStageHandle, type UpgradeZone } from '@/components/organisms';
-import { UPGRADE_MAX_MS, describeSpec, formatDuration, tierOf, tierUnlocks } from '@/data/carCustomisation';
+import { UPGRADE_MAX_MS, describeSpec, formatDuration, tierOf, tierUnlocks } from '@pitwall/shared/carCustomisation';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { statName } from '@/components/molecules/CarStatCard';

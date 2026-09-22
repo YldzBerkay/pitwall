@@ -23,7 +23,7 @@ import {
   resolveRimColor,
   type CompoundKey,
   type SpecLetter,
-} from '@/data/carCustomisation';
+} from '@pitwall/shared/carCustomisation';
 import {
   brandByKey,
   slotByKey,
@@ -31,7 +31,7 @@ import {
   type LogoFont,
   type SlotKey,
   type Sponsorship,
-} from '@/data/sponsors';
+} from '@pitwall/shared/sponsors';
 
 /**
  * The team's 3D car, rendered live and turned by dragging.
@@ -56,7 +56,7 @@ import {
  *
  * Sponsor branding rides a second mechanism. `tools/blender/build_toon_car.py`
  * bakes eight flat, UV-mapped plates onto the body — `PW_Decal_sidepod`,
- * `PW_Decal_nose`, etc. — named after the exact `SlotKey`s in `@/data/sponsors`,
+ * `PW_Decal_nose`, etc. — named after the exact `SlotKey`s in `@pitwall/shared/sponsors`,
  * sitting there in every spec regardless of whether the aero part they're near
  * actually exists yet (a sponsor deal isn't gated by development tier).
  *

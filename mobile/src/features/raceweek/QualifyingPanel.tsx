@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassButton, GlassCard, Cols } from '@/components/atoms';
-import { playerTeam } from '@/data/teams';
-import { tyreLifeLaps, type TacticPreset } from '@/data/raceEngine';
-import { sprintLaps } from '@/data/tracks';
+import { playerTeam } from '@pitwall/shared/teams';
+import { tyreLifeLaps, type TacticPreset } from '@pitwall/shared/raceEngine';
+import { sprintLaps } from '@pitwall/shared/tracks';
 
 import { useGameStore } from '@/store/gameStore';
 import { useShellLayout } from '@/lib/useShellLayout';

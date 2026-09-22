@@ -3,9 +3,9 @@
  *
  * Everything that involves chance — sponsor offers, the championship table,
  * qualifying, the race itself — draws from a seeded mulberry32 so that the same
- * seed and the same inputs always give the same result. `Math.random()` is
- * banned in the data layer on purpose: with it, a player could leave the
- * screen and come back to re-roll a bad weekend.
+ * seed and the same inputs always give the same result. Unseeded, ambient
+ * randomness is banned in the data layer on purpose: with it, a player could
+ * leave the screen and come back to re-roll a bad weekend.
  *
  * Seed convention: `round * prime + secondInput * prime`, see each caller.
  */

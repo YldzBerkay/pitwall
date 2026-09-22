@@ -202,8 +202,12 @@ export function weekendSchedule(track: Track): ScheduledSession[] {
   ];
 }
 
-/** "18:30" in the device's local time for a UTC minute-of-day. */
-export function localClock(startUtcMin: number, now: Date = new Date()): string {
+/**
+ * "18:30" in the device's local time for a UTC minute-of-day. Varsayılanı
+ * YOKTUR — hangi anın kastedildiğini çağıran söylemek zorunda (bkz. `dayKey`
+ * içindeki aynı gerekçe, `economy.ts`).
+ */
+export function localClock(startUtcMin: number, now: Date): string {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, startUtcMin));
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }

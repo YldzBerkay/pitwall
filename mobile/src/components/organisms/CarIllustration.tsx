@@ -33,7 +33,7 @@ import {
   type CompoundKey,
   type Livery,
   type SpokeStyle,
-} from '@/data/carCustomisation';
+} from '@pitwall/shared/carCustomisation';
 
 /** Perceived lightness of an "#RRGGBB", 0..1. */
 function luminance(hex: string): number {
@@ -47,7 +47,7 @@ function luminance(hex: string): number {
 function contrastInk(surfaceHex: string): string {
   return luminance(surfaceHex) > 0.28 ? '#0B0C0F' : '#F7F8FA';
 }
-import { brandByKey, slotByKey, type Sponsorship } from '@/data/sponsors';
+import { brandByKey, slotByKey, type Sponsorship } from '@pitwall/shared/sponsors';
 
 /**
  * The team car, drawn live in Skia as a side-profile.

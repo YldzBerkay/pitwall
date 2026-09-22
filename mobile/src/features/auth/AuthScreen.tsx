@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { colors, spacing } from '@/theme';
 import { AppText, ConfirmDialog, GlassButton, GlassCard, Icon, ScreenHeader, SegmentTabs } from '@/components/atoms';
 import type { BootstrapResponse } from '@/lib/api/identity';
-import type { Region } from '@/data/regions';
+import type { Region } from '@pitwall/shared/regions';
 import { useGameStore } from '@/store/gameStore';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { haptic } from '@/lib/haptics';

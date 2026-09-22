@@ -13,7 +13,7 @@ import {
   tierRank,
   type SlotKey,
   type SponsorOffer,
-} from '@/data/sponsors';
+} from '@pitwall/shared/sponsors';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';

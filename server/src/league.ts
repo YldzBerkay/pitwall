@@ -11,10 +11,10 @@
  *   open ──(T − CHECKIN_SECONDS)──▶ checkin ──(T)──▶ live ──(flag)──▶ result ──▶ open (next round)
  */
 
-import { advanceLap, finishRace, simulateQualifying, startRace, weatherFor, type CarSetup, type Decisions, type Entries, type QualiRisk, type RaceResult, type RaceState, type TacticPreset } from '../../mobile/src/data/raceEngine.ts';
-import { freshStandings, SEASON_ROUNDS } from '../../mobile/src/data/season.ts';
-import { playerTeam, teams, type TeamStanding } from '../../mobile/src/data/teams.ts';
-import { trackForRound } from '../../mobile/src/data/tracks.ts';
+import { advanceLap, finishRace, simulateQualifying, startRace, weatherFor, type CarSetup, type Decisions, type Entries, type QualiRisk, type RaceResult, type RaceState, type TacticPreset } from '@pitwall/shared/raceEngine';
+import { freshStandings, SEASON_ROUNDS } from '@pitwall/shared/season';
+import { playerTeam, teams, type TeamStanding } from '@pitwall/shared/teams';
+import { trackForRound } from '@pitwall/shared/tracks';
 
 export type Phase = 'open' | 'checkin' | 'live' | 'result';
 

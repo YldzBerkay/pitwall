@@ -1,6 +1,6 @@
 import { colors } from '@/theme';
-import type { TrackFit } from '@/data/tracks';
-import { playerTeam } from '@/data/teams';
+import type { TrackFit } from '@pitwall/shared/tracks';
+import { playerTeam } from '@pitwall/shared/teams';
 
 export type { TrackFit };
 export type AlertTone = 'blue' | 'amber' | 'red' | 'green' | 'purple';

@@ -17,8 +17,8 @@ import type { User } from '../auth/userRepo.ts';
 import { loadUser } from '../auth/userRepo.ts';
 import { verifySession } from '../auth/jwt.ts';
 import { isRegion, type Region } from '../identity/region.ts';
-import { rankFor } from '../../../mobile/src/data/achievements.ts';
-import { SEASON_ROUNDS } from '../../../mobile/src/data/season.ts';
+import { rankFor } from '@pitwall/shared/achievements';
+import { SEASON_ROUNDS } from '@pitwall/shared/season';
 import {
   isAiDifficulty,
   previewSeats,

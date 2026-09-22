@@ -5,7 +5,7 @@ import { useSharedValue } from 'react-native-reanimated';
 import { colors } from '@/theme';
 import { AppText, Icon, PulseDot } from '@/components/atoms';
 import { TrackMap } from '@/features/raceweek/TrackMap';
-import { localClock, weekendSchedule, type Track } from '@/data/tracks';
+import { localClock, weekendSchedule, type Track } from '@pitwall/shared/tracks';
 
 interface NextRaceWidgetProps {
   track: Track;
@@ -118,7 +118,7 @@ export const NextRaceWidget = memo(function NextRaceWidget({ track, round, total
               <View className="flex-row items-center gap-1.5">
                 <Icon name="clock" size={13} color={colors.textSecondary} />
                 <AppText variant="labelSmall" color={colors.textSecondary}>
-                  Yarış saati {race ? localClock(race.startUtcMin) : ''}
+                  Yarış saati {race ? localClock(race.startUtcMin, new Date()) : ''}
                 </AppText>
               </View>
             </View>

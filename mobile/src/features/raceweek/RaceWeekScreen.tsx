@@ -1,8 +1,8 @@
 import { ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassCard, PulseDot, Cols, ScreenHeader } from '@/components/atoms';
-import { demandPct, localClock, trackForRound, weekendSchedule, type SessionKey } from '@/data/tracks';
-import { TEST_DAYS } from '@/data/season';
+import { demandPct, localClock, trackForRound, weekendSchedule, type SessionKey } from '@pitwall/shared/tracks';
+import { TEST_DAYS } from '@pitwall/shared/season';
 import { useGameStore, type WeekendPhase } from '@/store/gameStore';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { statName } from '@/components/molecules/CarStatCard';
@@ -111,7 +111,7 @@ export function RaceWeekScreen() {
                       {active || (s.key === nextKey) ? statusLabel[s.status] : ' '}
                     </AppText>
                     <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold', fontSize: 10 }}>
-                      {localClock(s.startUtcMin)}
+                      {localClock(s.startUtcMin, new Date())}
                     </AppText>
                   </View>
                   {i < sessions.length - 1 && (

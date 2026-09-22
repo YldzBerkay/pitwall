@@ -9,9 +9,9 @@ import {
   factoryEffects,
   type FactoryDepartment,
   type FactoryEffects,
-} from '@/data/factory';
-import { skipCostGold } from '@/data/economy';
-import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@/data/carCustomisation';
+} from '@pitwall/shared/factory';
+import { skipCostGold } from '@pitwall/shared/economy';
+import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@pitwall/shared/carCustomisation';
 import {
   generateOffers,
   racePrize,
@@ -20,15 +20,15 @@ import {
   type SlotKey,
   type SponsorOffer,
   type Sponsorship,
-} from '@/data/sponsors';
+} from '@pitwall/shared/sponsors';
 import {
   playerTeam,
   teams,
   positionOf,
   seedStandings,
   type TeamStanding,
-} from '@/data/teams';
-import { fitOf, trackForRound, type Track, type TrackDemand } from '@/data/tracks';
+} from '@pitwall/shared/teams';
+import { fitOf, trackForRound, type Track, type TrackDemand } from '@pitwall/shared/tracks';
 import {
   advanceLap,
   autoDecisions,
@@ -55,14 +55,14 @@ import {
   type SessionStoppage,
   type TimedEntry,
   type WeatherPlan,
-} from '@/data/raceEngine';
+} from '@pitwall/shared/raceEngine';
 import {
   emptyCareer,
   recordWeekend,
   scoreWeekend,
   type Career,
   type WeekendAchievements,
-} from '@/data/achievements';
+} from '@pitwall/shared/achievements';
 import {
   SEASON_ROUNDS,
   TEST_DAYS,
@@ -77,8 +77,8 @@ import {
   type TestFocus,
   type TestOutcome,
   type TestReport,
-} from '@/data/season';
-import { BRIEF_RP_EACH, briefCompliance, briefFor, type BriefItem } from '@/data/brief';
+} from '@pitwall/shared/season';
+import { BRIEF_RP_EACH, briefCompliance, briefFor, type BriefItem } from '@pitwall/shared/brief';
 import { createEconomySlice, type EconomySlice } from './slices/economySlice';
 import { createStaffSlice, type StaffSlice } from './slices/staffSlice';
 import { createEspionageSlice, type EspionageSlice } from './slices/espionageSlice';
@@ -87,7 +87,7 @@ import { createLeagueSlice, type LeagueSlice } from './slices/leagueSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
-import type { StatKey } from '@/data/driverMarket';
+import type { StatKey } from '@pitwall/shared/driverMarket';
 
 /** Stat label on the garage card → engine key. */
 const statKeyOf: Record<string, StatKey> = { MOTOR: 'motor', AERO: 'aero', GRIP: 'grip' };

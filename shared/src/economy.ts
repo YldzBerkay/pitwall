@@ -75,8 +75,13 @@ export const goldPacks: GoldPack[] = [
   { key: 'motorhome', gold: 500, priceLabel: '₺299,99', sku: 'com.yberkayarda.pitwall.gold40' },
 ];
 
-/** Same-day check for the ad counter, in the device's local calendar. */
-export const dayKey = (d: Date = new Date()): string => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+/**
+ * Bir tarihin gün anahtarı. Varsayılanı YOKTUR: "hangi gün" sorusunun cevabı
+ * istemcide cihazın takvimi, sunucuda UTC'dir ve ikisini karıştırmak günlük
+ * tavanın gün değiştirilerek aşılmasına yol açar. Çağıran hangi saati
+ * kastettiğini söylemek zorunda.
+ */
+export const dayKey = (d: Date): string => `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 
 /**
  * Altın fiyatları.

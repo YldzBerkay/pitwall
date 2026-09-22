@@ -1,5 +1,5 @@
-import { overallOf, playerTeam, teamByKey, teams, type Driver } from '@/data/teams';
-import type { Rosters } from '@/data/raceEngine';
+import { overallOf, playerTeam, teamByKey, teams, type Driver } from '@pitwall/shared/teams';
+import type { Rosters } from '@pitwall/shared/raceEngine';
 import {
   TRAINING_MS,
   ageOneSeason,
@@ -22,7 +22,7 @@ import {
   type DriverStatKey,
   type MarketDriver,
   type Training,
-} from '@/data/driverMarket';
+} from '@pitwall/shared/driverMarket';
 import type { SliceCreator } from './types';
 
 /** `full` = kadro tavanı (6) dolu, önce biri satılmalı. */
