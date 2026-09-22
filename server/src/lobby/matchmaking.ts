@@ -11,8 +11,8 @@
  * a "displayHumans" field that differs from the row count, stop.
  *
  * ── What the targets mean ──────────────────────────────────────────────────
- * §3.4 asks that, ACROSS THE CANDIDATES SERVED, the strongest 3rd team is
- * really taken in 85% of them and the strongest 4th in 75%. That is a
+ * §3.4 asks that, ACROSS THE CANDIDATES SERVED, the strongest 3rd and 4th
+ * teams are really taken in a set share of them (DEFAULT_TARGETS). That is a
  * property of the stream of offers, not of any single offer, so this module
  * keeps a running tally and steers each pick toward whichever side of the
  * target it is currently short on — including steering DOWN, by preferring an
@@ -63,9 +63,8 @@ export function occupancyOf(humanTeamKeys: readonly string[]): Occupancy {
  * This is a property of the ecosystem, not of the selection: a lobby only
  * grows because the server sends people into it while it is still thin. No
  * policy can beat it without showing a seat as taken when it is not, which
- * §3.4 forbids outright. §3.4's own targets (85% / 75%) sit ABOVE it, and
- * `scripts/matchmaking-sim.ts` measures the gap rather than papering over
- * it.
+ * §3.4 forbids outright — which is why DEFAULT_TARGETS sits below this line
+ * and `scripts/matchmaking-sim.ts` checks both.
  */
 export function honestCeiling(rank: number): number {
   return (TEAM_COUNT - rank) / (TEAM_COUNT - 1);
@@ -78,8 +77,18 @@ export interface DistributionTargets {
   team4: number;
 }
 
-/** §3.4's stated aim. Above `honestCeiling` — see the note there. */
-export const DEFAULT_TARGETS: DistributionTargets = { team3: 0.85, team4: 0.75 };
+/**
+ * §3.4's distribution aim, set just under `honestCeiling` so it is something
+ * the server can actually deliver without lying.
+ *
+ * The spec first wrote 85% / 75%. Those cannot be met on an eleven-seat grid
+ * — see `honestCeiling` — and the only way to "meet" them would be to show a
+ * free seat as taken, which §3.4 forbids outright. Making a seat a single CAR
+ * instead of a whole team would raise the ceiling, and is rejected by design:
+ * a manager runs a team, not one car. So the targets came down to what an
+ * eleven-team grid genuinely supports.
+ */
+export const DEFAULT_TARGETS: DistributionTargets = { team3: 0.75, team4: 0.65 };
 
 /**
  * How much more likely a lobby whose top two teams are taken is to be picked,

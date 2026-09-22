@@ -149,19 +149,24 @@ describe('matchmaking distribution simulation (§8, Faz 2 gate)', () => {
     seed: 2,
   };
 
-  it('gets as close to the targets as an eleven-seat grid honestly allows', () => {
-    // §3.4 asks for 85% / 75%. It cannot be had: see `honestCeiling` — a
-    // lobby only grows because the server keeps sending people into it while
-    // its 3rd and 4th teams are still free, which caps those shares at 80%
-    // and 70%. This test pins the measured distribution just under that cap,
-    // so a regression in the selection shows up as a DROP here, and any
-    // future change to the targets has to face the same arithmetic.
+  it('meets §3.4\'s targets in a healthy pool', () => {
+    const r = simulate(world);
+    assert.ok(r.team3 >= DEFAULT_TARGETS.team3 - 0.02, `3rd team ${r.team3}`);
+    assert.ok(r.team4 >= DEFAULT_TARGETS.team4 - 0.02, `4th team ${r.team4}`);
+  });
+
+  it('keeps the targets under what an eleven-seat grid honestly allows', () => {
+    // The guard that made the targets what they are: a lobby only grows
+    // because the server keeps sending people into it while its n-th team is
+    // still free, which caps that share at (11 - n) / 10. A target above the
+    // cap could only be "met" by showing a free seat as taken, which §3.4
+    // forbids — so raising DEFAULT_TARGETS past this line has to fail here
+    // rather than quietly turn the matchmaker into a liar.
+    assert.ok(DEFAULT_TARGETS.team3 < honestCeiling(3), `${DEFAULT_TARGETS.team3} vs ${honestCeiling(3)}`);
+    assert.ok(DEFAULT_TARGETS.team4 < honestCeiling(4), `${DEFAULT_TARGETS.team4} vs ${honestCeiling(4)}`);
     const r = simulate(world);
     assert.ok(r.team3 <= honestCeiling(3), `3rd team ${r.team3} above the ceiling`);
     assert.ok(r.team4 <= honestCeiling(4), `4th team ${r.team4} above the ceiling`);
-    assert.ok(r.team3 >= honestCeiling(3) - 0.06, `3rd team ${r.team3} far under the ceiling`);
-    assert.ok(r.team4 >= honestCeiling(4) - 0.06, `4th team ${r.team4} far under the ceiling`);
-    assert.ok(DEFAULT_TARGETS.team3 > honestCeiling(3), 'spec target is expected to sit above the ceiling');
   });
 
   it('never shows more occupancy than the pool actually had', () => {

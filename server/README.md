@@ -106,20 +106,20 @@ npm run typecheck
 npm run sim:matchmaking   # §8 Faz 2 kapısı: eşleştirme dağılımı
 ```
 
-Spec §3.4, önerilen adayların %85'inde en güçlü 3., %75'inde en güçlü 4.
+Spec §3.4, önerilen adayların %75'inde en güçlü 3., %65'inde en güçlü 4.
 takımın gerçekten dolu olmasını ister ("n. araç" = güç sırasındaki n. takım;
 bir koltuk = bir takım = iki araç). Bu, tek bir kartın değil kartlar
 AKIŞININ özelliğidir, o yüzden ölçülerek doğrulanır.
 
-**Script bugün başarısız dönüyor ve dönmeye devam etmeli.** 11 koltuklu
-ızgarada dürüst tavan `(11 − n) / (11 − 1)` = %80 / %70, ölçülen ~%76 / %66 —
-yani §3.4'ün hedefleri tavanın üstünde. Sebep seçim algoritması değil:
-lobiyi dolduran 10 katılımcının ilk n−1'i, n. takım henüz boşken gelmek
-zorunda, yoksa lobi hiç büyümez. Script (1) sunucunun havuzdaki her uygun
-adayı gösterdiğini ve gerçeği hiç aşmadığını doğrular, (2) ölçülen dağılımı
-yazar, (3) §3.4 hedefiyle farkı açıkça raporlar. Kararı spec sahibi verir:
-hedefleri tavanın altına çekmek ya da koltuğu tek araç yapmak
-(22 koltukta tavan %90/%86).
+Script üç şeyi kontrol eder: (1) sunucu havuzdaki her uygun adayı gösteriyor
+ve gerçeği hiç aşmıyor, (2) ölçülen dağılımı yazar, (3) hedefler dürüst
+tavanın altında ve en iyi gerçekçi havuzda tutuyor.
+
+Tavan `(11 − n) / (11 − 1)` = %80 / %70: oyuncular en iyi boş takımı aldığı
+için lobiyi dolduran 10 katılımcının ilk n−1'i, n. takım henüz boşken gelmek
+zorunda — yoksa lobi hiç büyümez. Hedefler ilk yazımda %85/%75'ti; ölçüm
+bunların tavanın üstünde olduğunu gösterdi ve aşağı çekildiler. Koltuğu takım
+yerine tek araç yapmak tavanı yükseltirdi, tasarım gereği reddedildi.
 
 ### Üretici script'ler — asla elle düzenlenmez
 

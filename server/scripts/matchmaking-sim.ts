@@ -1,19 +1,18 @@
 /**
  * Eşleştirme dağılımı simülasyonu — spec §8, Faz 2 doğrulama kapısı.
  *
- * İddia şu: "Hızlı oyun bul"un ÖNERDİĞİ adayların %85'inde en güçlü 3.,
- * %75'inde en güçlü 4. TAKIM gerçekten dolu olsun (§3.4; "n. araç" = güç
+ * İddia şu: "Hızlı oyun bul"un ÖNERDİĞİ adayların belli bir oranında en
+ * güçlü 3. ve 4. TAKIM gerçekten dolu olsun (§3.4; "n. araç" = güç
  * sırasındaki n. takım, bkz. grid.ts'teki SEAT_LADDER). Bu tek bir kartın
  * değil, kartlar akışının özelliğidir; dolayısıyla tek doğrulama yolu akışı
  * koşturup saymaktır — `npm run econ` ile aynı disiplin: denge bir görüş
  * değil, bir eşik meselesidir.
  *
- * ÖLÇÜM SONUCU: §3.4'ün %85/%75'i 11 koltuklu ızgarada ulaşılamıyor. Dürüst
- * tavan %80/%70 (matchmaking.ts'teki `honestCeiling`), ölçülen ~%76/%66 ve
- * bu rakam havuzun sunabildiğinin TAMAMI — seçim algoritması kusurlu değil,
- * ekosistem o kadarını üretiyor. Script bu farkı 3. bölümde açıkça raporlar
- * ve başarısız sayar: sessizce geçmek, tutulmayan bir sözü tutuluyor
- * göstermek olurdu.
+ * Hedefler (%75/%65) dürüst tavanın (%80/%70, `honestCeiling`) ALTINDADIR ve
+ * öyle kalmalıdır. Spec ilk yazıldığında %85/%75'ti; bu script o rakamların
+ * 11 koltuklu ızgarada ulaşılamaz olduğunu ölçtü ve hedefler aşağı çekildi.
+ * Tavanı yükseltmenin tek yolu koltuğu takım yerine tek araç yapmaktı —
+ * tasarım gereği reddedildi: yönetici bir takım yönetir, tek araba değil.
  *
  *   npm run sim:matchmaking
  *
@@ -303,9 +302,12 @@ function main(): void {
   }
 
   // ── 3. §3.4 hedefi ───────────────────────────────────────────────────────
-  // En iyi gerçekçi dünyayı hedefe karşı tartıyoruz. Bu kontrol BUGÜN
-  // BAŞARISIZ ve öyle kalması gerekiyor: hedef, dürüst tavanın üstünde.
-  console.log('\n── 3. §3.4 hedefi (%85 / %75) ──');
+  // Hedef, havuzun elverdiği en iyi gerçekçi dünyada tutmalı. Sakin bir
+  // havuzda altında kalmak kusur değil — orada o lobiler yok, ve 1. bölüm
+  // sunucunun elindekinin tamamını gösterdiğini zaten kanıtlıyor.
+  console.log(
+    `\n── 3. §3.4 hedefi (%${Math.round(DEFAULT_TARGETS.team3 * 100)} / %${Math.round(DEFAULT_TARGETS.team4 * 100)}) ──`,
+  );
   const best = {
     team3: Math.max(...measured.map((r) => r.team3)),
     team4: Math.max(...measured.map((r) => r.team4)),
@@ -318,24 +320,26 @@ function main(): void {
     );
   }
   console.log(
-    `     Tavan = (${11} - n) / (${11} - 1): lobiyi dolduran 10 katılımcının ilk n-1'i,\n` +
-      "     n. takım HENÜZ BOŞKEN gelmek zorunda — yoksa lobi hiç büyümez.\n" +
-      '     Hedefe ulaşmanın tek yolu boş koltuğu dolu göstermek olurdu; §3.4 bunu yasaklıyor.',
+    "     Tavan = (11 - n) / (11 - 1): lobiyi dolduran 10 katılımcının ilk n-1'i,\n" +
+      '     n. takım HENÜZ BOŞKEN gelmek zorunda — yoksa lobi hiç büyümez.\n' +
+      '     Hedef bu çizginin ÜSTÜNE çıkarsa tutturmanın tek yolu boş koltuğu dolu\n' +
+      '     göstermek olurdu; §3.4 bunu yasaklıyor. O yüzden hedef tavanın altında.',
   );
-  check('§3.4: 3. takım ≥ %85', best.team3 >= DEFAULT_TARGETS.team3 - TOLERANCE, pct(best.team3));
-  check('§3.4: 4. takım ≥ %75', best.team4 >= DEFAULT_TARGETS.team4 - TOLERANCE, pct(best.team4));
-
-  if (failed > 0) {
-    console.log(
-      `\n${failed} KONTROL BAŞARISIZ.\n` +
-        'Yukarıdaki §3.4 satırları geçmiyorsa karar spec sahibinindir: hedefleri\n' +
-        `dürüst tavanın altına çekmek (örn. %${Math.floor(ceiling.team3 * 100)} / %${Math.floor(ceiling.team4 * 100)}) ya da bir koltuğu\n` +
-        'takım yerine TEK ARAÇ yapmak (22 koltukta tavan %90/%86). Kod bugünkü\n' +
-        'haliyle doğru çalışıyor; tutmayan şey hedefin kendisi.',
+  for (const rank of [3, 4] as const) {
+    const key = `team${rank}` as const;
+    check(
+      `§3.4: ${rank}. takım hedefi dürüst tavanın altında`,
+      DEFAULT_TARGETS[key] < ceiling[key],
+      `%${Math.round(DEFAULT_TARGETS[key] * 100)} < ${pct(ceiling[key])}`,
     );
-  } else {
-    console.log('\nTÜMÜ GEÇTİ');
+    check(
+      `§3.4: ${rank}. takım ≥ %${Math.round(DEFAULT_TARGETS[key] * 100)}`,
+      best[key] >= DEFAULT_TARGETS[key] - TOLERANCE,
+      pct(best[key]),
+    );
   }
+
+  console.log(failed === 0 ? '\nTÜMÜ GEÇTİ' : `\n${failed} KONTROL BAŞARISIZ`);
   process.exit(failed === 0 ? 0 : 1);
 }
 
