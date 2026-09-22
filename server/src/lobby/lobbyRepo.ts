@@ -14,6 +14,7 @@ import { SEAT_LADDER, isTeamKey, type AiDifficulty } from './grid.ts';
 import { formatLobbyName, pickNameBase } from './names.ts';
 import { nextRaceAt } from './schedule.ts';
 import { claimSlot } from './slotRepo.ts';
+import { seedTeamEconomy } from '../economy/repo.ts';
 
 export type Visibility = 'public' | 'private';
 export type LobbyPhase = 'open' | 'checkin' | 'live' | 'result' | 'finished';
@@ -167,6 +168,12 @@ export async function createLobby(
           `insert into lobby_seats (lobby_id, team_key) select $1, unnest($2::text[])`,
           [lobby.id, SEAT_LADDER],
         );
+        // Her koltuğun ekonomisi lobiyle birlikte doğar. AI koltukları da
+        // dahil: yarış motoru için insan ve AI arasında fark yok, ikisi de
+        // bir araca sahip.
+        for (const teamKey of SEAT_LADDER) {
+          await seedTeamEconomy(client, lobby.id, teamKey);
+        }
         return lobby;
       });
     } catch (err) {
@@ -374,6 +381,10 @@ export async function takeSeat(input: TakeSeatInput): Promise<TakeSeatResult> {
       // aborts the transaction (releasing the slot with it) and is converted
       // back into a plain result below.
       if (!seat.rowCount) throw new SeatRollback('seat_taken');
+
+      // Lobi Faz 2'de kurulmuşsa ekonomi satırı yoktur. `on conflict do
+      // nothing` olduğu için var olan bir ekonomiyi asla sıfırlamaz.
+      await seedTeamEconomy(client, lobbyId, teamKey);
 
       await client.query(
         `update lobby_invites set accepted_at = now()
