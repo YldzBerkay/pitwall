@@ -31,20 +31,51 @@ kapatılması zorunlu ilk kapı — kadro ve sponsor sistemlerinden önce gelir.
 
 ## 2. Kapsam
 
-**Bu spec:** RP · Altın · fabrika seviyeleri · araç geliştirme · sürücü
-antrenmanı · casusluk · yarış muhasebesi (yarış ödülü, sponsor ücreti, brifing
-bonusu) · ödüllü reklam ve mağaza doğrulaması · takım değeri hesabı.
+> **Uygulama notu (2026-09-22):** Bu belge yazılırken Faz 2'nin lobilerde
+> yarış koşturduğu varsayılmıştı. Kod okunduğunda öyle olmadığı görüldü:
+> `lobbies` tablosunda `phase`, `round_no`, `next_race_at` kolonları var ama
+> **hiçbir kod bunları ilerletmiyor**; `lobby/schedule.ts` yalnızca "bir
+> sonraki yarış ne zaman" hesaplıyor. Çalışan tek yarış hâlâ Faz 0'dan kalan
+> tek global `League` sınıfı (bellekte, `setTimeout` ile).
+>
+> Bu yüzden faz ikiye bölündü. Aşağıdaki her şey geçerlidir; yalnızca **ne
+> zaman** yapıldığı değişti.
+
+### 3a-1 — ekonomi durumu ve zamanlayıcılar (bu planın konusu)
+
+`shared/` paketi · `lobby_economy` · RP ve Altın · fabrika seviyeleri · araç
+geliştirme, sürücü antrenmanı ve casusluk için claim modeli · ödüllü reklam ve
+mağaza doğrulaması · günlük tavanlar · takım değeri hesabı · eylem ucu.
+
+**Hile kapısını kapatan iş budur** ve yarış koşucusuna bağlı değildir.
+
+### 3a-2 — lobi yarış koşucusu ve muhasebe
+
+Lobi başına faz ilerlemesi ve yarış koşumu · lobi başına WS odası · check-in ve
+pit çağrısı · yarış muhasebesi (ödül, sponsor ücreti, brifing bonusu) · parc
+fermé / pit yolu başlangıcı (§6) · `Track.pitLaneSec` · **eski ligin
+kaldırılması** (`server/src/league.ts` ve `/join`, `/weekend`, `/checkin`,
+`/pit` uçları).
+
+Koşucunun dayanıklılık kararı şimdiden alındı: **veritabanı otoritedir.**
+Gerçek durum `lobbies.phase` ve `next_race_at`'te durur; sunucu kısa
+aralıklarla "vakti gelmiş lobiler" sorgusu koşturup fazı ilerletir. Yeniden
+başlatma hiçbir şey kaybettirmez, geç kalınan yarış açılışta hemen koşar, çok
+kopyada `for update skip locked` ile tek kopya alır. Bellekte `setTimeout`
+tutan mevcut desen taşınmaz.
+
+### 3a-1'in dürüst sınırı
+
+3a-1 bittiğinde lobi ekonomisi kalıcı, sunucu otoriteli ve hileye kapalı olur;
+oyuncu RP harcayabilir, geliştirme başlatıp claim edebilir, Altın alabilir.
+Ama **kazanç döngüsü kapanmaz** — RP'nin ana kaynağı yarış ödülü ve sponsor
+ücretidir, onlar 3a-2'de bağlanır. 3a-1'de lobi ekonomisi başlangıç RP'siyle
+ve Altın→RP dönüşümüyle beslenir.
 
 **Ayrı spec'ler:** kadro, sözleşme, transfer ve personel (**3b**) · sponsor
 sözleşmeleri ve sezon muhasebesinin tamamı (**3c**).
 
-**Kaldırılıyor:**
-
-- **Çevrimdışı oyun.** Hesap ve internet zorunlu olur.
-- **Faz 0'dan kalan tek global lig** (`server/src/league.ts` ve `/join`,
-  `/weekend`, `/checkin`, `/pit` uçları). Lobiler onun yaptığı her şeyi
-  yapıyor; iki yarış yolunu sürdürmek "ekonomi hangisine bağlanacak" sorusunu
-  doğuruyor ve bakımı ikiye katlıyor.
+**Kaldırılıyor (3a-1'de):** çevrimdışı oyun — hesap ve internet zorunlu olur.
 
 **Kapsam dışı ama bu fazın veri ürettiği:** sezon sonu özeti ve arşiv ekranı
 (Faz 4). Bu faz yalnızca o ekranın okuyacağı sayıları doğru üretmekle
@@ -342,14 +373,16 @@ okuduğu tek kaynak burasıdır.
 
 ## 12. Sunucu yapısı
 
+**3a-1:**
+
 ```
 server/src/
   economy/
     repo.ts        lobby_economy okuma/yazma
     jobs.ts        pending_jobs: başlat, claim, atla
     actions.ts     eylem yönlendirmesi ve doğrulama
-    settle.ts      yarış sonrası muhasebe
     value.ts       takım değeri
+    state.ts       slot durumu yanıtının kurulması (serverNow dahil)
     routes.ts      POST /lobby/:id/action
   gold/
     ssv.ts         AdMob callback doğrulaması
@@ -359,7 +392,9 @@ server/src/
     scheduler.ts   biten işleri tarar, push gönderir, ekonomiye dokunmaz
 ```
 
-`server/src/league.ts` ve ona ait uçlar silinir.
+**3a-2:** `economy/settle.ts` (yarış sonrası muhasebe) ve `lobby/runner.ts`
+(faz ilerlemesi, yarış koşumu) eklenir; `server/src/league.ts` ve ona ait
+uçlar o fazda silinir.
 
 ---
 
@@ -369,15 +404,22 @@ server/src/
 
 Ayrıca bu fazın kapattığı kapıları **kanıtlayan** testler:
 
+**3a-1:**
+
 1. Cihaz saati ileri alınmış bir istemcinin hiçbir şey kazanamadığı — istemci
    `serverNow`'u yok sayıp erken claim gönderdiğinde sunucu reddeder.
 2. Aynı claim'in iki kez gönderilmesinin ikinci kez etkisiz olduğu.
 3. Aynı AdMob callback'inin / mağaza makbuzunun iki kez Altın yazamadığı.
-4. Claim edilmemiş biten geliştirmenin yarışta pit yolu başlangıcı ürettiği ve
-   geliştirmenin **yine de** araca işlendiği.
-5. Devam eden geliştirmenin hâlâ aracı sakatladığı (mevcut davranış korunuyor).
-6. Günlük tavanların sunucu gününe göre işlediği ve istemcinin gün değiştirerek
+4. Günlük tavanların sunucu gününe göre işlediği ve istemcinin gün değiştirerek
    aşamadığı.
+5. Bildirim görevinin ekonomiye hiçbir şey yazmadığı — iki kez koşturulduğunda
+   `lobby_economy` ve `users.gold` bit bazında aynı kalır.
+
+**3a-2:**
+
+6. Claim edilmemiş biten geliştirmenin yarışta pit yolu başlangıcı ürettiği ve
+   geliştirmenin **yine de** araca işlendiği.
+7. Devam eden geliştirmenin hâlâ aracı sakatladığı (mevcut davranış korunuyor).
 
 Her biri için önce kuralı bozup testin düştüğü görülür, sonra geri alınır —
 yeşil ama hiçbir şey kanıtlamayan test kabul edilmez.
@@ -386,6 +428,8 @@ yeşil ama hiçbir şey kanıtlamayan test kabul edilmez.
 
 ## 14. Uygulama sırası
 
+### 3a-1 (bu planın konusu)
+
 | Adım | İçerik | Kapı |
 |---|---|---|
 | **1** | `shared/` paketi: formüller taşınır, `mobile` ve `server` oradan okur | `npm run econ` ve iki tarafın typecheck'i temiz |
@@ -393,9 +437,20 @@ yeşil ama hiçbir şey kanıtlamayan test kabul edilmez.
 | **3** | `pending_jobs` + başlat/claim/atla + idempotency | Çift claim testi |
 | **4** | Eylem ucu ve slot durumu yanıtı (`serverNow` dahil) | Saat ileri alma testi |
 | **5** | Altın: SSV, makbuz, günlük tavanlar | Çift callback testi |
-| **6** | Yarış muhasebesi + parc fermé/pit yolu | Pit yolu testi, `crippleSetup` korunuyor |
-| **7** | Eski ligin kaldırılması | Lobi yarışları çalışıyor, ölü uç kalmadı |
+| **6** | Takım değeri ve sezon anlık görüntüsü verisi | Tek kaynaktan hesaplanıyor |
+| **7** | Bildirim görevi (ekonomiye dokunmaz) | Çift koşumda ekonomi değişmiyor |
 | **8** | İstemci: salt-okunur önbellek, eylem çağrıları, çevrimdışı şeridi | Uçtan uca gerçek sunucuya karşı |
+
+### 3a-2 (ayrı plan)
+
+| Adım | İçerik |
+|---|---|
+| **1** | Lobi faz ilerlemesi: veritabanı otoriteli periyodik tarama, `for update skip locked` |
+| **2** | Lobi başına yarış koşumu ve WS odası |
+| **3** | Check-in ve pit çağrısının lobiye taşınması |
+| **4** | Yarış muhasebesi: ödül, sponsor ücreti, brifing bonusu |
+| **5** | Parc fermé / pit yolu başlangıcı + `Track.pitLaneSec` |
+| **6** | Eski ligin kaldırılması |
 
 Her adım çalışan bir oyun bırakır.
 
