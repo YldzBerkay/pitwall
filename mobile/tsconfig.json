@@ -4,10 +4,19 @@
     "strict": true,
     "noEmit": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "@pitwall/shared": ["../shared/src/index.ts"],
-      "@pitwall/shared/*": ["../shared/src/*.ts"]
-    }
+      "@/*": [
+        "./src/*"
+      ],
+      "@pitwall/shared": [
+        "../shared/src/index.ts"
+      ],
+      "@pitwall/shared/*": [
+        "../shared/src/*.ts"
+      ]
+    },
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "**/*.ts",

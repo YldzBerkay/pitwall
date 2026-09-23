@@ -1,4 +1,3 @@
-/// <reference types="node" />
 /**
  * Smoke test for the `tsx --test` runner itself.
  *
