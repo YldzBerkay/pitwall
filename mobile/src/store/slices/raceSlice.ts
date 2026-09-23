@@ -1,4 +1,5 @@
 import type { CompoundKey } from '@pitwall/shared/carCustomisation';
+import type { QualifyingResult } from '@pitwall/shared/raceEngine';
 import type { ApiResult } from '@/lib/api/identity';
 import {
   checkin as checkinApi,
@@ -75,6 +76,11 @@ export interface RaceSliceState {
    * disconnect (mirrors `raceSocket.ts`'s own `race` field) — the screen
    * freezes on the last real lap rather than going blank. */
   data: SerialisedRace | null;
+  /** The server's real qualifying result — mirrors `raceSocket.ts`'s own
+   * `qualifying` field 1:1, including its "never on a lap frame, never
+   * cleared by one, never fabricated locally" rules. See `displayQualifying`
+   * below for how a screen is meant to read this. */
+  qualifying?: QualifyingResult;
   /** The most recent pit call's result, kept distinct from `data` so a
    * rejection (e.g. `lap_already_run`) can be shown to the player without
    * being swallowed into the race state. */
@@ -200,18 +206,20 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
         // the wrong word for "you were never signed in" (see
         // `RaceSliceState.status`'s doc comment).
         set((s) => ({
-          race: { ...s.race, status: 'signed-out', lobbyId, data: null, lastPitOutcome: undefined },
+          race: { ...s.race, status: 'signed-out', lobbyId, data: null, qualifying: undefined, lastPitOutcome: undefined },
         }));
         return;
       }
 
-      set((s) => ({ race: { ...s.race, status: 'connecting', lobbyId, data: null, lastPitOutcome: undefined } }));
+      set((s) => ({
+        race: { ...s.race, status: 'connecting', lobbyId, data: null, qualifying: undefined, lastPitOutcome: undefined },
+      }));
 
       const newSocket = createSocket({ url: liveSocketUrl(auth.baseUrl), lobbyId, token: auth.token }, injected.socketDeps);
       socket = newSocket;
 
-      const adopt = (snapshot: { status: ConnectionStatus; race: SerialisedRace | null }) => {
-        set((s) => ({ race: { ...s.race, status: snapshot.status, data: snapshot.race } }));
+      const adopt = (snapshot: { status: ConnectionStatus; race: SerialisedRace | null; qualifying?: QualifyingResult }) => {
+        set((s) => ({ race: { ...s.race, status: snapshot.status, data: snapshot.race, qualifying: snapshot.qualifying } }));
       };
 
       adopt(newSocket.getState());
@@ -274,4 +282,32 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
       return outcome;
     },
   };
+}
+
+/**
+ * What the qualifying screen should show: the server's result while this
+ * device is seated in a lobby (`race.lobbyId` set), the locally-simulated
+ * one otherwise (the legacy no-lobby solo weekend, where there is no server
+ * race to ask).
+ *
+ * This lives here, not in `QualifyingPanel.tsx`, because it is a plain
+ * decision over data — no rendering — and `QualifyingPanel.tsx` imports
+ * React Native, which cannot run under plain Node (`tsx --test`); keeping
+ * the decision here is what makes rule 4 below testable at all.
+ *
+ * NO LOCAL FALLBACK: once `lobbyId` is set, `localQualifying` is never
+ * consulted, even when `race.qualifying` is `undefined` (not yet received
+ * from the server, or lost along with everything else on disconnect — see
+ * `raceSocket.ts`'s "never fabricate" rule, which this mirrors exactly). A
+ * locally-simulated grid is a DIFFERENT grid from the one this lobby's race
+ * actually started from — showing it, even briefly, is the exact bug this
+ * phase of the project exists to remove (see this task's brief: changing a
+ * single qualifying input once moved the race leader from a car that
+ * started P2 to one that started P18).
+ */
+export function displayQualifying(
+  race: Pick<RaceSliceState, 'lobbyId' | 'qualifying'>,
+  localQualifying: QualifyingResult | undefined,
+): QualifyingResult | undefined {
+  return race.lobbyId ? race.qualifying : localQualifying;
 }

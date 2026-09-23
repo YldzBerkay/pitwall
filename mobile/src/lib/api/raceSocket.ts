@@ -47,7 +47,22 @@
  * injected dependency defaulting to the global — this keeps the module
  * runnable under plain Node (`tsx --test`) with a fully scripted fake
  * `WebSocket` in tests, and keeps React Native/Expo out of it entirely.
+ *
+ * ── QUALIFYING RIDES SEPARATELY FROM `race` ───────────────────────────────
+ * The server's `state` frame (`live.ts`'s `SerialisedRaceState`) carries a
+ * `qualifying: QualifyingResult` field the `lap` frame never has — it is
+ * fixed for the whole race (derived once from the frozen recipe), so
+ * resending it every tick would be pure waste. Both frame types are still
+ * FULL replacements of `race` (see above), so if `qualifying` lived inside
+ * that same object, adopting the next `lap` frame would silently wipe it out
+ * the moment `frame.race` doesn't carry the key. It is kept in its own
+ * module-level slot instead: only a `state` frame ever assigns it, and it is
+ * mirrored onto `RaceSocketState` alongside `race` so it survives every
+ * subsequent `lap` frame untouched — a locally-simulated grid is never
+ * substituted in its place; see the module doc above's "no local fallback"
+ * for why.
  */
+import type { QualifyingResult } from '@pitwall/shared/raceEngine';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'session-invalid';
 
@@ -70,11 +85,33 @@ export interface SerialisedRace {
   neutralised: unknown;
 }
 
+/** Mirrors `SerialisedRaceState` in `server/src/lobby/live.ts` — the ONE
+ * extra field only a `state` frame's `race` object carries. Kept as its own
+ * type for the same reason the server keeps it separate from
+ * `SerialisedRace`: so a `lap` frame's payload structurally CANNOT carry
+ * `qualifying`, making "a lap frame silently wipes the grid" a type error
+ * here rather than a runtime bug. `QualifyingResult` is a plain data type
+ * (no server/React-Native coupling), so importing it type-only from
+ * `@pitwall/shared` doesn't violate this module's Node/RN-neutrality. */
+export interface SerialisedRaceState extends SerialisedRace {
+  qualifying: QualifyingResult;
+}
+
 export interface RaceSocketState {
   status: ConnectionStatus;
   /** The last race image the server sent. Preserved across disconnects —
    * never cleared just because the socket dropped. */
   race: SerialisedRace | null;
+  /** The server's real qualifying result, delivered once on the `state`
+   * frame. Preserved across every subsequent `lap` frame (which never
+   * carries it) and across disconnects — same "never cleared, never
+   * fabricated" rule as `race`. Undefined until the first `state` frame for
+   * a live race arrives (or once one arrives with `race: null`, i.e. the
+   * lobby isn't racing). NEVER filled in from a local simulation. Optional
+   * (rather than always-present-but-possibly-`undefined`) so existing call
+   * sites/tests built against a `{status, race}` shape from before this
+   * field existed keep typechecking unchanged. */
+  qualifying?: QualifyingResult;
 }
 
 export interface RaceSocketOptions {
@@ -121,7 +158,7 @@ function defaultBackoff(attempt: number): number {
 }
 
 type IncomingFrame =
-  | { type: 'state'; lobbyId: string; race: SerialisedRace | null }
+  | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
@@ -144,6 +181,11 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
 
   let status: ConnectionStatus = 'connecting';
   let race: SerialisedRace | null = null;
+  // Separate from `race` on purpose — see the module doc's "qualifying rides
+  // separately from `race`". Only a 'state' frame ever assigns this; a 'lap'
+  // frame's payload is typed `SerialisedRace` (no `qualifying` key at all),
+  // so it structurally cannot touch this variable.
+  let qualifying: QualifyingResult | undefined;
   let socket: MinimalWebSocket | null = null;
   let reconnectAttempt = 0;
   let reconnectTimer: number | null = null;
@@ -151,7 +193,7 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
   const listeners = new Set<(state: RaceSocketState) => void>();
 
   function snapshot(): RaceSocketState {
-    return { status, race };
+    return { status, race, qualifying };
   }
 
   function notify(): void {
@@ -181,12 +223,20 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
       case 'state': {
         if (frame.lobbyId !== options.lobbyId) return;
         race = frame.race;
+        // The 'state' frame is the ONLY place `qualifying` is ever
+        // (re)assigned — a full replacement, same as `race` itself. When
+        // `frame.race` is null (lobby isn't racing), there is no qualifying
+        // result either.
+        qualifying = frame.race?.qualifying;
         setStatus('connected');
         return;
       }
       case 'lap': {
         if (frame.lobbyId !== options.lobbyId) return;
         race = frame.race;
+        // `qualifying` is DELIBERATELY left untouched here: `frame.race` is
+        // `SerialisedRace`, which has no `qualifying` field to begin with —
+        // a 'lap' frame cannot clobber it even by accident.
         setStatus('connected');
         return;
       }

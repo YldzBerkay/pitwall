@@ -7,6 +7,7 @@ import { tyreLifeLaps, type TacticPreset } from '@pitwall/shared/raceEngine';
 import { sprintLaps } from '@pitwall/shared/tracks';
 
 import { useGameStore } from '@/store/gameStore';
+import { displayQualifying } from '@/store/slices/raceSlice';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
@@ -42,6 +43,9 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
   const lobbyId = useGameStore((s) => s.lobby.slots.find((sl) => sl.slotIndex === s.lobby.activeSlotIndex)?.lobbyId ?? undefined);
   const setWeekendChoices = useGameStore((s) => s.setWeekendChoices);
   const weekendChoiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
+  // Server-truth qualifying: see `displayQualifying`'s doc comment for why
+  // there is no local fallback while seated in a lobby.
+  const raceSlice = useGameStore((s) => s.race);
 
   // Every choice below is saved before lights-out: sent immediately, not
   // batched, since the server freezes the race recipe once and reads
@@ -70,7 +74,7 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
   ) : null;
 
   const sprint = mode === 'sprint';
-  const q = sprint ? weekend.sprintQualifying : weekend.qualifying;
+  const q = displayQualifying(raceSlice, sprint ? weekend.sprintQualifying : weekend.qualifying);
   const wetNow = weekend.weather.wetAtStart;
   const raceLaps = sprint ? sprintLaps(track) : track.laps;
   const title = sprint ? 'Sprint' : 'Yarış';
