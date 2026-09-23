@@ -50,8 +50,14 @@ const UPGRADE_STAT_FIELD: Record<string, keyof CarStats> = {
   grip: 'grip',
 };
 
-/** Base stat gain a claimed upgrade grants, before `factoryEffects().upgradeGainBonus`. */
-const UPGRADE_BASE_GAIN = 1;
+/**
+ * Base stat gain a claimed upgrade grants, before `factoryEffects().upgradeGainBonus`.
+ *
+ * Exported because `lobby/parcFerme.ts` computes the car a finished-but-unclaimed
+ * upgrade would produce. If the two ever drifted, an unclaimed-finished car would
+ * race as a different car from the one the player gets on claim.
+ */
+export const UPGRADE_BASE_GAIN = 1;
 
 function assertKnownKind(kind: JobKind): void {
   if (kind !== 'upgrade' && kind !== 'training' && kind !== 'spy') {

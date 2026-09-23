@@ -37,7 +37,7 @@
 import { carId, type PitLaneStart } from '@pitwall/shared/raceEngine';
 import { factoryEffects } from '@pitwall/shared/factory';
 import { loadLobbyEconomy, type CarStats } from '../economy/repo.ts';
-import { openJobs, type OpenJob } from '../economy/jobs.ts';
+import { openJobs, UPGRADE_BASE_GAIN, type OpenJob } from '../economy/jobs.ts';
 
 /**
  * İş etiketi (`payload.stat`, küçük harf) → `crippleSetup`'ın beklediği
@@ -50,15 +50,7 @@ const UPGRADE_STAT: Record<string, { field: keyof CarStats; label: string }> = {
   grip: { field: 'grip', label: 'GRIP' },
 };
 
-/**
- * Bir claim'in verdiği temel stat artışı.
- *
- * `jobs.ts`'teki `UPGRADE_BASE_GAIN` ile AYNI olmak zorunda; o sabit dışa
- * verilmediği ve `jobs.ts`'e dokunmak bu görevin kapsamı dışında olduğu için
- * burada tekrar ediliyor. İkisi ayrışırsa "biten ama claim edilmemiş" araç,
- * claim edilmiş hâlinden farklı bir araç olur — tam da olmaması gereken şey.
- */
-const UPGRADE_BASE_GAIN = 1;
+
 
 /** Bir takımın yarışa hangi araçla ve hangi cezayla çıkacağı. */
 export interface TeamParcFerme {
