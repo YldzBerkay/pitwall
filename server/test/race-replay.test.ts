@@ -15,8 +15,10 @@ import {
   simulateQualifying,
   startRace,
   weatherFor,
+  carId,
   type CarSetup,
   type Entries,
+  type PitLaneStart,
   type QualiRisk,
   type RaceState,
   type TeamEntry,
@@ -80,6 +82,23 @@ const LOG_B: DecisionLogEntry[] = [
 const replay = (decisions: readonly DecisionLogEntry[], uptoLap?: number) =>
   replayRace({ seed: SEED, round: ROUND, snapshot: SNAP, decisions, uptoLap });
 
+/**
+ * Parc fermé cezalı tarif: iki araç pit yolundan başlıyor. Ceza ARAÇ başına,
+ * takım başına değil — `aurelia` iki aracını da kaybediyor (araç geliştirmesi),
+ * `bravado` yalnız ikinci aracını (pilot çalışması). Serbest başlangıç lastiği
+ * de telafinin parçası olduğu için tarife yazılı.
+ */
+const PIT_LANE_STARTS: Record<string, PitLaneStart> = {
+  'aurelia:0': { compound: 'HARD' },
+  'aurelia:1': { compound: 'HARD' },
+  'bravado:1': { compound: 'SOFT' },
+};
+
+const SNAP_PF: RaceSnapshot = { ...SNAP, pitLaneStarts: PIT_LANE_STARTS };
+
+const replayPf = (decisions: readonly DecisionLogEntry[], uptoLap?: number) =>
+  replayRace({ seed: SEED, round: ROUND, snapshot: SNAP_PF, decisions, uptoLap });
+
 describe('race replay', () => {
   it('runs the track the round says it runs', () => {
     assert.ok(trackForRound(ROUND).laps >= 70, 'fixture needs a race longer than 70 laps');
@@ -132,7 +151,11 @@ describe('race replay', () => {
    * anahtarlanıyor: `decisionsForLap` kullanılsaydı test, sınadığı iki yolun
    * ortak parçasını sınamış olurdu.
    */
-  function liveTick(decisions: readonly DecisionLogEntry[], uptoLap: number): RaceState {
+  function liveTick(
+    decisions: readonly DecisionLogEntry[],
+    uptoLap: number,
+    pitLaneStarts?: Record<string, PitLaneStart>,
+  ): RaceState {
     const track = trackForRound(ROUND);
     const weather = weatherFor(track, SEED);
     const qualifying = simulateQualifying({
@@ -143,6 +166,10 @@ describe('race replay', () => {
       standings: SNAP.standings, track, entries: SNAP.entries, weather,
       grid: qualifying.grid, round: ROUND, seed: SEED,
       aiBonus: SNAP.aiBonus, rosters: SNAP.rosters,
+      // Canlı yarışta koşucu cezayı `startRace`e VERİR. Yeniden oynatma da
+      // vermek zorunda; bu parametre olmasaydı test iki yolu aynı eksik
+      // girdiyle çalıştırır, yani ayrışmayı göremezdi.
+      pitLaneStarts,
     });
     for (let lap = 1; lap <= uptoLap && !state.finished; lap += 1) {
       const forLap: Record<string, { compound: DecisionLogEntry['compound'] }> = {};
@@ -163,6 +190,66 @@ describe('race replay', () => {
     const laps = trackForRound(ROUND).laps;
     assert.equal(JSON.stringify(liveTick(LOG_A, laps)), JSON.stringify(replay(LOG_A)));
     assert.equal(JSON.stringify(liveTick(LOG_A, 40)), JSON.stringify(replay(LOG_A, 40)));
+  });
+
+  it('replays a pit-lane start behind the whole field, not from its grid slot', () => {
+    // Parc fermé cezası araca grid YERİNİ KAYBETTİRİR: pit çıkışında bekler ve
+    // saha geçtikten sonra salınır. Tarif bu cezayı taşımazsa aynı tohum,
+    // cezalıları ızgaraya geri dizer — oyuncuların izlediğinden başka bir yarış.
+    const grid = replayPf([], 0);
+    const penalised = grid.cars.filter((c) => PIT_LANE_STARTS[carId(c)]);
+    const clean = grid.cars.filter((c) => !PIT_LANE_STARTS[carId(c)]);
+    assert.equal(penalised.length, Object.keys(PIT_LANE_STARTS).length, 'cezalı araçlar bulunamadı');
+
+    const worstClean = Math.max(...clean.map((c) => c.gridPosition));
+    for (const car of penalised) {
+      assert.ok(car.gridPosition > worstClean,
+        `${carId(car)} ${car.gridPosition}. sıradan başladı — ceza uygulanmamış`);
+      // Pit yolu transiti de ödenmeli, yoksa ceza "sondan başlamak"a iner.
+      assert.ok(car.totalSec > worstClean * 0.35, `${carId(car)} pit yolu transitini ödememiş`);
+      // Telafi: serbest başlangıç lastiği. `setup.compound` MEDIUM olduğu için
+      // farklı bir bileşim görmek, tarifin bu alanının da taşındığını kanıtlar.
+      assert.equal(car.compound, PIT_LANE_STARTS[carId(car)].compound);
+    }
+    // Cezasız sahanın kendi içindeki sıralaması bozulmamalı.
+    assert.equal(worstClean, clean.length);
+  });
+
+  it('matches a live-ticked race WITH pit-lane starts — the divergence that matters', () => {
+    // BU TESTİN VARLIK SEBEBİ: canlı yol cezayı `startRace`e veriyordu, yeniden
+    // oynatma vermiyordu. İki taraf da "çalışıyordu", yalnızca farklı yarışlar
+    // üretiyordu — çöken sunucu, izlenenden başka bir yarışla devam ederdi.
+    const laps = trackForRound(ROUND).laps;
+    assert.equal(
+      JSON.stringify(liveTick(LOG_A, laps, PIT_LANE_STARTS)),
+      JSON.stringify(replayPf(LOG_A)),
+    );
+    assert.equal(
+      JSON.stringify(liveTick(LOG_A, 40, PIT_LANE_STARTS)),
+      JSON.stringify(replayPf(LOG_A, 40)),
+    );
+    // Ve ceza gerçekten bir FARK yaratmalı; yoksa yukarıdaki eşitlikler boş söz.
+    assert.notEqual(JSON.stringify(replayPf(LOG_A, 40)), JSON.stringify(replay(LOG_A, 40)));
+  });
+
+  it('replays a recipe without pit-lane starts exactly as before', () => {
+    // Geriye dönük uyumluluk: alan İSTEĞE BAĞLI. Alanı olmayan eski tarifler
+    // (bugünkü `race_runs` satırlarının hepsi) bit düzeyinde aynı yarışı
+    // vermeye devam etmeli — karşılaştırma, cezayı hiç bilmeyen canlı yola karşı.
+    const laps = trackForRound(ROUND).laps;
+    assert.equal(JSON.stringify(replay(LOG_A)), JSON.stringify(liveTick(LOG_A, laps)));
+    // Alanın açıkça `undefined` verilmesi de "yok" ile aynı olmalı.
+    const explicitlyUndefined: RaceSnapshot = { ...SNAP, pitLaneStarts: undefined };
+    assert.equal(
+      JSON.stringify(replayRace({ seed: SEED, round: ROUND, snapshot: explicitlyUndefined, decisions: LOG_A })),
+      JSON.stringify(replay(LOG_A)),
+    );
+    // Boş bir ceza haritası da yarışı değiştirmemeli (ceza yok = ceza yok).
+    const emptyPenalties: RaceSnapshot = { ...SNAP, pitLaneStarts: {} };
+    assert.equal(
+      JSON.stringify(replayRace({ seed: SEED, round: ROUND, snapshot: emptyPenalties, decisions: LOG_A })),
+      JSON.stringify(replay(LOG_A)),
+    );
   });
 
   it('exports the lap grouping the tick loop needs', () => {

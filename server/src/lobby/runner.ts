@@ -44,25 +44,6 @@ import { evaluateParcFerme } from './parcFerme.ts';
 import { loadDecisions, loadRun, startRun } from './raceRepo.ts';
 import { replayRace, type RaceSnapshot } from './replay.ts';
 
-/**
- * Lobi yarışının tarifi.
- *
- * `RaceSnapshot`a EK olarak `pitLaneStarts` taşır. Neden ek: parc fermé
- * cezası `evaluateParcFerme`nin `pending_jobs`u `now`a göre okumasından
- * doğar, yani yeniden oynatma anında YENİDEN HESAPLANAMAZ (o işler bu arada
- * teslim alınmış olabilir). Ceza tarifin parçası olmazsa aynı tohumla
- * oynatılan yarış, pit yolundan başlayanları grid'e dizer — yani farklı bir
- * yarış. Bu yüzden `snapshot` jsonb'sine birlikte yazılır.
- *
- * DİKKAT (sonraki adım): `replay.ts`in `RaceSnapshot`u ve `replayRace`i bu
- * alanı HENÜZ okumuyor; `startRace`e `pitLaneStarts` geçirilmesi gerekiyor.
- * Alan bugün yazılıyor ki tarif eksiksiz olsun ve eski yarışlar o değişiklikten
- * sonra da doğru oynatılsın.
- */
-export interface LobbyRaceSnapshot extends RaceSnapshot {
-  pitLaneStarts: Record<string, PitLaneStart>;
-}
-
 export interface StartRaceInput {
   lobbyId: string;
   seasonNo: number;
@@ -72,7 +53,7 @@ export interface StartRaceInput {
 
 export interface StartedRace {
   seed: number;
-  snapshot: LobbyRaceSnapshot;
+  snapshot: RaceSnapshot;
 }
 
 /**
@@ -233,7 +214,7 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
     pitLaneStarts[id] = { ...verdict.pitLaneStarts[id], compound: pitLaneCompound(weather) };
   }
 
-  const snapshot: LobbyRaceSnapshot = {
+  const snapshot: RaceSnapshot = {
     entries,
     risks,
     standings: await standingsBeforeRound(lobbyId, seasonNo, roundNo),

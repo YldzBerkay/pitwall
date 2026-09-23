@@ -62,6 +62,7 @@ import {
   type AiBonus,
   type Decisions,
   type Entries,
+  type PitLaneStart,
   type QualiRisk,
   type RaceState,
   type Rosters,
@@ -77,6 +78,18 @@ export interface RaceSnapshot {
   standings: TeamStanding[];
   aiBonus: AiBonus;
   rosters: Rosters;
+  /**
+   * Parc fermé cezası: grid yerini kaybedip pit yolundan başlayan araçlar
+   * (`takım:sürücü`). TARİFİN parçası olmak ZORUNDA, çünkü yeniden oynatma
+   * anında HESAPLANAMAZ: ceza `evaluateParcFerme`nin `pending_jobs`u ışıklar
+   * söndüğü ANDAKİ saate göre okumasından doğar ve o işler bu arada teslim
+   * alınmış olabilir. Taşınmazsa aynı tohum cezalıları ızgaraya geri dizer —
+   * yani oyuncuların izlediğinden BAŞKA bir yarış.
+   *
+   * İSTEĞE BAĞLI, çünkü bu alandan önce yazılmış tarifler onsuz duruyor;
+   * verilmediğinde `startRace` bugünkü davranışının aynısını üretir.
+   */
+  pitLaneStarts?: Record<string, PitLaneStart>;
 }
 
 /** Günlüğe yazılan tek bir pit kararı. `lap`: kararın etki ettiği tur. */
@@ -157,6 +170,9 @@ export function replayRace(input: ReplayInput): RaceState {
     seed,
     aiBonus: snapshot.aiBonus,
     rosters: snapshot.rosters,
+    // Ceza gridi KURARKEN uygulanır (araç sahanın arkasına alınır, üstüne pit
+    // yolu transiti biner), sonradan düzeltilemez — bu yüzden burada.
+    pitLaneStarts: snapshot.pitLaneStarts,
   });
 
   // NaN/Infinity gürültüyle patlasın: sessizce 0. turda duran bir yarış,

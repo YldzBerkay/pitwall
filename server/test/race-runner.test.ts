@@ -170,17 +170,62 @@ describe('lights out — freezing the race recipe', () => {
 
     const { snapshot } = await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
 
-    assert.ok(snapshot.pitLaneStarts[`${HUMAN}:0`], 'car 0 must start from the pit lane');
-    assert.ok(snapshot.pitLaneStarts[`${HUMAN}:1`], 'car 1 must start from the pit lane');
+    // Alan artık tarifte İSTEĞE BAĞLI (eski koşular onsuz duruyor); ceza varken
+    // yazılmış OLMASI bu testin ilk iddiası.
+    const starts = snapshot.pitLaneStarts;
+    assert.ok(starts, 'the recipe carries no pitLaneStarts at all');
+    assert.ok(starts[`${HUMAN}:0`], 'car 0 must start from the pit lane');
+    assert.ok(starts[`${HUMAN}:1`], 'car 1 must start from the pit lane');
     // Telafi gerçekten verilmiş mi: serbest başlangıç lastiği DOLDURULMUŞ olmalı,
     // yoksa oyuncu saf ceza almış olur.
-    assert.ok(snapshot.pitLaneStarts[`${HUMAN}:0`].compound, 'the free starting tyre was never granted');
+    assert.ok(starts[`${HUMAN}:0`].compound, 'the free starting tyre was never granted');
     assert.ok(
       snapshot.entries[HUMAN].setup.motor > before.car.motor,
       'the finished upgrade did not reach the car',
     );
     // Cezasız takım pit yolunda olmamalı.
-    assert.equal(snapshot.pitLaneStarts[`${ASSISTANT}:0`], undefined);
+    assert.equal(starts[`${ASSISTANT}:0`], undefined);
+  });
+
+  it('the written recipe replays with those cars actually starting from the pit lane', async () => {
+    // Yukarıdaki test tarifin cezayı YAZDIĞINI kanıtlıyor, UYGULANDIĞINI değil.
+    // Fark can alıcı: alan jsonb'de dururken `replayRace` onu `startRace`e
+    // geçirmezse yarış cezalıları ızgaraya geri dizer — çöken sunucudan devam
+    // eden yarış, oyuncuların izlediğinden başka bir yarış olur.
+    const lobbyId = await makeLobby('PitLaneReplay');
+    await query(
+      `insert into pending_jobs (lobby_id, team_key, kind, payload, started_at, ends_at)
+       values ($1, $2, 'upgrade', '{"stat":"motor"}'::jsonb, now() - interval '2 hours', now() - interval '1 minute')`,
+      [lobbyId, HUMAN],
+    );
+
+    const { seed, snapshot } = await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const starts = snapshot.pitLaneStarts;
+    assert.ok(starts && Object.keys(starts).length > 0, 'fixture must produce a penalty');
+
+    // Izgara durumu (lap 0): yarış gürültüsü karışmadan önceki hâli.
+    const grid = replayRace({ seed, round: 1, snapshot, decisions: [], uptoLap: 0 });
+    const penalised = grid.cars.filter((c) => starts[carId(c)]);
+    const clean = grid.cars.filter((c) => !starts[carId(c)]);
+    assert.equal(penalised.length, Object.keys(starts).length);
+
+    const worstClean = Math.max(...clean.map((c) => c.gridPosition));
+    for (const car of penalised) {
+      assert.ok(car.gridPosition > worstClean,
+        `${carId(car)} replay içinde ${car.gridPosition}. sıradan başladı — ceza uygulanmamış`);
+      // Serbest başlangıç lastiği de tarife yazılı; araca ulaşmış olmalı.
+      assert.equal(car.compound, starts[carId(car)].compound);
+    }
+
+    // Cezanın gerçekten bir fark yarattığının kontrolü: aynı tarif, cezasız.
+    const withoutPenalty = replayRace({
+      seed, round: 1, snapshot: { ...snapshot, pitLaneStarts: undefined }, decisions: [], uptoLap: 0,
+    });
+    assert.notDeepEqual(
+      grid.cars.map((c) => `${carId(c)}@${c.gridPosition}`),
+      withoutPenalty.cars.map((c) => `${carId(c)}@${c.gridPosition}`),
+      'ceza gridi hiç değiştirmedi — bu test gerçek hatayı yakalayamaz',
+    );
   });
 
   it('the stored seed round-trips as a number for a later replay', async () => {
