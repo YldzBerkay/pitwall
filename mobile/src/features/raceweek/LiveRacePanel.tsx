@@ -12,7 +12,7 @@ import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { sfx } from '@/lib/sfx';
 import { TrackMap } from './TrackMap';
-import { CompoundDot, CompoundPicker, DriverCell, Pos, fmtGap, fmtSec } from './shared';
+import { CompoundDot, CompoundPicker, DriverCell, Pos, fmtGap, fmtSec, pitErrorText } from './shared';
 
 /** Height of the map and the leaderboard beside it. */
 const MAP_HEIGHT_MAX = 236;
@@ -34,6 +34,11 @@ export function LiveRacePanel() {
   const settleRaceWeekend = useGameStore((s) => s.settleRaceWeekend);
   const finishSprint = useGameStore((s) => s.finishSprint);
   const leagueLive = useGameStore((s) => s.race.status === 'connected');
+  // A lobby seat exists: this weekend's pit calls go to the server's decision
+  // log, so the button must NOT pretend a call is "queued" locally — what it
+  // reports is the server's own answer (or the local `disconnected` refusal).
+  const online = useGameStore((s) => Boolean(s.race.lobbyId));
+  const pitOutcome = useGameStore((s) => s.race.lastPitOutcome);
   const track = useGameStore((s) => s.track());
   const colorblindMode = useGameStore((s) => s.colorblindMode);
   const semantic = semanticColors(colorblindMode);
@@ -211,7 +216,11 @@ export function LiveRacePanel() {
         <Cols gap={spacing.md}>
           {playerCars.map((car) => {
             const idx = car.driverIdx;
-            const queued = weekend.pending[idx];
+            // Online there is no local queue to read: the call either reached
+            // the server's log or it did not, and `pitOutcome` says which.
+            const queued = online ? undefined : weekend.pending[idx];
+            const outcome = online && pitOutcome?.ok === false ? pitOutcome : undefined;
+            const landed = online && pitOutcome?.ok === true && pitOutcome.driverIdx === idx ? pitOutcome : undefined;
             const wearPct = Math.min(100, Math.round(car.wear * 100));
             const wearTint = car.wear > 0.95 ? semantic.danger : car.wear > 0.75 ? semantic.attention : semantic.positive;
             return (
@@ -259,6 +268,16 @@ export function LiveRacePanel() {
                         {queued ? `Pit sırada: ${compoundByKey(queued.compound).label} · iptal et` : 'Pite çağır (box box)'}
                       </AppText>
                     </Pressable>
+                    {landed && (
+                      <AppText variant="labelSmall" color={colors.accentLime}>
+                        {`Tur ${landed.lap} için ${compoundByKey(landed.compound).label} yazıldı.`}
+                      </AppText>
+                    )}
+                    {outcome && (
+                      <AppText variant="labelSmall" color={colors.neonCoral}>
+                        {pitErrorText(outcome.error)}
+                      </AppText>
+                    )}
                   </>
                 )}
               </View>

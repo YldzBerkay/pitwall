@@ -166,3 +166,33 @@ export const weekendChoiceErrorText = (code: string): string => {
       return `Tercih kaydedilemedi: ${code}`;
   }
 };
+
+/**
+ * Player-facing text for a rejected `/race/pit` call. The server's codes stay
+ * DISTINCT all the way to the screen (`raceSlice.ts`'s `PitOutcome` keeps
+ * them unflattened on purpose): "the lap already ran", "you already called
+ * this lap" and "the assistant is driving your car" are three different
+ * facts, and only one of them is worth trying again.
+ *
+ * `disconnected` is the local refusal, never a server code — the call never
+ * left the device. It is deliberately NOT worded as "retrying": nothing is
+ * queued, precisely so the player is not told a call landed when it did not.
+ */
+export const pitErrorText = (code: string): string => {
+  switch (code) {
+    case 'disconnected':
+      return 'Bağlantı yok — çağrı gönderilmedi. Sıraya da alınmadı; bağlanınca yeniden çağır.';
+    case 'lap_already_run':
+      return 'O tur çoktan koşuldu — çağrı yetişmedi.';
+    case 'already_decided':
+      return 'Bu tur için karar zaten verildi.';
+    case 'not_checked_in':
+      return 'Check-in yapmadın — aracı yardımcı sürüyor, çağrın okunmuyor.';
+    case 'race_finished':
+      return 'Yarış bitti.';
+    case 'race_not_started':
+      return 'Yarış daha başlamadı.';
+    default:
+      return `Pit çağrısı reddedildi: ${code}`;
+  }
+};

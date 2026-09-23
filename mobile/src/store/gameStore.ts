@@ -699,6 +699,31 @@ export const useGameStore = create<GameState>()(
   },
 
   queuePit: (driverIdx, decision) => {
+    const state = get();
+    // ── ONLINE: THE CALL GOES TO THE SERVER, AND NOWHERE ELSE ────────────
+    // A lobby seat exists, so this weekend's race is the server's
+    // (`server/src/lobby/runner.ts`) and its pit-decision log is the only
+    // place a call means anything. `raceSlice.callPit` refuses it outright —
+    // no request sent — when the socket is not `connected`, and there is
+    // deliberately NO queue: a call held on the device would be delivered
+    // after the lap it targeted had already run, the server would reject it
+    // with `lap_already_run`, and in the meantime the player would have
+    // believed it landed. The refusal is surfaced through
+    // `race.lastPitOutcome` (see `LiveRacePanel`), never swallowed.
+    //
+    // Nothing is written to `weekend.pending` here: a local echo would be a
+    // second, unauthoritative answer to "did my call land?".
+    if (state.race.lobbyId) {
+      // The decision log is append-only and the API has no withdrawal
+      // (`lib/api/race.ts`'s `PitInput.lap` doc comment), so cancelling a
+      // live call is not a request that can be made.
+      if (decision) void state.callPit(driverIdx, decision.compound);
+      return;
+    }
+    // ── OFFLINE/solo weekend ─────────────────────────────────────────────
+    // Still driven by the local engine below. It cannot be removed until the
+    // settlement path stops needing a full local `RaceState` — see this
+    // file's `settleRaceWeekend` and `docs`/the Stage 2 plan.
     set((state) => {
       const pending: PlayerDecisions = [state.weekend.pending[0], state.weekend.pending[1]];
       pending[driverIdx] = decision;
