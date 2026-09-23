@@ -207,6 +207,21 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
     notify();
   }
 
+  /**
+   * Bir çerçeve geldiğinde: bağlı say ve HER ZAMAN haber ver.
+   *
+   * `setStatus` durum değişmediyse erken dönüyor ve bu doğru — durum geçişleri
+   * için. Ama çerçeveler için yanlıştı: ilk çerçeveden sonra durum hep
+   * `'connected'` kaldığı için `notify()` bir daha ateşlenmiyordu, yani
+   * dinleyiciler hiçbir turu görmüyordu ve canlı yarış ekranda donuyordu.
+   * `getState()` okuyan testler bunu kaçırdı; store dilimi ise dinleyici
+   * yolunu kullanıyor.
+   */
+  function frameArrived(): void {
+    status = 'connected';
+    notify();
+  }
+
   function scheduleReconnect(): void {
     if (manuallyClosed || status === 'session-invalid') return;
     if (reconnectTimer !== null) return; // already scheduled
@@ -228,7 +243,7 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
         // `frame.race` is null (lobby isn't racing), there is no qualifying
         // result either.
         qualifying = frame.race?.qualifying;
-        setStatus('connected');
+        frameArrived();
         return;
       }
       case 'lap': {
@@ -237,7 +252,7 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
         // `qualifying` is DELIBERATELY left untouched here: `frame.race` is
         // `SerialisedRace`, which has no `qualifying` field to begin with —
         // a 'lap' frame cannot clobber it even by accident.
-        setStatus('connected');
+        frameArrived();
         return;
       }
       case 'unsubscribed': {

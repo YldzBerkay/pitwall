@@ -253,3 +253,28 @@ test('after reconnecting, the client adopts the server state frame and does not 
   assert.equal(s.status, 'connected');
   assert.equal(s.race?.lap, 26);
 });
+
+/**
+ * Bağlantı kurulduktan SONRA gelen çerçeveler de abonelere ulaşmalı.
+ *
+ * `notify()` yalnızca `setStatus()` içinden çağrılıyordu, o da durum zaten
+ * `'connected'` ise erken dönüyor — yani ilk çerçeveden sonraki hiçbir tur
+ * dinleyicilere ulaşmıyordu ve canlı yarış ekranda hiç ilerlemiyordu.
+ *
+ * Mevcut testler bunu kaçırdı çünkü hepsi `getState()` okuyor; dinleyici yolu
+ * hiç sınanmamıştı. Store dilimi ise tam olarak o yolu kullanıyor.
+ */
+test('her çerçeve abonelere ulaşır, yalnızca durum değişince değil', () => {
+  const { socket } = setup();
+  const seen: RaceSocketState[] = [];
+  socket.addListener((s) => seen.push(s));
+
+  latestSocket().triggerOpen();
+  latestSocket().triggerMessage({ type: 'state', lobbyId: LOBBY_ID, race: makeRace(1) });
+  latestSocket().triggerMessage({ type: 'lap', lobbyId: LOBBY_ID, race: makeRace(2) });
+  latestSocket().triggerMessage({ type: 'lap', lobbyId: LOBBY_ID, race: makeRace(3) });
+
+  const laps = seen.map((s) => s.race?.lap).filter((l) => l !== undefined);
+  assert.deepEqual(laps, [1, 2, 3],
+    `dinleyici her turu görmeli, gördükleri: ${JSON.stringify(laps)}`);
+});
