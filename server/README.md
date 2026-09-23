@@ -391,7 +391,7 @@ motor `setup.compound`'a düşer ve oyuncu telafisiz ceza yer. Orta satırın
 YAZILDI mı, iyileşme GERÇEKTEN uygulandı mı — biri kırılıp diğeri
 kırılmayabilir, aynı testte ikisi de kanıtlanmalı.
 
-### Dört sözleşme — bu fazda ölçülerek bulundu
+### Beş sözleşme — bu fazda ölçülerek bulundu
 
 1. **Havuzu ISITMAYAN bir eşzamanlılık testi hiçbir şey KANITLAMAZ.**
    `pool.connect()`'in soğuk gecikmesi eşzamanlı çağıranları istemeden
@@ -424,6 +424,17 @@ kırılmayabilir, aynı testte ikisi de kanıtlanmalı.
    somut alanları (ya da tümü için `assert.deepEqual`, hiçbir zaman
    `JSON.stringify` eşitliği tüm nesne üzerinde) hedeflemeli
    (`race-runner.test.ts` "resumes after a crash..." testindeki yorum).
+
+5. **Süreci canlı tutan bir şey başlatan modül, onu DURDURACAK bir yol da
+   dışa vermek zorundadır.** `src/index.ts` kendi kendini ayağa kaldırır
+   (HTTP sunucusu + WebSocket + süpürme zamanlayıcısı). Bir süre yalnızca
+   `SIGTERM`/`SIGINT` ile durdurulabiliyordu; gerçek bir sunucuya ihtiyaç
+   duyduğu için onu import eden testte alt sürecin olay döngüsü hiç boşalmadı.
+   `node --test` `--test-concurrency=1` ile sırayla koştuğundan o dosyadan
+   SONRAKİ hiçbir test çalışmadı — ve paket başarısız olmadı, sessizce asılı
+   kaldı; bu yüzden fark edilmesi de zor oldu. Artık `shutdown()` ve `ready`
+   dışa veriliyor: `shutdown()` `process.exit` ÇAĞIRMAZ (onu sinyal işleyicisi
+   yapar), testler `after()` içinde çağırıp doğal kapanışa bırakır.
 
 ## Uç noktalar
 
