@@ -124,13 +124,14 @@ describe('race repo', () => {
       lobbyId, ...KEY, lap: 12, teamKey: 'bosphorus', driverIdx: 0, compound: 'SOFT',
       now: new Date('2026-09-23T10:05:00Z'),
     }));
-    assert.equal(first, true);
+    assert.equal(first, 'written');
 
     const second = await withTransaction((c) => appendDecision(c, {
       lobbyId, ...KEY, lap: 12, teamKey: 'bosphorus', driverIdx: 0, compound: 'HARD',
       now: new Date('2026-09-23T10:05:01Z'),
     }));
-    assert.equal(second, false, 'a second decision for the same car+lap must return false, not throw');
+    assert.equal(second, 'already_decided',
+      'a second decision for the same car+lap must be refused, not throw');
 
     const log = await loadDecisions(lobbyId, KEY.seasonNo, KEY.roundNo);
     assert.deepEqual(log, [
@@ -148,7 +149,7 @@ describe('race repo', () => {
       { lap: 18, teamKey: 'bosphorus', driverIdx: 1 as const, compound: 'WET' as const },
       { lap: 5, teamKey: 'ridgeline', driverIdx: 0 as const, compound: 'INTERMEDIATE' as const },
     ]) {
-      assert.equal(await withTransaction((c) => appendDecision(c, { lobbyId, ...KEY, ...d, now })), true);
+      assert.equal(await withTransaction((c) => appendDecision(c, { lobbyId, ...KEY, ...d, now })), 'written');
     }
     const log = await loadDecisions(lobbyId, KEY.seasonNo, KEY.roundNo);
     assert.deepEqual(log.map((d) => d.lap), [5, 5, 18, 30], 'decisions are not ordered by lap');
@@ -201,8 +202,8 @@ describe('race repo', () => {
         compound: (i % 2 === 0 ? 'SOFT' : 'HARD') as CompoundKey, now,
       }))),
     );
-    assert.equal(results.filter(Boolean).length, 1,
-      `exactly one writer must win, got ${results.filter(Boolean).length}`);
+    const won = results.filter((r) => r === 'written');
+    assert.equal(won.length, 1, `exactly one writer must win, got ${won.length}`);
     assert.equal((await loadDecisions(lobbyId, KEY.seasonNo, KEY.roundNo)).length, 1);
   });
 
