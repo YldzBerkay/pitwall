@@ -12,6 +12,32 @@
 
 ---
 
+## DURUM (2026-09-23, oturum sonu)
+
+**Bitti:** Görev 1 (`1ae9e64` + `4cea7a9`), Görev 2 (`af9b25e`), Görev 3 (`e8794ff`).
+**Sırada:** Görev 4 — `raceSlice.ts`.
+
+Mobil: 24/24 test, tipler temiz, `npm run econ` geçiyor.
+Sunucu: 562/562, üç tip denetimi temiz. Ağaç temiz.
+
+### Yürütmede çıkan, sonraki görevlere taşınan
+
+- **`POST /race/pit` gövdesinde `driverIdx` (0|1) ZORUNLU.** Plandaki tabloda
+  eksikti; Görev 2 koda bakıp düzeltti. İstemcide karşılığı var — `PlayerDecisions`
+  zaten iki elemanlı demet. Görev 4'ün pit çağrısı hangi aracın pite gireceğini
+  sormak zorunda.
+- **Node tipleri artık `mobile/tsconfig.json`'da** (`types: ["node"]`). Yeni test
+  dosyalarında `/// <reference types="node" />` gerekmiyor.
+- **`@pitwall/shared` barrel import'u `tsc` altında patlıyor** (TS5097 — `index.ts`
+  açık `.ts` uzantılarıyla re-export ediyor). Bu yüzden mobilde hiçbir dosya bare
+  import kullanmıyor, hepsi `@pitwall/shared/economy` gibi alt yollardan giriyor.
+  Aynı kurala uy; düzeltmek ayrı bir iş.
+- Mobil testlerde sahte `fetch` yerine gerçek `node:http` sunucusu kaldırmak
+  yerleşmiş desen (`smoke.test.ts`, `race-api.test.ts`) — başlık ve serileştirme
+  hatalarını stub'ın kaçırdığı yerde yakalıyor.
+
+---
+
 ## Uygulayıcının bilmesi gerekenler
 
 Koda bakılarak doğrulandı.
