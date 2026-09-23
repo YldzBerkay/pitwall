@@ -14,12 +14,21 @@ import type { CarState, RaceState } from '@pitwall/shared/raceEngine';
  * other car a little less by its gap. Between two laps the dots are
  * interpolated with `progress` (0 → 1 over one game tick) on the UI thread,
  * so the picture moves even though the engine only speaks once per lap.
+ *
+ * `race`/`prev` are typed as `RaceLike` (only the two fields this component
+ * actually reads), not the full local `RaceState`, so a server-driven race
+ * (`SerialisedRace` in `@/lib/api/raceSocket.ts`, which structurally has
+ * both fields but is not a `RaceState` — it omits `entries`/`standings`/
+ * `rosters`/`aiBonus`/`seed`/`restartLap`) can be drawn here exactly like
+ * the local solo engine's, with no cast and no fabricated fields.
  */
+type RaceLike = Pick<RaceState, 'lap' | 'cars'>;
+
 interface TrackMapProps {
   track: Track;
-  race?: RaceState;
+  race?: RaceLike;
   /** The state one lap earlier, for interpolation. */
-  prev?: RaceState;
+  prev?: RaceLike;
   progress: SharedValue<number>;
   width: number;
   height: number;
@@ -45,7 +54,7 @@ function pointAlongW(layout: Point[], progress: number): Point {
 }
 
 /** Laps covered by a car at the end of the state's lap, leader = whole laps. */
-function covered(car: CarState, state: RaceState, lapRef: number): number {
+function covered(car: CarState, state: RaceLike, lapRef: number): number {
   const leader = state.cars.find((c) => !c.dnf) ?? state.cars[0];
   return state.lap - Math.max(0, car.totalSec - leader.totalSec) / lapRef;
 }

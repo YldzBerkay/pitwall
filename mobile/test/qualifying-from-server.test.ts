@@ -71,8 +71,8 @@ function makeRace(lap: number): SerialisedRace {
     session: 'race',
     cars: [],
     events: [],
-    control: 'green',
-    fastestLap: null,
+    control: { yellow: 0, vsc: 0, sc: 0, red: 0 },
+    fastestLap: undefined,
     weather: { forecast: 0.1, wetAtStart: false },
     neutralised: undefined,
   };

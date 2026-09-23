@@ -7,12 +7,27 @@ import { AppText, GlassButton, GlassCard, PulseDot, Cols } from '@/components/at
 import { GridIntro } from '@/components/organisms';
 import { compoundByKey, type CompoundKey } from '@pitwall/shared/carCustomisation';
 import { playerTeam } from '@pitwall/shared/teams';
+import type { RaceState } from '@pitwall/shared/raceEngine';
 import { RACE_TICK_MS, useGameStore } from '@/store/gameStore';
+import { displayRace } from '@/store/slices/raceSlice';
 import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { sfx } from '@/lib/sfx';
 import { TrackMap } from './TrackMap';
 import { CompoundDot, CompoundPicker, DriverCell, Pos, fmtGap, fmtSec, pitErrorText } from './shared';
+
+/**
+ * Only the fields this screen actually draws. Both a locally-simulated
+ * `RaceState` (solo weekend) and the server's `SerialisedRace`
+ * (`@/lib/api/raceSocket.ts`, structurally narrower — no `entries`/
+ * `standings`/`rosters`/`aiBonus`/`seed`/`restartLap`) satisfy this shape,
+ * so `displayRace` can hand either one to the same render code below with
+ * no cast and no field invented on the client's side.
+ */
+type LiveRace = Pick<
+  RaceState,
+  'lap' | 'laps' | 'finished' | 'wet' | 'session' | 'neutralised' | 'weather' | 'fastestLap' | 'events' | 'cars'
+>;
 
 /** Height of the map and the leaderboard beside it. */
 const MAP_HEIGHT_MAX = 236;
@@ -46,8 +61,33 @@ export function LiveRacePanel() {
 
   const shell = useShellLayout();
   const MAP_HEIGHT = Math.min(MAP_HEIGHT_MAX, Math.round(shell.height * 0.5));
-  const race = weekend.race;
-  const prev = weekend.prevRace;
+
+  // The single source-of-truth decision: server race while seated in a
+  // lobby (never a local fallback — see `displayRace`'s doc comment), the
+  // local solo engine's race otherwise. `weekend.race` is read here ONLY as
+  // the fallback `displayRace` uses when there is no lobby at all; once
+  // `raceSlice`'s `lobbyId` is set, this screen never looks at it again.
+  const raceSlice = useGameStore((s) => s.race);
+  const display = displayRace<RaceState | undefined>(raceSlice, weekend.race);
+  const race: LiveRace | undefined = display.kind === 'not-started' ? undefined : display.race;
+  // True only for the server-sourced, disconnected/reconnecting case: the
+  // screen keeps drawing the last real lap it has, but must say plainly
+  // that it is frozen, not live.
+  const stale = display.kind === 'server' && display.stale;
+
+  // `prev` feeds the map's between-laps interpolation. The local engine
+  // already snapshots this itself (`weekend.prevRace`, set by the reducer
+  // the instant it advances); the server-sourced race has no such snapshot
+  // handed to it, so this screen keeps its own one-lap-behind copy — a
+  // standard "previous render's value" ref, updated only when the server
+  // image itself changes.
+  const prevServerRace = useRef<LiveRace | undefined>(undefined);
+  const serverRace = display.kind === 'server' ? display.race : undefined;
+  useEffect(() => {
+    prevServerRace.current = serverRace;
+  }, [serverRace]);
+  const prev = display.kind === 'local' ? weekend.prevRace : prevServerRace.current;
+
   const [pitCompound, setPitCompound] = useState<[CompoundKey, CompoundKey]>(['MEDIUM', 'MEDIUM']);
   const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
   const progress = useSharedValue(1);
@@ -86,6 +126,21 @@ export function LiveRacePanel() {
       sfx.play('partFitted');
     }
   }, [race, progress]);
+
+  // Connected to the lobby, but the server hasn't gone green yet — a
+  // distinct message, not a blank screen or an empty race image.
+  if (display.kind === 'not-started') {
+    return (
+      <GlassCard>
+        <AppText variant="cardTitle" color={colors.textPrimary}>
+          Yarış henüz başlamadı
+        </AppText>
+        <AppText variant="labelSmall" color={colors.textTertiary}>
+          Lobi ışıkları henüz sönmedi. Işıklar sönünce yarış burada, sunucudan canlı akacak.
+        </AppText>
+      </GlassCard>
+    );
+  }
 
   if (!race) return null;
 
@@ -126,6 +181,13 @@ export function LiveRacePanel() {
               {!wetNow && race.weather.forecast >= 0.3 ? ` · yağmur riski %${Math.round(race.weather.forecast * 100)}` : ''}
             </AppText>
           </View>
+          {stale && (
+            <View className="px-3 pt-1">
+              <AppText variant="labelSmall" color={semantic.danger} uppercase>
+                Bağlantı koptu · son bilinen tur donduruldu, yeniden bağlanılıyor
+              </AppText>
+            </View>
+          )}
           <View style={{ height: MAP_HEIGHT }} onLayout={(e) => setMapSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
             {mapSize.w > 0 && (
               <TrackMap track={track} race={race} prev={prev} progress={progress} width={mapSize.w} height={mapSize.h} />

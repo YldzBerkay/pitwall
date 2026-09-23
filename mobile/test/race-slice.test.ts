@@ -39,8 +39,8 @@ function makeRace(lap: number): SerialisedRace {
     session: 'race',
     cars: [],
     events: [],
-    control: 'green',
-    fastestLap: null,
+    control: { yellow: 0, vsc: 0, sc: 0, red: 0 },
+    fastestLap: undefined,
     // Yayın, yarışı ÇİZMEK için gerekeni taşır (hava, nötralizasyon);
     // yeniden HESAPLAMAK için gerekeni (standings, entries) taşımaz.
     weather: { forecast: 0.1, wetAtStart: false },

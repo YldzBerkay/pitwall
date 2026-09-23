@@ -311,3 +311,52 @@ export function displayQualifying(
 ): QualifyingResult | undefined {
   return race.lobbyId ? race.qualifying : localQualifying;
 }
+
+/**
+ * What the live-race panel should draw — the server's race while this
+ * device is seated in a lobby, the locally-simulated one otherwise (the
+ * legacy no-lobby solo weekend). Same shape of decision as
+ * `displayQualifying` above, and for the same reason: the logic lives here,
+ * not in `LiveRacePanel.tsx`, because that file imports React Native and
+ * cannot run under plain Node (`tsx --test`).
+ *
+ * Three distinct situations while seated in a lobby, told apart on purpose
+ * (see the task brief): a lobby-seated player must never be shown a race
+ * that isn't the one the server is actually running, but "no race yet" and
+ * "race is running but the feed dropped" need different words, not the same
+ * blank screen.
+ *
+ *  - `{ kind: 'server', race, stale: false }` — connected, race running:
+ *    draw it.
+ *  - `{ kind: 'not-started' }` — connected (or connecting), but the lobby
+ *    has not gone green yet (`race.data` is `null`). Deliberately NOT the
+ *    same shape as a real (even empty) race — a screen must be able to say
+ *    "nothing has started" rather than render a zeroed-out grid.
+ *  - `{ kind: 'server', race, stale: true }` — any status other than
+ *    `'connected'` (disconnected, reconnecting, session-invalid) while a
+ *    race image was already received: the LAST server frame is returned,
+ *    exactly as `raceSocket.ts` and this slice already preserve it, with
+ *    `stale` telling the screen to say so. `localRace` is NEVER consulted
+ *    here, even though it may be sitting right there in `weekend.race` —
+ *    falling back to it the moment the socket drops would show the player a
+ *    DIFFERENT race than the one their lobby is running, at the single most
+ *    visible possible moment (mid-disconnect). See `raceSocket.ts`'s module
+ *    doc for the fuller argument; this selector is the other half of the
+ *    same rule.
+ *  - `{ kind: 'local', race: localRace }` — no `lobbyId` at all: the legacy
+ *    solo flow, where there is no lobby race to ask for. `localRace` is
+ *    returned exactly as given.
+ */
+export type RaceDisplay<TLocal> =
+  | { kind: 'server'; race: SerialisedRace; stale: boolean }
+  | { kind: 'not-started' }
+  | { kind: 'local'; race: TLocal };
+
+export function displayRace<TLocal>(
+  race: Pick<RaceSliceState, 'lobbyId' | 'status' | 'data'>,
+  localRace: TLocal,
+): RaceDisplay<TLocal> {
+  if (!race.lobbyId) return { kind: 'local', race: localRace };
+  if (!race.data) return { kind: 'not-started' };
+  return { kind: 'server', race: race.data, stale: race.status !== 'connected' };
+}

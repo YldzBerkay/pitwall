@@ -62,7 +62,7 @@
  * substituted in its place; see the module doc above's "no local fallback"
  * for why.
  */
-import type { QualifyingResult } from '@pitwall/shared/raceEngine';
+import type { QualifyingResult, RaceState } from '@pitwall/shared/raceEngine';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'session-invalid';
 
@@ -77,12 +77,22 @@ export interface SerialisedRace {
   trackKey: string;
   round: number;
   session: 'race' | 'sprint';
-  cars: unknown;
-  events: unknown;
-  control: unknown;
-  fastestLap: unknown;
-  weather: unknown;
-  neutralised: unknown;
+  // Tightened to what `serialise()` in `server/src/lobby/live.ts` actually
+  // sends (checked directly against that function): these six fields are
+  // copied straight off the server's own `RaceState`, so mirroring their
+  // real shapes here — via the `@pitwall/shared/raceEngine` subpath import,
+  // since a bare `@pitwall/shared` import fails `tsc` (TS5097) — lets
+  // `LiveRacePanel.tsx` draw the feed without an `unknown`-cast escape
+  // hatch. `entries`/`standings`/`rosters` stay OFF this type on purpose:
+  // the feed doesn't carry them (a server test guards their absence), and
+  // adding them here would invite exactly the "recompute the race locally"
+  // move this phase exists to remove.
+  cars: RaceState['cars'];
+  events: RaceState['events'];
+  control: RaceState['control'];
+  fastestLap: RaceState['fastestLap'];
+  weather: RaceState['weather'];
+  neutralised: RaceState['neutralised'];
 }
 
 /** Mirrors `SerialisedRaceState` in `server/src/lobby/live.ts` — the ONE
