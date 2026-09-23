@@ -805,3 +805,30 @@ Bunlar uygulama ve inceleme sırasında keşfedildi; ilgili görevin promptuna g
   Bir lobi sprint koşarsa tarifi bunu ifade edemez. Sprint uygulanırken çıkmasın.
 - Şema değişmiş bir migration'ı uygulamış ortam kendiliğinden yeniden koşmaz.
   Dağıtımdan önce bu bir kereliğine elle sıfırlanmalı (dev'de yapıldı).
+
+### Yürütmenin ortaya çıkardığı, README'ye girmesi gereken kurallar (Görev 15)
+
+- **Havuzu ısıtmayan eşzamanlılık testi hiçbir şey kanıtlamaz.** Görev 3 ölçtü:
+  30 eşzamanlı yazardan yalnızca **1'i** yarış penceresine ulaşıyordu, çünkü
+  `pool.connect()` gecikmesi işi sıraya sokuyor ve kazanan diğerleri bağlantı
+  almadan commit ediyor. Bilerek bozulmuş bir uygulama 5/5 geçti. Önce ~10
+  önemsiz sorgu ile havuz ısıtılınca 30'un 9-10'u yarışıyor ve bozuk sürüm
+  5/5 düşüyor. Her eşzamanlılık testi ısıtmalı **ve** kaç çağıranın pencereye
+  ulaştığını enstrümante etmeli.
+- **`for update skip locked` burada doğruluk değil verim tercihi.** Görev 4
+  ölçtü: düz `for update` ile de dışlama tutuyor (10/10), çünkü bekleyenler
+  READ COMMITTED altında `where`'i yeniden değerlendirip satırı düşürüyor.
+  `skip locked`'ın doğrulukla ilgili tek yanı, `order by next_race_at` toplam
+  bir sıra olmadığı için (bir region'da lobiler aynı yarış saatini paylaşır)
+  bekleyen olmayınca kilitlenme penceresinin de olmaması.
+
+### Görev 11 (`parcFerme.ts`) ve istemci için
+
+- Pit yolu bayrağı: `RaceInput.pitLaneStarts?: Record<carId, { compound?: CompoundKey }>`,
+  anahtar `"${teamKey}:${driverIdx}"`. Araç geliştirmesi iki anahtarı da yazar,
+  sürücü antrenmanı yalnız birini.
+- Motorda **Q2 lastiği kuralı yok**; var olan kısıt bir *bağlanma*:
+  `CarSetup.compound` hem sıralamayı hem yarış başlangıcını besliyor. Pit
+  yolundan başlayanın serbest lastiği tam olarak bundan muafiyet ve yalnızca
+  ışıklar sönerken uygulanıyor — sıralama hızına dokunmuyor. **İstemci bunu
+  bir kurulum değişikliği değil, yarış başlangıcı seçimi olarak sunmalı.**
