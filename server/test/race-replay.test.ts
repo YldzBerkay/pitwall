@@ -25,6 +25,7 @@ import {
 } from '@pitwall/shared/raceEngine';
 import {
   decisionsForLap,
+  qualifyingForRecipe,
   replayRace,
   type DecisionLogEntry,
   type RaceSnapshot,
@@ -268,6 +269,29 @@ describe('race replay', () => {
     // yayınlanabilir bir yalan. Bozuk DB okuması gürültüyle patlamalı.
     assert.throws(() => replay(LOG_A, Number.NaN), /uptoLap/);
     assert.throws(() => replay(LOG_A, Number.POSITIVE_INFINITY), /uptoLap/);
+  });
+
+  // ── Sıralama turları: artık atılmıyor, ayrıca çekilebiliyor ─────────────
+
+  it('exposes the qualifying grid the race actually started from', () => {
+    // `replayRace` ızgarayı kurmak için sıralama turlarını zaten hesaplıyordu
+    // ve sonucu atıyordu. `qualifyingForRecipe` AYNI hesabı dışa açık, tek
+    // başına çağrılabilir hâle getiriyor — iki ayrı kopya değil.
+    const qualifying = qualifyingForRecipe({ seed: SEED, round: ROUND, snapshot: SNAP });
+    const grid = replay([], 0); // lap 0 = ızgara durumu, hiçbir tur koşulmadı
+    assert.equal(qualifying.grid.length, grid.cars.length);
+    for (const car of grid.cars) {
+      const slot = qualifying.grid.findIndex((e) => carId(e) === carId(car)) + 1;
+      assert.equal(slot, car.gridPosition, `${carId(car)} sıralama ızgarasıyla eşleşmiyor`);
+    }
+  });
+
+  it('is deterministic — two independent retrievals of the same recipe agree', () => {
+    // "Herkes aynı ızgarayı görür" şartının bütün temeli bu: aynı tarif iki
+    // kere çekilse de bit düzeyinde aynı sonucu vermeli.
+    const a = qualifyingForRecipe({ seed: SEED, round: ROUND, snapshot: SNAP });
+    const b = qualifyingForRecipe({ seed: SEED, round: ROUND, snapshot: SNAP });
+    assert.equal(JSON.stringify(a), JSON.stringify(b));
   });
 
   it('runs to the flag with an empty decision log', () => {

@@ -357,6 +357,41 @@ describe('per-lobby live race rooms', () => {
     await client.close();
   });
 
+  // ── 8b. Sıralama turları state çerçevesinde gelir, lap çerçevesinde TEKRAR EDİLMEZ ─
+
+  it('a subscriber receives the qualifying result in the state frame', async () => {
+    const race = await liveRace('quali', 0);
+    const client = await connect();
+
+    const ack = await subscribe(client, race.lobbyId, race.token);
+    assert.equal(ack.type, 'state');
+    assert.ok(ack.race.qualifying, 'state çerçevesi qualifying taşımıyor');
+    assert.ok(Array.isArray(ack.race.qualifying.grid), 'qualifying.grid bir dizi değil');
+    assert.equal(ack.race.qualifying.grid.length, ack.race.cars.length);
+    assert.ok(Array.isArray(ack.race.qualifying.playerGrid));
+
+    await client.close();
+  });
+
+  it('qualifying is NOT re-sent on lap frames — fixed once for the whole race', async () => {
+    // Sıralama yarış boyunca sabit: her turda tekrar yollamak 70 kez aynı
+    // veriyi tekrarlamak olurdu. `lap` çerçevesi bu yüzden `qualifying`
+    // ALANINI HİÇ TAŞIMAMALI — geç gelen abonenin ilk `state` mesajı zaten
+    // yeterli.
+    const race = await liveRace('quali-noresend', 0);
+    const client = await connect();
+    await subscribe(client, race.lobbyId, race.token);
+
+    const ticked = await race.runner.tick(at(race.startedAt, 2));
+    hub.publish(race.lobbyId, ticked.state);
+    const lap = await client.next();
+
+    assert.equal(lap.type, 'lap');
+    assert.equal('qualifying' in lap.race, false, 'lap çerçevesi qualifying taşıyor — her turda tekrarlanıyor');
+
+    await client.close();
+  });
+
   // ── 9. Tarif nesneleri yayına SIZMAZ ──────────────────────────────────────
 
   it('the frame does not carry standings, entries or rosters', async () => {

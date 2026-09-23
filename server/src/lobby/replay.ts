@@ -63,6 +63,7 @@ import {
   type Decisions,
   type Entries,
   type PitLaneStart,
+  type QualifyingResult,
   type QualiRisk,
   type RaceState,
   type Rosters,
@@ -139,17 +140,31 @@ export function decisionsForLap(decisions: readonly DecisionLogEntry[], lap: num
   return out;
 }
 
+/** `qualifyingForRecipe`nin girdisi: tarifin ızgarayı belirleyen kısmı. */
+export type QualifyingRecipe = Pick<ReplayInput, 'seed' | 'round' | 'snapshot'>;
+
 /**
- * Tarifi yarışa çevirir. Aynı girdi her zaman aynı `RaceState`i verir.
+ * Tarifin sıralama turlarını üretir.
+ *
+ * NEDEN AYRI VE DIŞA AÇIK: `replayRace` ızgarayı kurmak için bu hesabı zaten
+ * yapıyordu, sonucu (grid dışında) ATIYORDU. Sıralama sonucu da tıpkı yarış
+ * durumu gibi SAKLANMAZ — tarifin (`seed`, `round`, `snapshot`) SAF bir
+ * fonksiyonu olduğu için her zaman yeniden türetilebilir ve her türetme aynı
+ * sonucu verir. Bunu tek, dışa açık bir fonksiyona çıkarmak iki şeyi sağlıyor:
+ *  1. Bir istemciye ızgarayı göstermek için yarış durumunu hiç kurmaya gerek
+ *     yok (bkz. `lobby/live.ts` — `state` çerçevesi bunu taşır).
+ *  2. `replayRace` artık bunu ÇAĞIRIYOR, kendi kopyasını tutmuyor — iki hesap
+ *     birbirinden ayrışamaz.
+ *
+ * SAF: veritabanı yok, saat yok, `Math.random()` yok — rastgelelik yalnızca
+ * `seed`ten geliyor. Bu yüzden "herkes aynı ızgarayı görür" burada da
+ * yapısal, aksiyomatik değil.
  */
-export function replayRace(input: ReplayInput): RaceState {
-  const { seed, round, snapshot, decisions } = input;
+export function qualifyingForRecipe(input: QualifyingRecipe): QualifyingResult {
+  const { seed, round, snapshot } = input;
   const track = trackForRound(round);
   const weather = weatherFor(track, seed);
-
-  // Sıralama turları başlangıç gridini belirler — grid değişirse bütün yarış
-  // değişir. `risks` bu yüzden tarifin parçası, süs değil.
-  const qualifying = simulateQualifying({
+  return simulateQualifying({
     track,
     entries: snapshot.entries,
     risks: snapshot.risks,
@@ -159,6 +174,21 @@ export function replayRace(input: ReplayInput): RaceState {
     aiBonus: snapshot.aiBonus,
     rosters: snapshot.rosters,
   });
+}
+
+/**
+ * Tarifi yarışa çevirir. Aynı girdi her zaman aynı `RaceState`i verir.
+ */
+export function replayRace(input: ReplayInput): RaceState {
+  const { seed, round, snapshot, decisions } = input;
+  const track = trackForRound(round);
+  const weather = weatherFor(track, seed);
+
+  // Sıralama turları başlangıç gridini belirler — grid değişirse bütün yarış
+  // değişir. `risks` bu yüzden tarifin parçası, süs değil. Hesap artık
+  // `qualifyingForRecipe`de yaşıyor ki sonucu ayrıca çekmek isteyen (canlı
+  // yayının `state` çerçevesi gibi) ikinci bir kopya hesaplamasın.
+  const qualifying = qualifyingForRecipe({ seed, round, snapshot });
 
   let state = startRace({
     standings: snapshot.standings,

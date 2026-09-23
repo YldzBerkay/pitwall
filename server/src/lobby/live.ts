@@ -50,11 +50,11 @@
  * hiçbir sebep yokken ayrışırdı.
  */
 import type { WebSocket } from 'ws';
-import type { RaceState } from '@pitwall/shared/raceEngine';
+import type { QualifyingResult, RaceState } from '@pitwall/shared/raceEngine';
 import { verifySession } from '../auth/jwt.ts';
 import { query } from '../db/pool.ts';
 import { loadDecisions, loadRun } from './raceRepo.ts';
-import { replayRace } from './replay.ts';
+import { qualifyingForRecipe, replayRace } from './replay.ts';
 
 /**
  * Yeni odaların yolu.
@@ -67,7 +67,7 @@ import { replayRace } from './replay.ts';
 export const LIVE_PATH = '/race/live';
 
 type Outgoing =
-  | { type: 'state'; lobbyId: string; race: SerialisedRace | null }
+  | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
@@ -89,6 +89,20 @@ interface SerialisedRace {
 }
 
 /**
+ * YALNIZCA `state` çerçevesinin taşıdığı ek alan.
+ *
+ * `qualifying` KASITLA `SerialisedRace`in kendisinde DEĞİL, ayrı bir türde:
+ * `publish()` her turda `SerialisedRace` gönderiyor, `qualifying` oraya hiç
+ * girmesin diye tip düzeyinde ayrılıyor. Sıralama sonucu yarış boyunca sabit
+ * (ışıklar söndüğünde donuyor), 70 tur boyunca aynı veriyi tekrar tekrar
+ * yollamak saf savurganlık olurdu — geç gelen abonenin tek seferlik `state`
+ * mesajı zaten yeterli.
+ */
+interface SerialisedRaceState extends SerialisedRace {
+  qualifying: QualifyingResult;
+}
+
+/**
  * Durumu KOPYALAMADAN, DEĞİŞTİRMEDEN ağ biçimine çevirir.
  *
  * `cars`/`events` referansla takılıyor; `JSON.stringify` onları yalnızca okur.
@@ -104,6 +118,15 @@ interface SerialisedRace {
  * istemcinin kendi settlement'ını ve kendi simülasyonunu sürdürmesine izin
  * verirdi — bu fazın silmeye çalıştığı ikinci gerçekliğin ta kendisi.
  * Settlement zaten sunucunun işi ve zaten çalışıyor (`economy/settle.ts`).
+ *
+ * `qualifying` (Görev 1 — Aşama 2) BU İLKEYE İSTİSNA DEĞİL, ONU DOĞRULUYOR:
+ * oyuncu kendi grid sırasını, turunu, hata yapıp yapmadığını GÖRMEK ister —
+ * bunlar da çizim verisi. Ama `qualifying` bu fonksiyonun DEĞİL,
+ * `currentRace`in eklediği bir alan: yarış boyunca sabit olduğu için her
+ * `publish()`te (`lap` çerçevesinde) tekrar tekrar yollanmıyor, yalnız geç
+ * gelen abonenin BİR KEZLİK `state` mesajına biniyor. Zaten saklanmıyor da —
+ * `qualifyingForRecipe` tarifin (`seed`, `round`, `snapshot`) saf bir
+ * fonksiyonu, her istendiğinde yeniden türetiliyor.
  */
 function serialise(state: RaceState): SerialisedRace {
   return {
@@ -152,7 +175,7 @@ interface LobbyRow {
  * `last_lap`e kadar oynatıp resmi hemen veriyoruz. `null`: lobi yarışmıyor ya
  * da tarif henüz yazılmadı (ışıkları söndüren tik daha koşmadı).
  */
-async function currentRace(lobbyId: string): Promise<SerialisedRace | null> {
+async function currentRace(lobbyId: string): Promise<SerialisedRaceState | null> {
   const lobby = await query<LobbyRow>(
     `select season_no, round_no from lobbies where id = $1 and phase = 'live'`,
     [lobbyId],
@@ -164,7 +187,7 @@ async function currentRace(lobbyId: string): Promise<SerialisedRace | null> {
   if (!run) return null;
 
   const decisions = await loadDecisions(lobbyId, row.season_no, row.round_no);
-  return serialise(replayRace({
+  const state = replayRace({
     seed: run.seed,
     round: row.round_no,
     snapshot: run.snapshot,
@@ -174,7 +197,12 @@ async function currentRace(lobbyId: string): Promise<SerialisedRace | null> {
     // hâlâ açık olduğunu sanır — oysa kapı `last_lap`e bakıyor. Damganın
     // ötesini yayınlamamak bu yanılgıyı yapısal olarak imkânsız kılar.
     uptoLap: run.lastLap,
-  }));
+  });
+  // Sıralama SAKLANMAZ, HER SEFERİNDE aynı tarifin (seed, round, snapshot)
+  // saf bir fonksiyonu olarak yeniden türetilir — bir kez, yalnızca geç gelen
+  // abonenin `state` mesajı için, ve turlar ilerledikçe bir daha DEĞİL.
+  const qualifying = qualifyingForRecipe({ seed: run.seed, round: row.round_no, snapshot: run.snapshot });
+  return { ...serialise(state), qualifying };
 }
 
 export interface LiveHub {
