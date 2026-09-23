@@ -51,7 +51,7 @@ export function Chip({
 }
 
 /** Chip labels: full names wrap in a narrow card, so use the paddock shorthand. */
-const compoundLabel: Record<CompoundKey, string> = {
+export const compoundLabel: Record<CompoundKey, string> = {
   SOFT: 'Yumuşak',
   MEDIUM: 'Orta',
   HARD: 'Sert',
@@ -146,3 +146,23 @@ export const fmtSec = (sec: number): string => {
 
 export const fmtGap = (sec?: number): string =>
   sec === undefined ? 'DNF' : sec === 0 ? 'LİDER' : `+${sec.toFixed(1)}`;
+
+/**
+ * Player-facing text for a rejected `/race/weekend-choices` (or check-in)
+ * call. `wrong_phase` is the rule working — the lights are already out for
+ * this weekend, so the choice can no longer reach the frozen race recipe —
+ * not an error the player caused, and it must never be shown as "something
+ * went wrong" (that reads as retriable, and it isn't).
+ */
+export const weekendChoiceErrorText = (code: string): string => {
+  switch (code) {
+    case 'wrong_phase':
+      return 'Işıklar zaten söndü — bu hafta sonu için tercih artık değişmez.';
+    case 'not_signed_in':
+      return 'Oturumun yok — bu tercih kaydedilmedi.';
+    case 'forbidden':
+      return 'Bu lobide koltuğun yok.';
+    default:
+      return `Tercih kaydedilemedi: ${code}`;
+  }
+};

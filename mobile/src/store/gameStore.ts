@@ -87,6 +87,7 @@ import { createLeagueSlice, type LeagueSlice } from './slices/leagueSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
+import { createRaceSlice, type RaceSlice } from './slices/raceSlice';
 import type { StatKey } from '@pitwall/shared/driverMarket';
 
 /** Stat label on the garage card → engine key. */
@@ -221,9 +222,12 @@ const newWeekend = (round: number, season: number): Weekend => {
     practice: [],
     practiceSessions: [],
     practiceReds: [],
+    // `qualiCompound` and `raceCompound` are always kept equal — the same
+    // tyre is used for qualifying and the start (see `setQualiCompound`'s
+    // doc comment and `CarSetup.compound` in `@pitwall/shared/raceEngine`).
     qualiCompound: weather.wetAtStart ? 'WET' : 'SOFT',
     risk: 'safe',
-    raceCompound: weather.wetAtStart ? 'WET' : 'MEDIUM',
+    raceCompound: weather.wetAtStart ? 'WET' : 'SOFT',
     tactics: 'balanced',
     pending: [undefined, undefined],
     practiceCount: trackForRound(round).sprint ? 1 : 3,
@@ -302,9 +306,18 @@ interface CoreState {
   startSprintSession: () => void;
   /** Run the next practice session (FP1 → FP3). After FP3 the weekend moves to qualifying. */
   runPractice: () => void;
+  /** Sets both `weekend.qualiCompound` and `weekend.raceCompound` together
+   * — the same tyre starts the qualifying lap and the race (parc fermé:
+   * see `CarSetup.compound`'s doc comment in `@pitwall/shared/raceEngine`).
+   * There is deliberately no separate `setRaceCompound` for the UI to call
+   * once the grid is known. */
   setQualiCompound: (key: CompoundKey) => void;
   setRisk: (risk: QualiRisk) => void;
   runQualifying: () => void;
+  /** @deprecated no screen calls this anymore — `setQualiCompound` sets
+   * `weekend.raceCompound` too. Left in place only so nothing else that
+   * references the action breaks; `weekend.raceCompound` itself is still
+   * read by `leagueSlice.ts` and stays in sync via `setQualiCompound`. */
   setRaceCompound: (key: CompoundKey) => void;
   setTactics: (tactics: TacticPreset) => void;
   /** Lights out: build the race state from the grid and start the clock. */
@@ -359,7 +372,7 @@ interface CoreState {
   paddockNews: string[];
 }
 
-export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice & AuthSlice & LobbySlice;
+export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice & AuthSlice & LobbySlice & RaceSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
@@ -381,6 +394,7 @@ export const useGameStore = create<GameState>()(
   ...createSettingsSlice(set, get),
   ...createAuthSlice(set, get),
   ...createLobbySlice(set, get),
+  ...createRaceSlice(set, get),
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},
@@ -640,7 +654,7 @@ export const useGameStore = create<GameState>()(
     raceClock = setInterval(() => get().advanceRaceLap(), RACE_TICK_MS);
   },
 
-  setQualiCompound: (key) => set((state) => ({ weekend: { ...state.weekend, qualiCompound: key } })),
+  setQualiCompound: (key) => set((state) => ({ weekend: { ...state.weekend, qualiCompound: key, raceCompound: key } })),
   setRisk: (risk) => set((state) => ({ weekend: { ...state.weekend, risk } })),
 
   runQualifying: () => {

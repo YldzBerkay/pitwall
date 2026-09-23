@@ -5,7 +5,7 @@ import { playerTeam } from '@pitwall/shared/teams';
 import { carId, effectiveStats, setupRiskFactor } from '@pitwall/shared/raceEngine';
 import { useGameStore } from '@/store/gameStore';
 import { haptic } from '@/lib/haptics';
-import { Chip, DriverCell, Pos, fmtSec } from './shared';
+import { Chip, DriverCell, Pos, fmtSec, weekendChoiceErrorText } from './shared';
 
 const BIAS_OPTIONS: { label: string; value: number }[] = [
   { label: 'Aero+', value: -1 },
@@ -27,6 +27,21 @@ export function PracticePanel() {
   const runPractice = useGameStore((s) => s.runPractice);
   const setup = useGameStore((s) => s.setup);
   const track = useGameStore((s) => s.track());
+  // The lobby this device is currently seated in, if any — undefined in the
+  // no-lobby (legacy solo) flow, where there is nowhere on the server to
+  // send this choice.
+  const lobbyId = useGameStore((s) => s.lobby.slots.find((sl) => sl.slotIndex === s.lobby.activeSlotIndex)?.lobbyId ?? undefined);
+  const setWeekendChoices = useGameStore((s) => s.setWeekendChoices);
+  const weekendChoiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
+
+  // Setup bias is saved before lights-out: it changes what the frozen race
+  // recipe will hold, so it is sent immediately, not batched. A `wrong_phase`
+  // rejection means the recipe is already frozen for this weekend — the
+  // rule working, not a bug — and is surfaced below rather than swallowed.
+  const chooseBias = (value: number) => {
+    setBias(value);
+    if (lobbyId) void setWeekendChoices(lobbyId, { bias: value });
+  };
 
   const eff = effectiveStats(setup());
   const risk = setupRiskFactor(setup(), track);
@@ -45,11 +60,21 @@ export function PracticePanel() {
         <AppText variant="bodySmall" color={colors.textSecondary}>
           Kanat açısı, aerodinamik ile mekanik yol tutuş arasında değer kaydırır. Pistin istediği yöne yat.
         </AppText>
+        {lobbyId && (
+          <AppText variant="labelSmall" color={colors.textTertiary}>
+            Işıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur.
+          </AppText>
+        )}
         <View className="flex-row gap-1.5">
           {BIAS_OPTIONS.map((o) => (
-            <Chip key={o.value} label={o.label} selected={weekend.bias === o.value} onPress={() => setBias(o.value)} />
+            <Chip key={o.value} label={o.label} selected={weekend.bias === o.value} onPress={() => chooseBias(o.value)} />
           ))}
         </View>
+        {weekendChoiceOutcome?.ok === false && (
+          <AppText variant="labelSmall" color={colors.neonCoral}>
+            {weekendChoiceErrorText(weekendChoiceOutcome.error)}
+          </AppText>
+        )}
         {risk > 1 && (
           <AppText variant="labelSmall" color={risk >= 1.6 ? colors.neonCoral : colors.solarAmber}>
             Uç setup: kaza ve hata riski ×{risk.toFixed(1)}{risk >= 1.6 ? ' — pistin istediğinin tersine yatırılmış' : ''}.

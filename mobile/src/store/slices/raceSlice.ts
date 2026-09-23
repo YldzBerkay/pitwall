@@ -1,6 +1,14 @@
 import type { CompoundKey } from '@pitwall/shared/carCustomisation';
 import type { ApiResult } from '@/lib/api/identity';
-import { pit as pitApi, type PitInput, type PitResponse } from '@/lib/api/race';
+import {
+  checkin as checkinApi,
+  pit as pitApi,
+  weekendChoices as weekendChoicesApi,
+  type PitInput,
+  type PitResponse,
+  type RaceActionResponse,
+  type WeekendChoicesInput,
+} from '@/lib/api/race';
 import {
   createRaceSocket,
   type ConnectionStatus,
@@ -9,24 +17,13 @@ import {
   type RaceSocketOptions,
   type SerialisedRace,
 } from '@/lib/api/raceSocket';
+import type { SliceGet, SliceSet } from './types';
 
 /**
  * The slice that sits between the server's race clients
- * (`lib/api/race.ts`, `lib/api/raceSocket.ts`) and the screens.
- *
- * THIS IS NOT WIRED INTO `gameStore.ts`/`GameState` YET. That wiring is a
- * later task. `GameState` (`store/gameStore.ts`) does not declare a `race`
- * key today, so importing the real `SliceCreator`/`GameState` types from
- * `./types.ts` — the way every other slice in this directory does — and
- * returning `{ race: ... }` from `set()` would fail `tsc` (the key does not
- * exist on the type being partially updated). Rather than touch
- * `gameStore.ts` to add it (out of scope for this task, and a decision that
- * belongs with the actual wiring), this slice declares its OWN minimal
- * `set`/`get` types below. They ask for exactly the one thing this slice
- * reads from the rest of the store — `auth.baseUrl` / `auth.token`, the same
- * shape `authSlice.ts` already exposes as `AuthSlice['auth']` — so plugging
- * this into `GameState` later is a mechanical `...createRaceSlice(set, get)`
- * spread, unchanged from `lobbySlice.ts`'s own pattern.
+ * (`lib/api/race.ts`, `lib/api/raceSocket.ts`) and the screens. Wired into
+ * `gameStore.ts`/`GameState` via `...createRaceSlice(set, get)`, the same
+ * pattern `lobbySlice.ts`/`leagueSlice.ts` use.
  *
  * ── NO LOCAL FALLBACK, NO QUEUE ───────────────────────────────────────────
  * Mirrors the two load-bearing decisions already made in `raceSocket.ts`:
@@ -50,8 +47,27 @@ export type PitOutcome =
    * player-facing words (see `lib/api/race.ts`'s `pit()` doc comment). */
   | { ok: false; error: string };
 
+/**
+ * Outcome of `setWeekendChoices`/`checkinRace`. Same shape and same rule as
+ * `PitOutcome`: `error` is always the server's own code (`wrong_phase`,
+ * `forbidden`, ...) or the local `not_signed_in` refusal below — never
+ * flattened into one generic failure string. A `wrong_phase` rejection means
+ * the rule worked (lights are already out), not that something went wrong;
+ * screens must say that, not "something went wrong".
+ */
+export type WeekendChoiceOutcome = { ok: true } | { ok: false; error: string };
+
 export interface RaceSliceState {
-  status: ConnectionStatus | 'idle';
+  /**
+   * `'signed-out'` is distinct from `'session-invalid'` (from
+   * `raceSocket.ts`'s `ConnectionStatus`): the latter means a token was sent
+   * and the server rejected it (expired/bad — "your session died"), the
+   * former means there was never a token to send ("you aren't signed in").
+   * Those need different player-facing words, so `connectRace` never opens a
+   * socket with an empty token just to have the server hand back
+   * `unauthorized` and land here in `session-invalid`.
+   */
+  status: ConnectionStatus | 'idle' | 'signed-out';
   /** The lobby currently subscribed to, or undefined before `connectRace`
    * / after `leaveRace`. */
   lobbyId?: string;
@@ -63,6 +79,10 @@ export interface RaceSliceState {
    * rejection (e.g. `lap_already_run`) can be shown to the player without
    * being swallowed into the race state. */
   lastPitOutcome?: PitOutcome;
+  /** The most recent weekend-choices (or check-in) result — see
+   * `WeekendChoiceOutcome`. Kept distinct from `data` for the same reason
+   * as `lastPitOutcome`. */
+  lastWeekendChoiceOutcome?: WeekendChoiceOutcome;
 }
 
 export interface RaceSlice {
@@ -79,20 +99,42 @@ export interface RaceSlice {
    * comment above for why this is not queued for delivery once reconnected.
    */
   callPit: (driverIdx: 0 | 1, compound: CompoundKey, lap?: number) => Promise<PitOutcome>;
+  /**
+   * "Bu hafta sonu böyle yarışacağım." Sends whichever of setup bias,
+   * (qualifying-and-start) compound, qualifying risk and pit-wall tactics
+   * changed — `lobbyId` apart, every field is optional; an omitted one is
+   * left untouched server-side. The team key is never part of this call:
+   * the server derives it from the session's own seat.
+   *
+   * Accepted while the lobby is `open` or `checkin`; rejected with
+   * `wrong_phase` once it goes `live`, because the frozen race recipe
+   * already copied whatever was last saved. That rejection is the rule
+   * working, not a failure — screens must say so, not "something went
+   * wrong". Refused locally with `not_signed_in`, no request sent, when
+   * there is no session.
+   */
+  setWeekendChoices: (
+    lobbyId: string,
+    choices: Omit<WeekendChoicesInput, 'lobbyId'>,
+  ) => Promise<WeekendChoiceOutcome>;
+  /** "Kendi yarışımı süreceğim." — see `lib/api/race.ts`'s `checkin()` doc
+   * comment for its own `forbidden`/`wrong_phase` errors. */
+  checkinRace: (lobbyId: string) => Promise<WeekendChoiceOutcome>;
 }
 
-/** The one thing this slice needs from the rest of the store — see the
- * module doc comment for why this isn't `GameState` yet. */
+/**
+ * The one thing this slice reads from the rest of the store —
+ * `auth.baseUrl` / `auth.token`, the same shape `authSlice.ts` exposes as
+ * `AuthSlice['auth']`. Kept exported as its own minimal type so this
+ * slice's tests can build a standalone `zustand` store (`RaceSlice &
+ * RaceSliceDeps`) without pulling in the whole of `GameState`; the real
+ * `createRaceSlice` below is typed against the real `SliceCreator`/
+ * `GameState` (see `./types.ts`), same as every other slice in this
+ * directory.
+ */
 export interface RaceSliceDeps {
   auth: { baseUrl: string; token?: string };
 }
-
-export type RaceSliceSet = (
-  partial:
-    | Partial<RaceSlice & RaceSliceDeps>
-    | ((state: RaceSlice & RaceSliceDeps) => Partial<RaceSlice & RaceSliceDeps>),
-) => void;
-export type RaceSliceGet = () => RaceSlice & RaceSliceDeps;
 
 /** Injectable collaborators, defaulting to the real clients. Tests supply
  * fakes here instead of driving a real `WebSocket`/`http` server, since
@@ -102,6 +144,12 @@ export type RaceSliceGet = () => RaceSlice & RaceSliceDeps;
 export interface RaceSliceInjected {
   createSocket?: (options: RaceSocketOptions, deps?: RaceSocketDeps) => RaceSocket;
   pitApi?: (baseUrl: string, token: string, input: PitInput) => Promise<ApiResult<PitResponse>>;
+  weekendChoicesApi?: (
+    baseUrl: string,
+    token: string,
+    input: WeekendChoicesInput,
+  ) => Promise<ApiResult<RaceActionResponse>>;
+  checkinApi?: (baseUrl: string, token: string, lobbyId: string) => Promise<ApiResult<RaceActionResponse>>;
   socketDeps?: RaceSocketDeps;
 }
 
@@ -110,13 +158,24 @@ function liveSocketUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/race/live`;
 }
 
-export function createRaceSlice(
-  set: RaceSliceSet,
-  get: RaceSliceGet,
-  injected: RaceSliceInjected = {},
-): RaceSlice {
+/**
+ * Typed against the real `SliceSet`/`SliceGet` (i.e. the whole `GameState`),
+ * the same as every other slice in this directory — `injected` is the one
+ * addition beyond the shared `SliceCreator<T>` shape, and is only ever
+ * supplied by tests; `gameStore.ts` calls this with just `(set, get)`.
+ */
+export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSliceInjected = {}): RaceSlice {
   const createSocket = injected.createSocket ?? createRaceSocket;
   const sendPit = injected.pitApi ?? pitApi;
+  const sendWeekendChoices = injected.weekendChoicesApi ?? weekendChoicesApi;
+  const sendCheckin = injected.checkinApi ?? checkinApi;
+
+  /** The session every server-bound call here needs; undefined while signed
+   * out. Mirrors `lobbySlice.ts`'s own `session()` helper. */
+  const session = (): { baseUrl: string; token: string } | undefined => {
+    const { baseUrl, token } = get().auth;
+    return token ? { baseUrl, token } : undefined;
+  };
 
   let socket: RaceSocket | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -134,10 +193,21 @@ export function createRaceSlice(
     connectRace: (lobbyId) => {
       teardown();
 
-      const { baseUrl, token } = get().auth;
+      const auth = session();
+      if (!auth) {
+        // No token to send. Opening a socket anyway would come back
+        // `unauthorized` from the server and land in `session-invalid` —
+        // the wrong word for "you were never signed in" (see
+        // `RaceSliceState.status`'s doc comment).
+        set((s) => ({
+          race: { ...s.race, status: 'signed-out', lobbyId, data: null, lastPitOutcome: undefined },
+        }));
+        return;
+      }
+
       set((s) => ({ race: { ...s.race, status: 'connecting', lobbyId, data: null, lastPitOutcome: undefined } }));
 
-      const newSocket = createSocket({ url: liveSocketUrl(baseUrl), lobbyId, token: token ?? '' }, injected.socketDeps);
+      const newSocket = createSocket({ url: liveSocketUrl(auth.baseUrl), lobbyId, token: auth.token }, injected.socketDeps);
       socket = newSocket;
 
       const adopt = (snapshot: { status: ConnectionStatus; race: SerialisedRace | null }) => {
@@ -171,6 +241,36 @@ export function createRaceSlice(
         : { ok: false, error: res.error };
 
       set((s) => ({ race: { ...s.race, lastPitOutcome: outcome } }));
+      return outcome;
+    },
+
+    setWeekendChoices: async (lobbyId, choices) => {
+      const auth = session();
+      if (!auth) {
+        const outcome: WeekendChoiceOutcome = { ok: false, error: 'not_signed_in' };
+        set((s) => ({ race: { ...s.race, lastWeekendChoiceOutcome: outcome } }));
+        return outcome;
+      }
+
+      const res = await sendWeekendChoices(auth.baseUrl, auth.token, { lobbyId, ...choices });
+      const outcome: WeekendChoiceOutcome = res.ok ? { ok: true } : { ok: false, error: res.error };
+
+      set((s) => ({ race: { ...s.race, lastWeekendChoiceOutcome: outcome } }));
+      return outcome;
+    },
+
+    checkinRace: async (lobbyId) => {
+      const auth = session();
+      if (!auth) {
+        const outcome: WeekendChoiceOutcome = { ok: false, error: 'not_signed_in' };
+        set((s) => ({ race: { ...s.race, lastWeekendChoiceOutcome: outcome } }));
+        return outcome;
+      }
+
+      const res = await sendCheckin(auth.baseUrl, auth.token, lobbyId);
+      const outcome: WeekendChoiceOutcome = res.ok ? { ok: true } : { ok: false, error: res.error };
+
+      set((s) => ({ race: { ...s.race, lastWeekendChoiceOutcome: outcome } }));
       return outcome;
     },
   };

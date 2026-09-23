@@ -10,7 +10,7 @@ import { useGameStore } from '@/store/gameStore';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
-import { Chip, CompoundPicker, DriverCell, Pos, fmtSec } from './shared';
+import { Chip, CompoundPicker, DriverCell, Pos, compoundLabel, fmtSec, weekendChoiceErrorText } from './shared';
 
 const TACTICS: { key: TacticPreset; label: string; hint: string }[] = [
   { key: 'conservative', label: 'Temkinli', hint: 'Erken pit, sert lastik. Az risk, az kazanç.' },
@@ -30,12 +30,44 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
   const setQualiCompound = useGameStore((s) => s.setQualiCompound);
   const setRisk = useGameStore((s) => s.setRisk);
   const runQualifying = useGameStore((s) => (mode === 'sprint' ? s.runSprintQualifying : s.runQualifying));
-  const setRaceCompound = useGameStore((s) => s.setRaceCompound);
   const setTactics = useGameStore((s) => s.setTactics);
   const startRaceSession = useGameStore((s) => (mode === 'sprint' ? s.startSprintSession : s.startRaceSession));
   const track = useGameStore((s) => s.track());
   const shell = useShellLayout();
   const [fullGrid, setFullGrid] = useState(false);
+
+  // The lobby this device is currently seated in, if any — undefined in the
+  // no-lobby (legacy solo) flow, where there is nowhere on the server to
+  // send this choice.
+  const lobbyId = useGameStore((s) => s.lobby.slots.find((sl) => sl.slotIndex === s.lobby.activeSlotIndex)?.lobbyId ?? undefined);
+  const setWeekendChoices = useGameStore((s) => s.setWeekendChoices);
+  const weekendChoiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
+
+  // Every choice below is saved before lights-out: sent immediately, not
+  // batched, since the server freezes the race recipe once and reads
+  // whatever was last saved. A `wrong_phase` rejection means that already
+  // happened for this weekend — the rule working, not a bug — and is shown
+  // to the player rather than swallowed (see `weekendChoiceErrorText`).
+  const chooseCompound = (key: (typeof weekend)['qualiCompound']) => {
+    // One picker, one value: the same tyre starts the qualifying lap and
+    // the race (parc fermé) — see `setQualiCompound`'s doc comment.
+    setQualiCompound(key);
+    if (lobbyId) void setWeekendChoices(lobbyId, { compound: key });
+  };
+  const chooseRisk = (risk: Parameters<typeof setRisk>[0]) => {
+    setRisk(risk);
+    if (lobbyId) void setWeekendChoices(lobbyId, { qualiRisk: risk });
+  };
+  const chooseTactics = (tactics: TacticPreset) => {
+    setTactics(tactics);
+    if (lobbyId) void setWeekendChoices(lobbyId, { tactics });
+  };
+
+  const weekendChoiceNotice = weekendChoiceOutcome?.ok === false ? (
+    <AppText variant="labelSmall" color={colors.neonCoral}>
+      {weekendChoiceErrorText(weekendChoiceOutcome.error)}
+    </AppText>
+  ) : null;
 
   const sprint = mode === 'sprint';
   const q = sprint ? weekend.sprintQualifying : weekend.qualifying;
@@ -54,19 +86,22 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
             <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
               Lastik · pist şu an {wetNow ? 'ıslak' : 'kuru'}
             </AppText>
-            <CompoundPicker value={weekend.qualiCompound} onChange={setQualiCompound} />
+            <AppText variant="labelSmall" color={colors.textTertiary} className="mb-2">
+              Bu lastikle hem sıralama turu atılır hem yarışa başlanır.
+            </AppText>
+            <CompoundPicker value={weekend.qualiCompound} onChange={chooseCompound} />
           </View>
           <View>
             <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
               Risk
             </AppText>
             <View className="flex-row gap-1.5">
-              <Chip label="Temkinli" selected={weekend.risk === 'safe'} onPress={() => setRisk('safe')} />
+              <Chip label="Temkinli" selected={weekend.risk === 'safe'} onPress={() => chooseRisk('safe')} />
               <Chip
                 label="Agresif"
                 selected={weekend.risk === 'aggressive'}
                 tint={colors.neonCoral}
-                onPress={() => setRisk('aggressive')}
+                onPress={() => chooseRisk('aggressive')}
               />
             </View>
             <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
@@ -75,6 +110,12 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
                 : 'Temiz tur. Sürpriz yok, kayıp da yok.'}
             </AppText>
           </View>
+          {lobbyId && (
+            <AppText variant="labelSmall" color={colors.textTertiary}>
+              Işıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur.
+            </AppText>
+          )}
+          {weekendChoiceNotice}
           <GlassButton
             label={sprint ? 'Sprint sıralamasına çık' : 'Sıralamaya çık'}
             onPress={() => {
@@ -201,7 +242,9 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
           <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
             Başlangıç lastiği
           </AppText>
-          <CompoundPicker value={weekend.raceCompound} onChange={setRaceCompound} />
+          <AppText variant="bodySmall" color={colors.textSecondary} className="mb-2">
+            {`${compoundLabel[weekend.raceCompound]} — sıralamada seçilen lastikle başlanır, burada ayrıca seçilmez.`}
+          </AppText>
           <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
             {weekend.raceCompound === 'INTERMEDIATE' || weekend.raceCompound === 'WET'
               ? wetNow
@@ -220,7 +263,7 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
           </AppText>
           <View className="flex-row gap-1.5">
             {TACTICS.map((t) => (
-              <Chip key={t.key} label={t.label} selected={weekend.tactics === t.key} onPress={() => setTactics(t.key)} />
+              <Chip key={t.key} label={t.label} selected={weekend.tactics === t.key} onPress={() => chooseTactics(t.key)} />
             ))}
           </View>
           <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
@@ -228,6 +271,12 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
           </AppText>
         </View>
       </Cols>
+      {lobbyId && (
+        <AppText variant="labelSmall" color={colors.textTertiary}>
+          Taktik ışıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur.
+        </AppText>
+      )}
+      {weekendChoiceNotice}
       <GlassButton
         label={sprint ? 'Sprinti başlat' : 'Yarışı başlat'}
         onPress={() => {
