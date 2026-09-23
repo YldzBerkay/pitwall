@@ -832,3 +832,17 @@ Bunlar uygulama ve inceleme sırasında keşfedildi; ilgili görevin promptuna g
   yolundan başlayanın serbest lastiği tam olarak bundan muafiyet ve yalnızca
   ışıklar sönerken uygulanıyor — sıralama hızına dokunmuyor. **İstemci bunu
   bir kurulum değişikliği değil, yarış başlangıcı seçimi olarak sunmalı.**
+
+### Görev 6b'nin ortaya çıkardıkları
+
+- **Görev 8 için zorunlu:** pit ucu, `lap`'i yarışın **mevcut turundan kesinlikle
+  büyük** olmayan bir kararı reddetmeli. Yalnızca `currentLap + 1` yazmak yetmez.
+  Ait olduğu tur canlıda koşduktan sonra günlüğe düşen bir karar, canlı yarışta
+  yok sayılır ama sonraki `replayRace` onu uygular — iki farklı yarış. Değişmez
+  günlük geri yazamaz; tek savunma yazmayı reddetmektir.
+- **Postgres `jsonb` anahtar sırasını değiştiriyor.** Tarif geri okunduğunda
+  değerler aynı ama serileştirme farklı. İstemciye sağlama gönderilecekse
+  `cars`/`events` hash'lenmeli, tarif değil — yoksa sunucu ile tarifi çeken
+  istemci sebepsiz yere anlaşamaz.
+- Şemada tur sayacı yok; koşucu turu `floor((now - started_at) / tickMs)` ile
+  türetiyor. Bu, çökme sonrası devamı mümkün kılan şey ve bedava yetişme veriyor.
