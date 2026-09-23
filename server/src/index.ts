@@ -21,6 +21,7 @@ import { registerLobbyRoutes } from './lobby/routes.ts';
 import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
 import { registerCheckinRoutes } from './lobby/checkin.ts';
+import { registerWeekendChoiceRoutes } from './lobby/weekendChoices.ts';
 import { createLiveHub, LIVE_PATH } from './lobby/live.ts';
 import { createRaceSweep } from './lobby/sweep.ts';
 import { RACE_TICK_MS } from './lobby/runner.ts';
@@ -35,6 +36,7 @@ registerLobbyRoutes(identityRouter);
 registerGoldRoutes(identityRouter);
 registerEconomyRoutes(identityRouter);
 registerCheckinRoutes(identityRouter);
+registerWeekendChoiceRoutes(identityRouter);
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });

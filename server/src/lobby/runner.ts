@@ -41,12 +41,14 @@ import { trackForRound } from '@pitwall/shared/tracks';
 import { freshStandings } from '@pitwall/shared/season';
 import type { TeamStanding } from '@pitwall/shared/teams';
 import { query, withTransaction } from '../db/pool.ts';
+import { loadLobbyEconomy } from '../economy/repo.ts';
 import { settleRace, type SettleDeps } from '../economy/settle.ts';
 import { renewLease, releaseLease } from './lease.ts';
 import { loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
 import { advanceLastLap, finishRun, loadDecisions, loadRun, startRun } from './raceRepo.ts';
 import { decisionsForLap, replayRace, type DecisionLogEntry, type RaceSnapshot } from './replay.ts';
+import { loadWeekendChoices } from './weekendChoices.ts';
 
 export interface StartRaceInput {
   lobbyId: string;
@@ -61,17 +63,46 @@ export interface StartedRace {
 }
 
 /**
- * Hafta sonu seçimleri (setup bileşimi, taktik, güvenilirlik, sıralama
- * yaklaşımı) HENÜZ sunucuda saklanmıyor: `lobby_seats`te böyle sütun yok.
- * `server/src/league.ts`in tek ligli sürümünde kullanılan varsayılanlar burada
- * TEK YERDE duruyor ki, o seçimler şemaya geldiğinde değiştirilecek nokta
- * belirsiz kalmasın. Varsayılanlar tarife YAZILDIĞI için bugünkü yarışlar da
+ * Hafta sonu seçimleri (setup bileşimi, taktik, sıralama yaklaşımı) artık
+ * `lobby_seats`te saklanıyor (006_weekend_choices.sql,
+ * `./weekendChoices.ts` `loadWeekendChoices`). Aşağıdaki sabitler seçim
+ * YOKKEN düşülecek varsayılanlar olarak kalır — bir koltuk hiçbir zaman bir
+ * seçim göndermemiş olabilir ve yine de yarışmak ZORUNDADIR (seçimler
+ * OPSİYONELDİR). Varsayılanlar tarife YAZILDIĞI için bugünkü yarışlar da
  * yarınki kodla aynı şekilde oynatılır.
  */
 const DEFAULT_COMPOUND: CompoundKey = 'MEDIUM';
 const DEFAULT_TACTICS: TacticPreset = 'balanced';
 const DEFAULT_RELIABILITY = 0.3;
 const DEFAULT_RISK: QualiRisk = 'safe';
+
+/**
+ * Güvenilirlik OYUNCU SEÇİMİ DEĞİLDİR — `lobby_seats`e hiç yazılmaz — fabrika
+ * seviyelerinden türetilir.
+ *
+ * NEDEN `factoryEffects` KULLANILMIYOR: `shared/src/factory.ts`in
+ * `factoryEffects`i altı alan döndürür (upgradeGainBonus, upgradeCostScale,
+ * upgradeTimeScale, trainingScale, forecastScale, winterFloorBonus) ve
+ * hiçbiri güvenilirlikle ilgili değildir. Yalnızca `factoryDepartments`in
+ * KENDİ AÇIKLAMA METNİ ("ENGINE LAB" → "Güvenilirlik +0,02" seviye başına)
+ * bu etkiyi anlatır; sayı hiçbir hesaba girmiyordu. Silinmiş istemci kodu
+ * bunun yerine ham bir formül kullanıyordu, `min(1, (manufacturing +
+ * engine_lab)/10 + bonus)` — burada TEKRARLANMIYOR, çünkü `manufacturing`in
+ * belgelenen tek etkisi maliyet/süredir (`factoryEffects.upgradeCostScale`/
+ * `upgradeTimeScale`), güvenilirlikle ilişkilendirilmesi şemaya hiç girmeyen
+ * bir sayı icat etmek olurdu. Bunun yerine `factoryDepartments`in belgelediği
+ * TEK sayı kullanılıyor: her ENGINE LAB seviyesi `DEFAULT_RELIABILITY`
+ * üzerine +0,02 ekler.
+ *
+ * IŞIKLAR SÖNERKEN TEK SEFER OKUNUR: `startRaceFor` bu fonksiyonu yalnızca
+ * tarifi kurarken çağırır ve sonucu `entries`e donar — bir sonraki fabrika
+ * yükseltmesi zaten koşmuş bir yarışın güvenilirliğini değiştirmez.
+ */
+const RELIABILITY_PER_ENGINE_LAB_LEVEL = 0.02;
+function reliabilityFor(factoryLevels: Record<string, number | undefined>): number {
+  const engineLab = Math.max(0, factoryLevels['engine_lab'] ?? 0);
+  return Math.min(1, DEFAULT_RELIABILITY + engineLab * RELIABILITY_PER_ENGINE_LAB_LEVEL);
+}
 
 /**
  * Tohumun `(seasonNo, roundNo, lobbyId)` üçlüsünden türetilmesi.
@@ -177,6 +208,12 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
   // katılımın aracını belirler, `pitLaneStarts` grid cezasını.
   const verdict = await evaluateParcFerme(lobbyId, now);
   const seats = await loadSeats(lobbyId);
+  // IŞIKLAR SÖNERKEN TEK SEFER OKUNUR — `managed` ile birebir aynı gerekçeyle
+  // (aşağıdaki "DONAN KARAR" yorumu): bundan sonra satır değişse de bu
+  // yarışı etkilemez, yalnızca BİR SONRAKİ `startRaceFor` çağrısını.
+  const weekendChoices = await loadWeekendChoices(lobbyId);
+  const economies = await loadLobbyEconomy(lobbyId);
+  const factoryLevelsByTeam = new Map(economies.map((e) => [e.teamKey, e.factoryLevels]));
 
   const entries: Entries = {};
   const risks: Record<string, QualiRisk> = {};
@@ -191,24 +228,28 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
     // oyuncu sayfasına almak yerine AI'ya bırakmak dürüst olanıdır.
     if (!pf) continue;
 
+    // Seçim yoksa (koltuk hiç göndermemiş) bugünkü varsayılana düş —
+    // seçimler OPSİYONELDİR, göndermemiş bir koltuk yine de yarışmalıdır.
+    const choices = weekendChoices[seat.teamKey];
     const base: CarSetup = {
       motor: pf.car.motor,
       aero: pf.car.aero,
       grip: pf.car.grip,
-      compound: DEFAULT_COMPOUND,
-      bias: 0,
+      compound: choices?.compound ?? DEFAULT_COMPOUND,
+      bias: choices?.bias ?? 0,
     };
+    const reliability = reliabilityFor(factoryLevelsByTeam.get(seat.teamKey) ?? {});
     entries[seat.teamKey] = {
       // Tezgahta duran geliştirme pişen statı yarıya indirir...
       setup: crippleSetup(base, pf.buildingLabel),
       // ...ve DNF riskini katlar. İkisi birlikte "araç sökük yarışıyor" demek.
-      reliability: pf.crippled ? DEFAULT_RELIABILITY / CRIPPLED_DNF_SCALE : DEFAULT_RELIABILITY,
-      tactics: DEFAULT_TACTICS,
+      reliability: pf.crippled ? reliability / CRIPPLED_DNF_SCALE : reliability,
+      tactics: choices?.tactics ?? DEFAULT_TACTICS,
       // DONAN KARAR: check-in yapan oyuncu kendi yarışını sürer, yapmayanı
       // asistan devralır. Bu, yarış boyunca bir daha SORULMAZ.
       managed: seat.managed,
     };
-    risks[seat.teamKey] = DEFAULT_RISK;
+    risks[seat.teamKey] = choices?.qualiRisk ?? DEFAULT_RISK;
   }
 
   // Cezalı araçların serbest lastiğini burada dolduruyoruz: `parcFerme.ts`
