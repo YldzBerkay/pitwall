@@ -699,6 +699,26 @@ export interface RaceInput {
   session?: 'race' | 'sprint';
   aiBonus?: AiBonus;
   rosters?: Rosters;
+  /**
+   * Pit yolundan başlayan araçlar, `carId` ile. Araç başınadır: bir araç pit
+   * yolundan çıkarken takım arkadaşı grid'deki yerinden normal başlayabilir
+   * (araç geliştirmesi iki aracı da cezalandırır, pilot çalışması yalnız
+   * birini). Alan isteğe bağlıdır; yoksa yarış bugünkü davranışının aynısıdır.
+   */
+  pitLaneStarts?: Record<string, PitLaneStart>;
+}
+
+/**
+ * Parc fermé ihlalinin cezası ve telafisi (bkz. `startRace`).
+ * Boş nesne = ceza var, lastik seçimi değişmedi.
+ */
+export interface PitLaneStart {
+  /**
+   * Telafi: başlangıç lastiği serbest. Motorda normalde başlangıç lastiği
+   * `setup.compound`'dur — yani sıralamada kullanılan lastiğin ta kendisi.
+   * Burada verilen bileşim o kilidi açar.
+   */
+  compound?: CompoundKey;
 }
 
 /** A pit call for one player car this lap. */
@@ -717,20 +737,45 @@ const GRID_GAP_SEC = 0.35;
 /** Amplitude of a car's race-long form, seconds per lap (`bell`, so sd ≈ a third of this). */
 const FORM_SEC = 1.0;
 
+/**
+ * ── Pit yolundan başlangıç ────────────────────────────────────────────────
+ * Gerçek F1 kuralı: takım parc fermé'yi bozup araca dokunduğunda araç GRİD
+ * YERİNİ KAYBEDER. Grid'e dizilmez; pit çıkışında bekler ve saha tamamen
+ * geçtikten sonra salınır.
+ *
+ * Bu "sondan başlamak" DEĞİLDİR ve ondan daha kötüdür: son gridçi ışıklarla
+ * birlikte kalkar, pit yolundaki araç ise saha önünden akıp gittikten sonra,
+ * üstüne bir de pit yolu transitini (`track.pitLaneSec`) ödeyerek katılır.
+ * Bu yüzden ceza aşağıda "son slot + bir sıra + pitLaneSec" olarak kurulur.
+ * Lütfen bunu "en sondan başlar"a sadeleştirmeyin: bütün mesele, cezanın
+ * grid sırasından bağımsız ve piste göre değişen bir ZAMAN kaybı olması.
+ * Karşılığındaki iki telafi de gerçektir: sınırsız setup ve — motorda
+ * `PitLaneStart.compound` ile — serbest başlangıç lastiği.
+ */
 export function startRace(input: RaceInput): RaceState {
   const wet = input.weather.wetAtStart;
   const random = rng(input.seed * 7717 + input.round * 131 + 7);
-  const cars: CarState[] = input.grid.map((entry, i) => {
+  const penalties = input.pitLaneStarts;
+  const penaltyOf = (entry: GridEntry): PitLaneStart | undefined => penalties?.[carId(entry)];
+  // Grid yerini kaybedenler sahanın arkasına alınır; gerisi sırasını korur.
+  const grid = penalties
+    ? [...input.grid.filter((e) => !penaltyOf(e)), ...input.grid.filter((e) => penaltyOf(e))]
+    : input.grid;
+  const cars: CarState[] = grid.map((entry, i) => {
     const isPlayer = isPlayerEntry(entry);
     const own = input.entries[entry.teamKey];
+    const penalty = penaltyOf(entry);
+    // Cezalılar zaten sahanın arkasına dizildi; üstüne pit yolu transiti.
+    // Birden fazla cezalı varsa aralarında normal grid mesafesi kalır.
+    const totalSec = i * GRID_GAP_SEC + (penalty ? input.track.pitLaneSec : 0);
     return {
       ...entry,
       gridPosition: i + 1,
       position: i + 1,
-      totalSec: i * GRID_GAP_SEC,
+      totalSec,
       lastLapSec: 0,
       bestLapSec: Infinity,
-      compound: own ? own.setup.compound : aiCompound(wet),
+      compound: penalty?.compound ?? (own ? own.setup.compound : aiCompound(wet)),
       wear: 0,
       stops: 0,
       pitting: false,
