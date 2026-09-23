@@ -846,3 +846,22 @@ Bunlar uygulama ve inceleme sırasında keşfedildi; ilgili görevin promptuna g
   istemci sebepsiz yere anlaşamaz.
 - Şemada tur sayacı yok; koşucu turu `floor((now - started_at) / tickMs)` ile
   türetiyor. Bu, çökme sonrası devamı mümkün kılan şey ve bedava yetişme veriyor.
+
+### Planın atladığı görev: süpürme döngüsünün bağlanması
+
+Görev 6 koşucuyu, Görev 7 odaları, Görev 12 muhasebeyi üretiyor — ama hiçbiri
+`index.ts`'te bir döngüye bağlı değil. `openRace` yalnızca testlerden çağrılıyor,
+`hub.publish` hiç çağrılmıyor. Planda bu Görev 6'nın içinde örtük kalmıştı.
+
+Ayrı bir görev olarak yazılmalı: periyodik süpürme — `advanceDuePhases` (kirasız,
+idempotent) → `acquireDueLobbies` → her lobi için `tick` → `hub.publish` → bayrakta
+`settle` + `releaseLease`. Süreç kapanırken kiralar bırakılmalı.
+
+### Görev 7'den çıkanlar
+
+- **WebSocket el sıkışması header taşıyamıyor** (tarayıcı/RN API sınırı), bu yüzden
+  token ilk uygulama mesajında gidiyor — aynı `verifySession`. `?token=` bilerek
+  elendi: oturum anahtarı URL'de erişim loglarına ve `Referer`'a sızar.
+- `ws` `{server, path}` ile kurulunca eşleşmeyen upgrade'i **iptal ediyor**; aynı
+  HTTP sunucusunda iki tanesi birbirini öldürür. İkisi de `noServer: true`.
+- Canlı yayın `last_lap`'e hizalı, saate değil.
