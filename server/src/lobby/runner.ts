@@ -23,6 +23,7 @@
  * bitti mi" sorusu da aynı `now`a bakar, yani tek bir ana göre karar verilir.
  */
 import {
+  advanceLap,
   crippleSetup,
   finishRace,
   weatherFor,
@@ -31,6 +32,7 @@ import {
   type Entries,
   type PitLaneStart,
   type QualiRisk,
+  type RaceState,
   type TacticPreset,
   type WeatherPlan,
 } from '@pitwall/shared/raceEngine';
@@ -38,11 +40,12 @@ import type { CompoundKey } from '@pitwall/shared/carCustomisation';
 import { trackForRound } from '@pitwall/shared/tracks';
 import { freshStandings } from '@pitwall/shared/season';
 import type { TeamStanding } from '@pitwall/shared/teams';
-import { withTransaction } from '../db/pool.ts';
+import { query, withTransaction } from '../db/pool.ts';
+import { renewLease, releaseLease } from './lease.ts';
 import { loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
-import { loadDecisions, loadRun, startRun } from './raceRepo.ts';
-import { replayRace, type RaceSnapshot } from './replay.ts';
+import { finishRun, loadDecisions, loadRun, startRun } from './raceRepo.ts';
+import { decisionsForLap, replayRace, type DecisionLogEntry, type RaceSnapshot } from './replay.ts';
 
 export interface StartRaceInput {
   lobbyId: string;
@@ -232,4 +235,210 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
   );
 
   return { seed, snapshot };
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * TİK DÖNGÜSÜ — yarışı ileri süren taraf.
+ *
+ * NEDEN DURUM BELLEKTE, YENİDEN OYNATMA SADECE KURTARMADA:
+ * Her tikte tarifi baştan oynatmak DOĞRU sonucu verir ama maliyeti turların
+ * KARESİDİR: bu depoda ölçüldü, 70. tura oynatma ~0.8 ms ve tur başına ~11 µs.
+ * Yani 78 turluk bir yarış, her tikte baştan oynatılırsa lobi başına ~33 ms
+ * CPU eder; durumu bellekte tutup tik başına tek `advanceLap` çağırmak ~0.9 ms.
+ * 300 eşzamanlı lobide fark, tik turu başına ~0.25 saniyedir — yani tik
+ * aralığının onda biri, tek bir işi yeniden yapmak için.
+ *
+ * Bu yüzden: BELLEKTEKİ `RaceState` KARARLI YOLDUR, yeniden oynatma KURTARMA
+ * yoludur (çökme sonrası devam, geç bağlanan istemci). Buradaki döngüyü "her
+ * tikte `replayRace` çağır, daha basit" diye sadeleştirmek ölçülmüş bir
+ * gerilemedir. İkisinin AYNI yarışı vermesi tesadüf değil, koşuludur:
+ * `advanceLap` rastgeleliğini `(seed, round, lap)` üçlüsünden çeker ve her iki
+ * yol da aynı `decisionsForLap` yardımcısını kullanır.
+ *
+ * NEDEN TUR SAYACI DA SAKLANMIYOR:
+ * "Kaçıncı turdayız" bir DURUMDUR ve saklansaydı tarifin dışında ikinci bir
+ * gerçek kaynağı olurdu. Onun yerine yarış SAATTEN türetilir:
+ * `tur = (now - started_at) / RACE_TICK_MS`. Böylece çöken bir süreç, geri
+ * geldiğinde nerede olması GEREKTİĞİNİ hesaplar; kaçırdığı turları tek tikte
+ * yetişerek kapatır ve oyuncular donmuş bir ekran yerine hızlanmış bir yarış
+ * görür. Saat `now` ile çağırandan gelir (server/README.md §"now sadece
+ * route'ta örneklenir"), yani test gerçek zamanlıyıcı beklemeden sürebilir.
+ *
+ * NEDEN `entries`/`standings` ASLA DEĞİŞTİRİLMEZ:
+ * `startRace` bunları REFERANSLA saklar (`state.entries === snapshot.entries`).
+ * Burada mutasyon yapmak tarifi bozardı ve bozulan tarif, o yarışı bundan
+ * sonra oynatan HERKESE başka bir yarış gösterirdi. `advanceLap` saf; bu modül
+ * de yalnızca döndürdüğü yeni durumu tutar.
+ */
+
+/**
+ * Bir yarış turunun gerçek zamandaki uzunluğu.
+ *
+ * `src/index.ts`in TICK_MS'iyle aynı varsayılan: tik başına bir tur. Sabit
+ * BURADA duruyor çünkü yarışın turu artık zamanlayıcının sıklığından değil
+ * SAATTEN türüyor — iki sayı ayrışırsa yarış, ekranda hızlanır ya da yavaşlar
+ * ama çökme sonrası HEP saatin dediği yere döner. `tickMs` yine de koşucuya
+ * geçirilebilir ki test ve ileride lobiye özel hızlar tek yerden ayarlansın.
+ */
+export const RACE_TICK_MS = 2_500;
+
+export interface OpenRaceInput {
+  lobbyId: string;
+  seasonNo: number;
+  roundNo: number;
+  /** Kirayı tutan süreç kimliği; `acquireDueLobbies`e verilenin aynısı. */
+  ownerId: string;
+  now: Date;
+  tickMs?: number;
+}
+
+export interface TickResult {
+  /** `false`: kira bizde değil — çağıran bu koşucuyu BIRAKMALIDIR. */
+  owned: boolean;
+  /** Bu tikte koşulan tur sayısı (yetişme sırasında birden çok olabilir). */
+  advanced: number;
+  finished: boolean;
+  state: RaceState;
+}
+
+export interface OpenedRace {
+  readonly lobbyId: string;
+  readonly seasonNo: number;
+  readonly roundNo: number;
+  readonly ownerId: string;
+  /** O anki yarış. Çağıran BUNU DEĞİŞTİRMEZ — tarifin nesneleri paylaşılıyor. */
+  readonly state: RaceState;
+  tick(now: Date): Promise<TickResult>;
+}
+
+/** Yarış saatinin dediği tur. Negatife düşmez: ışıklar sönmeden tur koşulmaz. */
+function lapForClock(now: Date, startedAt: Date, tickMs: number): number {
+  return Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / tickMs));
+}
+
+class RaceRunner implements OpenedRace {
+  private current: RaceState;
+  /** Bayrak işlendi mi — `finished_at` ve evre iki kez yazılmasın. */
+  private flagged = false;
+
+  constructor(
+    readonly lobbyId: string,
+    readonly seasonNo: number,
+    readonly roundNo: number,
+    readonly ownerId: string,
+    private readonly startedAt: Date,
+    private readonly tickMs: number,
+    state: RaceState,
+  ) {
+    this.current = state;
+  }
+
+  get state(): RaceState {
+    return this.current;
+  }
+
+  async tick(now: Date): Promise<TickResult> {
+    // KİRA ÖNCE: sahipliği kaybetmiş bir süreç tek bir tur bile koşmamalıdır.
+    // Aynı yarışı iki süreç sürerse iki ayrı yayın doğar ve "herkes aynı
+    // yarışı görür" şartı tam da orada kırılır. `renewLease` kararı UPDATE'in
+    // kendi `where`inde verir; burada bir `select` ile önceden sormak
+    // kontrol-sonra-davran yarışı olurdu.
+    if (this.flagged || !(await renewLease(this.ownerId, this.lobbyId, now))) {
+      return { owned: false, advanced: 0, finished: this.current.finished, state: this.current };
+    }
+
+    const track = trackForRound(this.roundNo);
+    const target = Math.min(lapForClock(now, this.startedAt, this.tickMs), this.current.laps);
+    let advanced = 0;
+
+    if (!this.current.finished && target > this.current.lap) {
+      // Günlük HER TİKTE yeniden okunur: az önce yazılmış bir pit çağrısı, etki
+      // ettiği tur koşulmadan önce görünmek zorunda. Koşulmuş bir tura ait geç
+      // bir satır ise doğal olarak etkisizdir — o tur bir daha koşulmaz, yani
+      // karar geriye dönük uygulanamaz.
+      const decisions: DecisionLogEntry[] = await loadDecisions(this.lobbyId, this.seasonNo, this.roundNo);
+      while (!this.current.finished && this.current.lap < target) {
+        const lap = this.current.lap + 1;
+        // Yeniden oynatmayla AYNI yardımcı: iki kopya olsa ayrışabilirlerdi.
+        this.current = advanceLap(this.current, track, decisionsForLap(decisions, lap));
+        advanced += 1;
+      }
+    }
+
+    if (this.current.finished) await this.flag(now);
+    return { owned: true, advanced, finished: this.current.finished, state: this.current };
+  }
+
+  /**
+   * Damalı bayrak: koşu damgalanır, lobi `result` evresine geçer, kira bırakılır.
+   *
+   * Damga ile evre TEK işlemde: ikisi ayrılsaydı arada çöken bir süreç ya
+   * bitmiş ama hâlâ `live` görünen bir lobi ya da damgasız bir `result`
+   * bırakırdı — ikisi de tarama döngüsünü yanlış yola sokar.
+   *
+   * Evre güncellemesinin `phase = 'live'` koşulu kasıtlı: lobiyi bu arada
+   * başkası ilerletmişse (ya da sezon ilerlemesi devralmışsa) onun yazdığını
+   * ezmeyiz. Ödeme (`markSettled`) burada YOK; o ayrı bir görevin işi.
+   */
+  private async flag(now: Date): Promise<void> {
+    if (this.flagged) return;
+    this.flagged = true;
+    await withTransaction(async (client) => {
+      await finishRun(client, this.lobbyId, this.seasonNo, this.roundNo, now);
+      await client.query(
+        `update lobbies set phase = 'result' where id = $1 and phase = 'live'`,
+        [this.lobbyId],
+      );
+    });
+    // Kirayı gönüllü bırakmak, sıradaki taramanın 15 sn beklemesini önler.
+    await releaseLease(this.ownerId, this.lobbyId);
+  }
+}
+
+interface PhaseRow {
+  phase: string;
+}
+
+/**
+ * Bir lobinin yarışını açar: tarifi bulur (yoksa ışıkları söndürür) ve yarış
+ * saatinin dediği tura kadar oynatarak belleğe alır.
+ *
+ * NEDEN EVRE VERİTABANINDAN OKUNUYOR:
+ * "Bu lobi yarışıyor" kararı, kendi `advanceDuePhases` çağrımızın dönüşüne
+ * DAYANDIRILAMAZ. O fonksiyon kirasız ve etkisiz-tekrarlanabilir; lobiyi
+ * `live`e taşıyan pekâlâ BAŞKA bir süreç olabilir ve o zaman bizim dönüşümüz
+ * boş gelir. Dönüşe bakan bir koşucu, komşusunun ilerlettiği yarışları sessizce
+ * atlardı. Otorite satırdır: `phase = 'live'` ise yarış vardır.
+ *
+ * `null`: bu lobide sürülecek yarış yok (evre `live` değil).
+ */
+export async function openRace(input: OpenRaceInput): Promise<OpenedRace | null> {
+  const { lobbyId, seasonNo, roundNo, ownerId, now } = input;
+  const tickMs = input.tickMs ?? RACE_TICK_MS;
+
+  const phase = await query<PhaseRow>('select phase from lobbies where id = $1', [lobbyId]);
+  if (phase.rows[0]?.phase !== 'live') return null;
+
+  // Tarif yoksa ışıklar bu an söner ve yarış saati de bu andan başlar.
+  // İki süreç aynı anda denerse ikincisi `race_runs_pk`ten FIRLAR; bu beklenen
+  // bir yarış değil, kiralamada bir hatadır ve görünmesi gerekir.
+  let run = await loadRun(lobbyId, seasonNo, roundNo);
+  if (!run) {
+    const started = await startRaceFor({ lobbyId, seasonNo, roundNo, now });
+    run = { seed: started.seed, snapshot: started.snapshot, startedAt: now, finishedAt: null };
+  }
+
+  const decisions = await loadDecisions(lobbyId, seasonNo, roundNo);
+  // KURTARMA YOLU: buraya kadar olan her şey tarife göre yeniden üretilir.
+  // Bundan sonrası bellekten yürür (yukarıdaki docblock'a bakın).
+  const state = replayRace({
+    seed: run.seed,
+    round: roundNo,
+    snapshot: run.snapshot,
+    decisions,
+    uptoLap: lapForClock(now, run.startedAt, tickMs),
+  });
+
+  return new RaceRunner(lobbyId, seasonNo, roundNo, ownerId, run.startedAt, tickMs, state);
 }
