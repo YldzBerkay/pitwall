@@ -14,10 +14,25 @@
 
 ## DURUM
 
-**Bitti:** Görev 1 (`1ae9e64`+`4cea7a9`), 2 (`af9b25e`), 3 (`e8794ff`), 4 (`55cd387`),
-5 (hafta sonu tercihleri), 7 (`1559deb` — ölü lig dilimi silindi).
-**Kısmen:** Görev 6 (`33ad8de`) — pit yolu sunucuya bağlandı, yerel motor DURUYOR.
-**Sırada:** aşağıdaki yeniden planlama.
+**AŞAMA 1 KAPANDI.** Sunucu 567/567, mobil 42/42, üç tip denetimi temiz,
+`npm run econ` geçiyor, `npm test` dış sarmalayıcı olmadan bitiyor.
+
+Görev 1 (`1ae9e64`+`4cea7a9`) · 2 (`af9b25e`) · 3 (`e8794ff`) · 4 (`55cd387`) ·
+5 (hafta sonu tercihleri) · 7 (`1559deb`) · yayın zenginleştirmesi (`3b7c8b3`) ·
+8 (`7de4f9b` — uçtan uca test + dokümantasyon).
+**Kısmen:** Görev 6 (`33ad8de`) — pit yolu canlı, yerel motor DURUYOR (aşağıya bak).
+
+### Aşama 2'ye girmeden önce KARAR gerekiyor
+
+Sunucu ızgarayı `startRaceFor` içinde türetiyor ve dışa vermiyor; istemcinin
+`weekend.qualifying`'i ise `settleRaceWeekend`'in ön koşulu. İki yol var:
+
+- **Sunucu sıralama sonucunu yayınlasın** — çevrimiçi hafta sonunda sıralama
+  seansı kalır, oyuncu ızgarasını görür.
+- **Çevrimiçi hafta sonundan sıralama kalksın** — ızgara sunucunun içinde kalır,
+  oyuncu doğrudan yarışa gelir.
+
+Bu oyunun nasıl oynandığını değiştirir; kullanıcıya sorulmadan seçilmemeli.
 
 ### PLAN HATASI — Görev 6 Aşama 1'de bitemez
 
