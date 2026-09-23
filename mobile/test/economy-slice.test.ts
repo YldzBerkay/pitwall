@@ -75,7 +75,7 @@ test('a successful action lands the whole SlotState in the store, serverNow incl
   };
 
   const store = buildStore({ startUpgradeApi });
-  const outcome = await store.getState().startUpgrade(LOBBY_ID, 'motor');
+  const outcome = await store.getState().economyApi.startUpgrade(LOBBY_ID, 'motor');
 
   assert.deepEqual(outcome, { ok: true, state: slotState });
   assert.deepEqual(capturedArgs, [BASE_URL, TOKEN, { lobbyId: LOBBY_ID, label: 'motor' }]);
@@ -92,7 +92,7 @@ test('a failed action reports the server\'s own distinct code without touching t
   const claimUpgradeApi = async (): Promise<ApiResult<SlotState>> => ({ ok: false, status: 409, error: 'not_ready' });
   const store = buildStore({ claimUpgradeApi });
 
-  const outcome = await store.getState().claimUpgrade(LOBBY_ID, 'job-1');
+  const outcome = await store.getState().economyApi.claimUpgrade(LOBBY_ID, 'job-1');
 
   assert.deepEqual(outcome, { ok: false, error: 'not_ready' });
   assert.equal(store.getState().economyApi.slot, null, 'a failed call must not fabricate a slot');
@@ -103,7 +103,7 @@ test('a different failure code (cap_reached) is reported distinctly from not_eno
   const convertGoldToRpApi = async (): Promise<ApiResult<SlotState>> => ({ ok: false, status: 409, error: 'cap_reached' });
   const store = buildStore({ convertGoldToRpApi });
 
-  const outcome = await store.getState().convertGoldToRp(LOBBY_ID, 4);
+  const outcome = await store.getState().economyApi.convertGoldToRp(LOBBY_ID, 4);
 
   assert.deepEqual(outcome, { ok: false, error: 'cap_reached' });
   assert.notEqual((outcome as { error: string }).error, 'not_enough_rp');
@@ -117,7 +117,7 @@ test('with no session, the call is refused locally and no request is ever sent',
   };
   const store = buildStore({ startTrainingApi }, { baseUrl: BASE_URL, token: undefined });
 
-  const outcome = await store.getState().startTraining(LOBBY_ID, 0);
+  const outcome = await store.getState().economyApi.startTraining(LOBBY_ID, 0);
 
   assert.deepEqual(outcome, { ok: false, error: 'not_signed_in' });
   assert.equal(called, false, 'no request may be sent without a session');
@@ -137,7 +137,7 @@ test('remainingMsFor reads the stored anchor, not Date.now()', async () => {
   const startUpgradeApi = async (): Promise<ApiResult<SlotState>> => ({ ok: true, data: slotState });
 
   const store = buildStore({ startUpgradeApi, clock });
-  await store.getState().startUpgrade(LOBBY_ID, 'motor');
+  await store.getState().economyApi.startUpgrade(LOBBY_ID, 'motor');
 
   const { economyApi } = store.getState();
   assert.equal(remainingMsFor(economyApi, job, clock), 5 * 3_600_000);

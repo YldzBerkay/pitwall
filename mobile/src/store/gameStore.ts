@@ -87,6 +87,7 @@ import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice'
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
 import { createRaceSlice, type RaceSlice } from './slices/raceSlice';
+import { createEconomyApiSlice, type EconomyApiSlice } from './slices/economyApiSlice';
 import type { StatKey } from '@pitwall/shared/driverMarket';
 
 /** Stat label on the garage card → engine key. */
@@ -370,7 +371,16 @@ interface CoreState {
   paddockNews: string[];
 }
 
-export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & SettingsSlice & AuthSlice & LobbySlice & RaceSlice;
+export type GameState = CoreState &
+  EconomySlice &
+  StaffSlice &
+  EspionageSlice &
+  DriverSlice &
+  SettingsSlice &
+  AuthSlice &
+  LobbySlice &
+  RaceSlice &
+  EconomyApiSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
@@ -392,6 +402,7 @@ export const useGameStore = create<GameState>()(
   ...createAuthSlice(set, get),
   ...createLobbySlice(set, get),
   ...createRaceSlice(set, get),
+  ...createEconomyApiSlice(set, get),
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},

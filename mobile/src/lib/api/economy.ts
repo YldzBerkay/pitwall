@@ -32,9 +32,11 @@
  */
 import { request, type ApiResult } from './identity';
 
-const jsonAuth = (token: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${token}` });
+const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+const jsonAuth = (token: string) => ({ 'content-type': 'application/json', ...auth(token) });
 
 const ECONOMY_ACTION_PATH = '/economy/action';
+const ECONOMY_STATE_PATH = '/economy/state';
 
 const post = (baseUrl: string, token: string, body: Record<string, unknown>): Promise<ApiResult<SlotState>> =>
   request<SlotState>(baseUrl, ECONOMY_ACTION_PATH, { method: 'POST', headers: jsonAuth(token), body: JSON.stringify(body) });
@@ -146,4 +148,20 @@ export function upgradeFactory(baseUrl: string, token: string, input: { lobbyId:
 
 export function convertGoldToRp(baseUrl: string, token: string, input: { lobbyId: string; gold: number }): Promise<ApiResult<SlotState>> {
   return post(baseUrl, token, { type: 'convertGoldToRp', lobbyId: input.lobbyId, gold: input.gold });
+}
+
+/**
+ * `GET /economy/state?lobbyId=` — the read-only counterpart to every action
+ * above (`server/src/economy/routes.ts`'s own doc comment). Returns the
+ * WHOLE `SlotState`, `serverNow` included, exactly like a mutating call —
+ * this is how a screen opened cold learns the player's state without
+ * having to fire a mutation just to read one back. Mutates nothing on the
+ * server: proven by that route calling neither `runAction` nor any
+ * mutating repo function.
+ */
+export function getEconomyState(baseUrl: string, token: string, input: { lobbyId: string }): Promise<ApiResult<SlotState>> {
+  return request<SlotState>(baseUrl, `${ECONOMY_STATE_PATH}?lobbyId=${encodeURIComponent(input.lobbyId)}`, {
+    method: 'GET',
+    headers: auth(token),
+  });
 }
