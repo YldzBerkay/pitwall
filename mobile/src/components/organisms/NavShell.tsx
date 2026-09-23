@@ -52,7 +52,7 @@ export function NavShell({ state, navigation }: TabBarProps) {
   const gold = useGameStore((s) => s.gold);
   const authUser = useGameStore((s) => s.auth.user);
   const logout = useGameStore((s) => s.logout);
-  const league = useGameStore((s) => s.league);
+  const raceConnected = useGameStore((s) => s.race.status === 'connected');
   const [menuOpen, setMenuOpen] = useState(false);
   const [lobbyOpen, setLobbyOpen] = useState(false);
 
@@ -157,10 +157,10 @@ export function NavShell({ state, navigation }: TabBarProps) {
                     setLobbyOpen(true);
                   }}
                   className="h-11 flex-row items-center justify-center rounded-full"
-                  style={{ paddingHorizontal: 14, gap: 8, backgroundColor: league.connected ? colors.accentSoft : 'transparent' }}
+                  style={{ paddingHorizontal: 14, gap: 8, backgroundColor: raceConnected ? colors.accentSoft : 'transparent' }}
                 >
-                  <PulseDot color={league.connected ? colors.matrixGreen : colors.textTertiary} size={8} periodMs={1400} />
-                  <AppText variant="labelSmall" color={league.connected ? colors.accentLime : colors.textSecondary} style={styles.tabLabel}>
+                  <PulseDot color={raceConnected ? colors.matrixGreen : colors.textTertiary} size={8} periodMs={1400} />
+                  <AppText variant="labelSmall" color={raceConnected ? colors.accentLime : colors.textSecondary} style={styles.tabLabel}>
                     Lobi
                   </AppText>
                 </Pressable>
@@ -222,9 +222,9 @@ export function NavShell({ state, navigation }: TabBarProps) {
                     setLobbyOpen(true);
                   }}
                   className="items-center justify-center rounded-full"
-                  style={{ width: layout.navItemSize, height: layout.navItemSize, backgroundColor: league.connected ? colors.accentSoft : 'transparent' }}
+                  style={{ width: layout.navItemSize, height: layout.navItemSize, backgroundColor: raceConnected ? colors.accentSoft : 'transparent' }}
                 >
-                  <Icon name="league" size={19} color={league.connected ? colors.accentLime : colors.textSecondary} />
+                  <Icon name="league" size={19} color={raceConnected ? colors.accentLime : colors.textSecondary} />
                 </Pressable>
               </>
             ) : (

@@ -23,7 +23,7 @@ import type { SliceGet, SliceSet } from './types';
  * The slice that sits between the server's race clients
  * (`lib/api/race.ts`, `lib/api/raceSocket.ts`) and the screens. Wired into
  * `gameStore.ts`/`GameState` via `...createRaceSlice(set, get)`, the same
- * pattern `lobbySlice.ts`/`leagueSlice.ts` use.
+ * pattern `lobbySlice.ts` uses.
  *
  * ── NO LOCAL FALLBACK, NO QUEUE ───────────────────────────────────────────
  * Mirrors the two load-bearing decisions already made in `raceSocket.ts`:

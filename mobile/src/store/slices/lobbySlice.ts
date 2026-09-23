@@ -221,11 +221,10 @@ export const createLobbySlice: SliceCreator<LobbySlice> = (set, get) => {
       const slot = get().lobby.slots.find((s) => s.slotIndex === slotIndex);
       if (!slot?.lobby) return;
       set((s) => ({ lobby: { ...s.lobby, activeSlotIndex: slotIndex } }));
-      // The live race room is still the single legacy league on the server
-      // (`server/src/league.ts`); Faz 3 gives every lobby its own. What the
-      // active slot decides TODAY is which team this device drives, which
-      // used to be a hard-coded constant.
-      void get().connectLeague(get().auth.baseUrl, slot.lobby.teamKey ?? undefined);
+      // Subscribe to this lobby's own live race room (`raceSlice.ts`'s
+      // `connectRace`) — the per-lobby replacement for the old single
+      // global league.
+      get().connectRace(slot.lobbyId ?? slot.lobby.id);
     },
   };
 };

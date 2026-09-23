@@ -33,7 +33,7 @@ export function LiveRacePanel() {
   const queuePit = useGameStore((s) => s.queuePit);
   const settleRaceWeekend = useGameStore((s) => s.settleRaceWeekend);
   const finishSprint = useGameStore((s) => s.finishSprint);
-  const leagueLive = useGameStore((s) => s.league.connected && s.league.state?.phase === 'live');
+  const leagueLive = useGameStore((s) => s.race.status === 'connected');
   const track = useGameStore((s) => s.track());
   const colorblindMode = useGameStore((s) => s.colorblindMode);
   const semantic = semanticColors(colorblindMode);

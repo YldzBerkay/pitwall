@@ -222,8 +222,8 @@ function CountryPicker({
  * Faz 1b: the server's account system (Google/Apple/e-posta, takma ad,
  * bölge — all built and tested, see `docs/FEATURES.md`) wired into the
  * client. Only e-posta+şifre is live end to end here; social buttons are
- * shown but disabled (see `SocialRow`). Signed in, this account's id also
- * becomes the online league's `managerId` (`leagueSlice.effectiveManagerId`).
+ * shown but disabled (see `SocialRow`). Signed in, this account's id is what
+ * ties its lobby seats and race sessions back to it server-side.
  */
 export function AuthScreen() {
   const shell = useShellLayout();

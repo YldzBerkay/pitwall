@@ -83,7 +83,6 @@ import { createEconomySlice, type EconomySlice } from './slices/economySlice';
 import { createStaffSlice, type StaffSlice } from './slices/staffSlice';
 import { createEspionageSlice, type EspionageSlice } from './slices/espionageSlice';
 import { INJURY_ROUNDS, createDriverSlice, type DriverSlice } from './slices/driverSlice';
-import { createLeagueSlice, type LeagueSlice } from './slices/leagueSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
@@ -316,8 +315,7 @@ interface CoreState {
   runQualifying: () => void;
   /** @deprecated no screen calls this anymore — `setQualiCompound` sets
    * `weekend.raceCompound` too. Left in place only so nothing else that
-   * references the action breaks; `weekend.raceCompound` itself is still
-   * read by `leagueSlice.ts` and stays in sync via `setQualiCompound`. */
+   * references the action breaks. */
   setRaceCompound: (key: CompoundKey) => void;
   setTactics: (tactics: TacticPreset) => void;
   /** Lights out: build the race state from the grid and start the clock. */
@@ -372,7 +370,7 @@ interface CoreState {
   paddockNews: string[];
 }
 
-export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & LeagueSlice & SettingsSlice & AuthSlice & LobbySlice & RaceSlice;
+export type GameState = CoreState & EconomySlice & StaffSlice & EspionageSlice & DriverSlice & SettingsSlice & AuthSlice & LobbySlice & RaceSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
@@ -390,7 +388,6 @@ export const useGameStore = create<GameState>()(
   ...createStaffSlice(set, get),
   ...createEspionageSlice(set, get),
   ...createDriverSlice(set, get),
-  ...createLeagueSlice(set, get),
   ...createSettingsSlice(set, get),
   ...createAuthSlice(set, get),
   ...createLobbySlice(set, get),
@@ -702,9 +699,6 @@ export const useGameStore = create<GameState>()(
   },
 
   queuePit: (driverIdx, decision) => {
-    // Online: the server owns the race, so the call goes there and the local
-    // pending list only mirrors it for the button state.
-    if (get().isLeagueLive()) void get().leaguePit(driverIdx, decision?.compound ?? null);
     set((state) => {
       const pending: PlayerDecisions = [state.weekend.pending[0], state.weekend.pending[1]];
       pending[driverIdx] = decision;
