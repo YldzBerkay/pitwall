@@ -7,6 +7,7 @@
  *   GET  /state                       public league state
  *   POST /join     {teamKey, managerId}
  *   POST /weekend  {teamKey, managerId, setup?, tactics?, risk?, reliability?}
+ *   POST /race/checkin {lobbyId} · POST /race/pit {lobbyId, driverIdx, compound, lap?}
  *   POST /checkin  {teamKey, managerId}          only inside the window
  *   POST /pit      {teamKey, managerId, driverIdx, compound|null}
  *   WS   /live                        {type:'phase'|'lap'|'result', ...} as they happen
@@ -24,6 +25,7 @@ import { registerIdentityRoutes } from './identity/routes.ts';
 import { registerLobbyRoutes } from './lobby/routes.ts';
 import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
+import { registerCheckinRoutes } from './lobby/checkin.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
@@ -41,6 +43,11 @@ registerIdentityRoutes(identityRouter);
 registerLobbyRoutes(identityRouter);
 registerGoldRoutes(identityRouter);
 registerEconomyRoutes(identityRouter);
+// Lobi yarışı: check-in ve canlı pit çağrısı. Yollar `/race/...` çünkü
+// aşağıdaki ESKİ tek ligli `/checkin` ve `/pit` uçları hâlâ ayakta ve
+// yönlendirici onlardan önce çalışıyor — aynı adı almak eskisini sessizce
+// gölgelerdi (eski uçların kaldırılması ayrı bir görev).
+registerCheckinRoutes(identityRouter);
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
