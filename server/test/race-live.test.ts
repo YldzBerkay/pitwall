@@ -316,4 +316,81 @@ describe('per-lobby live race rooms', () => {
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     hub.publish(race.lobbyId, ticked.state);
   });
+
+  // ── 7. Yayın hava durumu taşır ────────────────────────────────────────────
+
+  it('a broadcast frame carries weather and its forecast content survives intact', async () => {
+    const race = await liveRace('weather', 0);
+    const client = await connect();
+    await subscribe(client, race.lobbyId, race.token);
+
+    const ticked = await race.runner.tick(at(race.startedAt, 2));
+    hub.publish(race.lobbyId, ticked.state);
+    const lap = await client.next();
+
+    assert.ok(lap.race.weather, 'yayın hava planını taşımıyor');
+    assert.deepEqual(lap.race.weather, ticked.state.weather);
+    assert.equal(typeof lap.race.weather.forecast, 'number');
+    assert.equal(lap.race.weather.forecast, ticked.state.weather.forecast);
+
+    await client.close();
+  });
+
+  // ── 8. Yayın nötralizasyon durumunu taşır ─────────────────────────────────
+
+  it('a broadcast frame carries neutralised state when present, and behaves sensibly when absent', async () => {
+    const race = await liveRace('neutral', 0);
+    const client = await connect();
+    await subscribe(client, race.lobbyId, race.token);
+
+    const ticked = await race.runner.tick(at(race.startedAt, 2));
+    hub.publish(race.lobbyId, ticked.state);
+    const lap = await client.next();
+
+    // `neutralised` opsiyonel: yeşil bayrakta yok. Frame yine de alanı
+    // devlet nesnesiyle BİREBİR eşleşmeli — ne icat etmeli ne yutmalı.
+    assert.deepEqual(lap.race.neutralised, ticked.state.neutralised);
+    if (ticked.state.neutralised) {
+      assert.equal(typeof ticked.state.neutralised.untilLap, 'number');
+    }
+
+    await client.close();
+  });
+
+  // ── 9. Tarif nesneleri yayına SIZMAZ ──────────────────────────────────────
+
+  it('the frame does not carry standings, entries or rosters', async () => {
+    const race = await liveRace('leak-recipe', 0);
+    const client = await connect();
+    await subscribe(client, race.lobbyId, race.token);
+
+    const ticked = await race.runner.tick(at(race.startedAt, 2));
+    hub.publish(race.lobbyId, ticked.state);
+    const lap = await client.next();
+
+    assert.equal('standings' in lap.race, false, 'yayın standings taşıyor — tarif sızıyor');
+    assert.equal('entries' in lap.race, false, 'yayın entries taşıyor — tarif sızıyor');
+    assert.equal('rosters' in lap.race, false, 'yayın rosters taşıyor — tarif sızıyor');
+
+    await client.close();
+  });
+
+  // ── 10. serialise() aldığı durumu DEĞİŞTİRMEZ ─────────────────────────────
+
+  it('serialise() (via publish) does not mutate the state it was given', async () => {
+    const race = await liveRace('no-mutate', 0);
+    const client = await connect();
+    await subscribe(client, race.lobbyId, race.token);
+
+    const ticked = await race.runner.tick(at(race.startedAt, 2));
+    // `structuredClone`: JSON tur-turu `undefined` alanları (örn. `neutralised`)
+    // sessizce düşürür ve karşılaştırmayı yanlış pozitif kırar.
+    const before = structuredClone(ticked.state);
+    hub.publish(race.lobbyId, ticked.state);
+    await client.next();
+
+    assert.deepEqual(ticked.state, before, 'serialise() paylaşılan durumu değiştirdi');
+
+    await client.close();
+  });
 });

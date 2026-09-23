@@ -84,6 +84,8 @@ interface SerialisedRace {
   events: RaceState['events'];
   control: RaceState['control'];
   fastestLap: RaceState['fastestLap'];
+  weather: RaceState['weather'];
+  neutralised: RaceState['neutralised'];
 }
 
 /**
@@ -93,6 +95,15 @@ interface SerialisedRace {
  * `entries`/`standings`/`rosters` KASITLA dışarıda: onlar tarifin paylaşılan
  * nesneleri ve her turda yeniden yollanacak veri değiller — geç gelen abonenin
  * ilk `state` mesajı yarışın o anki resmini zaten taşıyor.
+ *
+ * İLKE: yayın istemcinin yarışı ÇİZMESİ için ne gerekiyorsa onu taşır, yarışı
+ * YENİDEN HESAPLAMASI için gerekeni değil. `weather`/`neutralised` bu yüzden
+ * BURADA: ikisi de ekranda görünen bir gerçeği anlatır (hava durumu paneli,
+ * bayrak göstergesi), tarif değildir — hesaplama girdisi değil, hesaplamanın
+ * SONUCUdur. `standings`/`entries`/`rosters` ise tam tersi: onları yollamak
+ * istemcinin kendi settlement'ını ve kendi simülasyonunu sürdürmesine izin
+ * verirdi — bu fazın silmeye çalıştığı ikinci gerçekliğin ta kendisi.
+ * Settlement zaten sunucunun işi ve zaten çalışıyor (`economy/settle.ts`).
  */
 function serialise(state: RaceState): SerialisedRace {
   return {
@@ -107,6 +118,8 @@ function serialise(state: RaceState): SerialisedRace {
     events: state.events,
     control: state.control,
     fastestLap: state.fastestLap,
+    weather: state.weather,
+    neutralised: state.neutralised,
   };
 }
 

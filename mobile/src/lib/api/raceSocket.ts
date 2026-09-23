@@ -66,6 +66,8 @@ export interface SerialisedRace {
   events: unknown;
   control: unknown;
   fastestLap: unknown;
+  weather: unknown;
+  neutralised: unknown;
 }
 
 export interface RaceSocketState {
