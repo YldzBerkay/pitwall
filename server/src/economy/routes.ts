@@ -1,22 +1,34 @@
 /**
- * HTTP front for the economy command endpoint.
+ * HTTP front for the economy endpoints: one command route, one read route.
  *
- * ONE route, POST-only, and the router (`http/router.ts`) does exact path
- * matching with no path parameters — so `lobbyId` travels in the request
- * BODY alongside `type` and whatever the action needs, not in the URL.
+ * The router (`http/router.ts`) does exact path matching with no path
+ * parameters, but it DOES hand every handler the full request URL
+ * (`ctx.url`), so a query string works fine on an exact path — `GET /lobby`
+ * already relies on this for `?id=`. `POST /economy/action` therefore keeps
+ * `lobbyId` in the request BODY alongside `type` and whatever the action
+ * needs (it is described by its verb, not by what it names), while the new
+ * `GET /economy/state` names its target with `?lobbyId=`, matching `GET
+ * /lobby`'s own precedent instead of inventing a read-flavoured action type
+ * on the mutating endpoint. A `GET` that can only ever read is also a
+ * stronger guarantee than a `POST` handler that merely happens not to write
+ * anything today — nothing here calls into `runAction` or any mutating repo
+ * function, so this route class cannot regress into a silent write later.
  *
  * Two things this file exists to enforce (see the task's warnings):
- *  1. A session is required, and the team acted on comes from the player's
- *     OWN `lobby_seats` row for that lobby — never from the request body.
- *     A `teamKey` sent in the body is read nowhere in this file.
+ *  1. A session is required, and the team acted on/read comes from the
+ *     player's OWN `lobby_seats` row for that lobby — never from the request
+ *     body or query string. A `teamKey` sent by the caller is read nowhere
+ *     in this file.
  *  2. Nothing thrown by `runAction` for an unrecognised reason is ever
  *     swallowed into a misleading 400 — it is re-thrown so the router turns
- *     it into a 500 with no detail leaked (see `http/router.ts`).
+ *     it into a 500 with no detail leaked (see `http/router.ts`). The read
+ *     route holds the same line for `SlotStateError`.
  */
 import type { Router, RequestContext, RouteResult } from '../http/router.ts';
 import { verifySession } from '../auth/jwt.ts';
 import { query } from '../db/pool.ts';
 import { runAction, type ActionFailureCode } from './actions.ts';
+import { buildSlotState, SlotStateError } from './state.ts';
 
 const STATUS_BY_CODE: Record<ActionFailureCode, number> = {
   unknown_action: 400,
@@ -53,7 +65,53 @@ function forbidden(): RouteResult {
   return { status: 403, body: { error: 'forbidden' } };
 }
 
+// `SlotStateError` today only ever carries 'no_economy', but this map is
+// keyed by the error's own reason type (not hand-picked) so a future reason
+// added to `state.ts` fails to compile here instead of silently falling back
+// to a generic status — the same "don't collapse distinct reasons" contract
+// `STATUS_BY_CODE` above already keeps for `runAction`.
+const SLOT_STATE_STATUS_BY_REASON: Record<SlotStateError['reason'], number> = {
+  no_economy: 404,
+};
+
 export function registerEconomyRoutes(router: Router): void {
+  // Salt okuma: hiçbir şey yazmaz. `POST /economy/action` her zaman
+  // `buildSlotState`'i BİR eylemi uyguladıktan SONRA çağırıp cevap olarak
+  // döndürür — ama bir ekran soğuk açıldığında önce bir şey değiştirmeden
+  // "durumum ne?" diye sormanın yolu yoktu. Router path parametresi
+  // desteklemiyor (bkz. `http/router.ts`), fakat `GET /lobby`'nin de
+  // kanıtladığı gibi tam eşleşen bir path üstünde sorgu dizesi (`ctx.url`)
+  // rahatça çalışıyor — o yüzden burada da hedefi `?lobbyId=` ile
+  // tanımlıyoruz, ayrı bir eylem tipi icat etmek yerine. `teamKey` diğer
+  // rotadaki gibi YALNIZCA `lobby_seats`'ten gelir; body/query'den okunan bir
+  // `teamKey` yoktur ki görmezden gelinecek bir şey de olmasın. `now` da aynı
+  // sözleşmeyle burada `new Date()` ile örneklenir.
+  router.get('/economy/state', async (ctx: RequestContext): Promise<RouteResult> => {
+    const userId = await verifySession(ctx.bearer);
+    if (!userId) return unauthorized();
+
+    const lobbyId = ctx.url.searchParams.get('lobbyId');
+    if (!lobbyId) {
+      return { status: 400, body: { error: 'invalid_request' } };
+    }
+
+    const teamKey = await findOwnTeamKey(lobbyId, userId);
+    if (!teamKey) return forbidden();
+
+    // Aynı gerekçeyle: bu okuma da cihaz saatine değil, kendi `new Date()`
+    // örneğine güvenir — bkz. yukarıdaki `now` yorumu.
+    const now = new Date();
+    try {
+      const state = await buildSlotState({ lobbyId, teamKey, userId, now });
+      return { status: 200, body: state };
+    } catch (err) {
+      if (err instanceof SlotStateError) {
+        return { status: SLOT_STATE_STATUS_BY_REASON[err.reason], body: { error: err.reason } };
+      }
+      throw err;
+    }
+  });
+
   router.post('/economy/action', async (ctx: RequestContext): Promise<RouteResult> => {
     const userId = await verifySession(ctx.bearer);
     if (!userId) return unauthorized();

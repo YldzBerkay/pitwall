@@ -100,6 +100,32 @@ function post(path: string, token: string | null, payload: Record<string, unknow
   return json(path, { method: 'POST', headers, body: JSON.stringify(payload) });
 }
 
+function get(path: string, token: string | null) {
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  return json(path, { method: 'GET', headers });
+}
+
+/** A full snapshot of everything a read must leave untouched. */
+async function snapshotEconomy(lobbyId: string, teamKey: string, userId: string) {
+  const economy = (await query(
+    `select rp, factory_levels, car, spy_state, upgrades_done, updated_at
+     from lobby_economy where lobby_id = $1 and team_key = $2`,
+    [lobbyId, teamKey],
+  )).rows[0];
+  const jobs = (await query(
+    `select id, kind, payload, started_at, ends_at, claimed_at, notified_at
+     from pending_jobs where lobby_id = $1 and team_key = $2 order by id`,
+    [lobbyId, teamKey],
+  )).rows;
+  const caps = (await query(
+    `select day, ads_watched, gold_converted from daily_caps where user_id = $1 order by day`,
+    [userId],
+  )).rows;
+  const gold = (await query<{ gold: number }>('select gold from users where id = $1', [userId])).rows[0].gold;
+  return { economy, jobs, caps, gold };
+}
+
 describe('economy http', () => {
   before(async () => {
     process.env.SESSION_SECRET = 'a'.repeat(32);
@@ -436,5 +462,93 @@ describe('economy http', () => {
     });
     assert.equal(status, 400);
     assert.equal(body.error, 'bad_payload');
+  });
+
+  // ── GET /economy/state — read-only, no mutation ─────────────────────────
+
+  describe('GET /economy/state', () => {
+    it('a seated player reads their slot state, serverNow included', async () => {
+      const owner = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      await seatHuman(lobbyId, 'aurelia', owner.id);
+
+      const { status, body } = await get(`/economy/state?lobbyId=${lobbyId}`, owner.token);
+      assert.equal(status, 200);
+      assert.equal(body.lobbyId, lobbyId);
+      assert.equal(body.teamKey, 'aurelia');
+      assert.ok(!Number.isNaN(Date.parse(body.serverNow)), 'serverNow must parse as a date');
+      assert.equal(typeof body.rp, 'number');
+    });
+
+    it('reading mutates nothing: economy row, open jobs and daily caps are byte-for-byte unchanged', async () => {
+      const owner = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      await seatHuman(lobbyId, 'aurelia', owner.id);
+      // Give the slot some state worth checking for corruption: an open job
+      // and some daily-cap usage, not just the freshly-seeded defaults.
+      await post('/economy/action', owner.token, { lobbyId, type: 'startUpgrade', label: 'motor' });
+      await query(`update users set gold = 500 where id = $1`, [owner.id]);
+      await post('/economy/action', owner.token, { lobbyId, type: 'convertGoldToRp', gold: 3 });
+
+      const before = await snapshotEconomy(lobbyId, 'aurelia', owner.id);
+
+      const { status } = await get(`/economy/state?lobbyId=${lobbyId}`, owner.token);
+      assert.equal(status, 200);
+
+      const after = await snapshotEconomy(lobbyId, 'aurelia', owner.id);
+      assert.deepEqual(after, before, 'GET /economy/state must not write anything, anywhere');
+    });
+
+    it('requires a session: 401 without a bearer', async () => {
+      const owner = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      await seatHuman(lobbyId, 'aurelia', owner.id);
+
+      const { status } = await get(`/economy/state?lobbyId=${lobbyId}`, null);
+      assert.equal(status, 401);
+    });
+
+    it('a valid session with no seat in that lobby gets 403', async () => {
+      const owner = await makeUser();
+      const outsider = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      await seatHuman(lobbyId, 'aurelia', owner.id);
+
+      const { status } = await get(`/economy/state?lobbyId=${lobbyId}`, outsider.token);
+      assert.equal(status, 403);
+    });
+
+    it('the team key comes from the seat — a teamKey supplied by the caller is ignored', async () => {
+      const owner = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      await seatHuman(lobbyId, 'aurelia', owner.id);
+      await seatAi(lobbyId, 'silberpfad');
+
+      const { status, body } = await get(`/economy/state?lobbyId=${lobbyId}&teamKey=silberpfad`, owner.token);
+      assert.equal(status, 200);
+      assert.equal(body.teamKey, 'aurelia', 'the response must reflect the seat team, not the query team');
+    });
+
+    it('a lobby with no economy row for the seated team yields the distinct no_economy reason', async () => {
+      const owner = await makeUser();
+      const lobbyId = await makeLobby(owner.id);
+      // Seat the player WITHOUT seeding lobby_economy for their team, unlike
+      // seatHuman — this is the "unseeded team" case buildSlotState guards.
+      await query(
+        `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+         values ($1, $2, $3, 'human', now())`,
+        [lobbyId, 'aurelia', owner.id],
+      );
+
+      const { status, body } = await get(`/economy/state?lobbyId=${lobbyId}`, owner.token);
+      assert.equal(status, 404);
+      assert.equal(body.error, 'no_economy');
+    });
+
+    it('a missing lobbyId query param is 400 invalid_request, not a crash', async () => {
+      const owner = await makeUser();
+      const { status } = await get('/economy/state', owner.token);
+      assert.equal(status, 400);
+    });
   });
 });
