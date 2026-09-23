@@ -10,7 +10,8 @@
  *   POST /race/checkin {lobbyId} · POST /race/pit {lobbyId, driverIdx, compound, lap?}
  *   POST /checkin  {teamKey, managerId}          only inside the window
  *   POST /pit      {teamKey, managerId, driverIdx, compound|null}
- *   WS   /live                        {type:'phase'|'lap'|'result', ...} as they happen
+ *   WS   /live                        legacy single-league feed (unchanged)
+ *   WS   /race/live                   per-lobby rooms: {type:'subscribe'|'unsubscribe', lobbyId, token}
  *
  * Environment: PORT (8787), TICK_MS (2500), CHECKIN_SECONDS (300),
  * INTERVAL_SECONDS (86400), RACE_IN_SECONDS (first race after boot, 3600).
@@ -26,6 +27,7 @@ import { registerLobbyRoutes } from './lobby/routes.ts';
 import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
 import { registerCheckinRoutes } from './lobby/checkin.ts';
+import { createLiveHub, LIVE_PATH } from './lobby/live.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
@@ -98,14 +100,38 @@ const server = createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ server, path: '/live' });
-wss.on('connection', (socket) => {
+// ── WebSocket: iki ayrı yayın, iki ayrı yol ────────────────────────────────
+// ESKİ `/live` tek ligin her turunu bağlı HERKESE yolluyor; yeni `/race/live`
+// ise lobi başına odalara bölüyor. Aynı yolu paylaşamazlar — karışmaları tam
+// da odaların düzelttiği hata olurdu — bu yüzden yeni yayın `/race/live`
+// adını alıyor (`/race/checkin`, `/race/pit` ile aynı aile). Eski uç ve eski
+// uç noktalar KALDIRILMADI; o ayrı bir görev.
+//
+// İkisi de `noServer`: `ws`, `{ server, path }` ile kurulduğunda yola UYMAYAN
+// her yükseltmeyi 400 ile DÜŞÜRÜR. İki sunucu aynı HTTP sunucusuna böyle
+// bağlansaydı, hangisi önce dinleyici eklediyse diğerinin soketini kapatırdı.
+// Bu yüzden yükseltmeyi tek elden biz dağıtıyoruz.
+const legacyWss = new WebSocketServer({ noServer: true });
+legacyWss.on('connection', (socket) => {
   socket.send(JSON.stringify({ type: 'phase', state: league.publicState() }));
   if (league.race) socket.send(JSON.stringify({ type: 'lap', race: league.race }));
 });
 league.subscribe((event) => {
   const payload = JSON.stringify(event);
-  for (const client of wss.clients) if (client.readyState === client.OPEN) client.send(payload);
+  for (const client of legacyWss.clients) if (client.readyState === client.OPEN) client.send(payload);
+});
+
+const liveHub = createLiveHub();
+const liveWss = new WebSocketServer({ noServer: true });
+liveWss.on('connection', (socket) => liveHub.attach(socket));
+
+server.on('upgrade', (req, socket, head) => {
+  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+  const target = path === LIVE_PATH ? liveWss : path === '/live' ? legacyWss : null;
+  // Tanımadığımız bir yola gelen yükseltme sessizce kapatılır: yarım açık bir
+  // soketi tutmak, bağlantı başına bellek harcayan ucuz bir DoS yüzeyidir.
+  if (!target) return socket.destroy();
+  target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
 });
 
 const port = env('PORT', 8787);
