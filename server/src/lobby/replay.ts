@@ -29,6 +29,30 @@
  *   `lap: L + 1` olarak yazılır: koşulacak ilk tur odur.
  *   `uptoLap: L` ile oynatma, `lap <= L` olan kararları uygular; daha
  *   ilerideki kararlar görmezden gelinir.
+ *
+ * SINIR DAVRANIŞI (kasıtlı, kazara değil — çağıran buna güvenebilir):
+ *   - `uptoLap` verilmezse yarış bayrağa kadar koşar.
+ *   - `uptoLap <= 0`: tur döngüsü hiç dönmez, ızgara durumu (lap 0) döner.
+ *   - `uptoLap > track.laps`: bitmiş yarışa kırpılır.
+ *   - `uptoLap` kesirliyse aşağı yuvarlanır (`lap <= 40.7` → 40. tur).
+ *   - `uptoLap` sayı DEĞİLSE ya da sonlu değilse (NaN/Infinity) FIRLATIR.
+ *     NEDEN: `Math.min(NaN, laps)` NaN'dır, döngü hiç dönmez ve fonksiyon
+ *     "lap 0" durumunu sanki geçerli bir yarışmış gibi döndürürdü. NaN yalnız
+ *     bozuk bir DB okumasından ya da aritmetik hatadan gelebilir; o durumda
+ *     çağıran bütün istemcilere "bu yarış 0. turda" yayınlar. Sessizce makul
+ *     görünen bir yanlış yerine gürültülü bir hata seçiyoruz.
+ *   - Günlükteki ÇÖPLÜ satırlar (lap <= 0, tanınmayan `teamKey`, 0/1 dışında
+ *     `driverIdx`) sessizce yok sayılır. Bu da bir karar: günlük ekleme-only ve
+ *     değişmez, tek bozuk satır koşan bir yarışı tuğlaya çeviremez. (Motor
+ *     zaten yalnızca insan yönetimli, tanıdığı anahtarların kararını okur.)
+ *
+ * TAKMA AD (aliasing) UYARISI: `startRace` `entries`, `standings` ve `rosters`u
+ * REFERANSLA saklar, yani dönen `RaceState` çağıranın snapshot'ını paylaşır
+ * (`state.entries === snapshot.entries`). `replayRace` bunların hiçbirini
+ * değiştirmediği için bugün sorun yok; ama akışın ilerisinde bir şey
+ * (ödeme/settlement, WebSocket serileştirici) `state.entries` veya
+ * `state.standings` üzerinde mutasyon yaparsa tarifi bozar ve SONRAKİ her
+ * yeniden oynatma farklı bir yarış üretir. Mutasyon gerekiyorsa önce kopyala.
  */
 import {
   advanceLap,
@@ -73,6 +97,36 @@ export interface ReplayInput {
 }
 
 /**
+ * Karar günlüğünün bir turluk dilimini motorun `Decisions` haritasına çevirir.
+ *
+ * DIŞA VERİLİYOR çünkü yarış koşucusu durumu bellekte tutup tur tur ilerletecek
+ * (her tikte baştan oynatmak savurganlık olurdu) ve o döngünün `advanceLap`e
+ * verdiği harita ile buradaki yeniden oynatmanın verdiği harita ASLA
+ * ayrışmamalı. Anahtar biçimi (`takım:sürücü`) ve tur sözleşmesi tek yerde
+ * dursun diye `replayRace` de bu yardımcıyı kullanır.
+ *
+ * Aynı (tur, takım, sürücü) için İKİNCİ bir girdi olamaz: `004_race.sql`,
+ * `race_decisions` tablosuna `(lobby_id, season_no, round_no, lap, team_key,
+ * driver_idx)` birincil anahtarını koyar, yani veritabanı aynı araç için aynı
+ * turda ikinci kararı reddeder — İLK karar geçerlidir. Bu, yeniden oynatmanın
+ * deterministik olmasının koşulu: günlük değişmez olmalı. Tekrarlar mümkün
+ * OLSAYDI günlüğün sırası sonucu belirlerdi, dolayısıyla "sıra önemsiz" ile
+ * "sonraki öncekini ezer" aynı anda doğru olamaz. Burada yine de ilk girdiyi
+ * koruyoruz ki davranış şemanın sözleşmesiyle birebir örtüşsün.
+ */
+export function decisionsForLap(decisions: readonly DecisionLogEntry[], lap: number): Decisions {
+  const out: Decisions = {};
+  for (const d of decisions) {
+    if (d.lap !== lap) continue;
+    if (d.driverIdx !== 0 && d.driverIdx !== 1) continue;
+    const key = `${d.teamKey}:${d.driverIdx}`;
+    if (key in out) continue; // İlk karar geçerli — bkz. yukarıdaki değişmezlik.
+    out[key] = { compound: d.compound };
+  }
+  return out;
+}
+
+/**
  * Tarifi yarışa çevirir. Aynı girdi her zaman aynı `RaceState`i verir.
  */
 export function replayRace(input: ReplayInput): RaceState {
@@ -105,20 +159,17 @@ export function replayRace(input: ReplayInput): RaceState {
     rosters: snapshot.rosters,
   });
 
-  // Kararları turlarına göre grupla. Günlüğün sırası önemsiz olmalı: aynı
-  // (tur, takım, sürücü) için sonradan yazılan karar öncekini ezer, ki bu
-  // uç noktanın "son çağrı geçerli" davranışıyla örtüşür.
-  const byLap = new Map<number, Decisions>();
-  for (const d of decisions) {
-    let lapMap = byLap.get(d.lap);
-    if (!lapMap) byLap.set(d.lap, (lapMap = {}));
-    lapMap[`${d.teamKey}:${d.driverIdx}`] = { compound: d.compound };
+  // NaN/Infinity gürültüyle patlasın: sessizce 0. turda duran bir yarış,
+  // bütün istemcilere yayınlanacak makul görünen bir yalandır.
+  if (input.uptoLap !== undefined && !Number.isFinite(input.uptoLap)) {
+    throw new Error(`replayRace: uptoLap sonlu bir sayı olmalı, gelen: ${input.uptoLap}`);
   }
 
   const lastLap = input.uptoLap === undefined ? track.laps : Math.min(input.uptoLap, track.laps);
   for (let lap = state.lap + 1; lap <= lastLap; lap += 1) {
     if (state.finished) break;
-    state = advanceLap(state, track, byLap.get(lap) ?? {});
+    // Koşucunun tik döngüsüyle AYNI yardımcı — iki kopya olsa ayrışabilirlerdi.
+    state = advanceLap(state, track, decisionsForLap(decisions, lap));
   }
   return state;
 }

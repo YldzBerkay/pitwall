@@ -10,8 +10,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { trackForRound } from '@pitwall/shared/tracks';
 import { freshStandings } from '@pitwall/shared/season';
-import type { CarSetup, Entries, QualiRisk, TeamEntry } from '@pitwall/shared/raceEngine';
-import { replayRace, type DecisionLogEntry, type RaceSnapshot } from '../src/lobby/replay.ts';
+import {
+  advanceLap,
+  simulateQualifying,
+  startRace,
+  weatherFor,
+  type CarSetup,
+  type Entries,
+  type QualiRisk,
+  type RaceState,
+  type TeamEntry,
+} from '@pitwall/shared/raceEngine';
+import {
+  decisionsForLap,
+  replayRace,
+  type DecisionLogEntry,
+  type RaceSnapshot,
+} from '../src/lobby/replay.ts';
 
 /** 78 turluk bir Grand Prix — 40/70. turlara kadar kısmi oynatma için yeterince uzun. */
 const ROUND = 8;
@@ -83,14 +98,20 @@ describe('race replay', () => {
     assert.notEqual(JSON.stringify(a), JSON.stringify(b), 'decisions are being dropped');
   });
 
-  it('is consistent when replayed in two steps', () => {
+  it('is a genuine prefix: lap 40 events are the head of the lap 70 events', () => {
     const partial = replay(LOG_A, 40);
+    const full = replay(LOG_A, 70);
     assert.equal(partial.lap, 40);
-    const continued = replay(LOG_A, 70);
-    const straight = replay(LOG_A, 70);
-    assert.equal(JSON.stringify(continued), JSON.stringify(straight));
-    // 40. tura kadar olan durum, 70'e giden oynatmanın önekiyle aynı tarifi paylaşır.
-    assert.equal(JSON.stringify(partial), JSON.stringify(replay(LOG_A, 40)));
+    assert.equal(full.lap, 70);
+    // Asıl iddia: 40. tura kadar oynatmak, 70'e giden yarışın ÖNEKİDİR. Aynı
+    // ifadeyi kendisiyle karşılaştırmak (eski hâli) hiçbir şey kanıtlamıyordu;
+    // olayların baş kısmı bayt bayt tutmalı ki geç katılan istemciye
+    // gösterilen yarış, ötekilerin izlediğinin ta kendisi olsun.
+    assert.ok(partial.events.length > 0, 'fixture 40 tur içinde olay üretmeli');
+    assert.ok(full.events.length > partial.events.length, '70 tur daha çok olay üretmeli');
+    assert.deepEqual(full.events.slice(0, partial.events.length), partial.events);
+    // Önek yalnızca olaylarda değil: o ana kadarki tur sayacı da tutmalı.
+    assert.ok(partial.events.every((e) => e.lap <= 40));
   });
 
   it('ignores decisions logged beyond the requested lap', () => {
@@ -102,6 +123,64 @@ describe('race replay', () => {
     // Ama 75. tura kadar oynatılırsa o karar gerçekten işlemeli (ridgeline insan
     // yönetiminde; motor yalnızca insan yönetimli araçların kararını okur).
     assert.notEqual(JSON.stringify(replay(late, 75)), JSON.stringify(replay(LOG_A, 75)));
+  });
+
+  /**
+   * CANLI TİK: yarışı koşucunun koşacağı gibi ilerletir — `startRace`, sonra
+   * tur tur `advanceLap`, her tura o turun kararları verilerek (league.ts
+   * `tick()` ile aynı biçim). Kararlar burada KASITLI olarak elle
+   * anahtarlanıyor: `decisionsForLap` kullanılsaydı test, sınadığı iki yolun
+   * ortak parçasını sınamış olurdu.
+   */
+  function liveTick(decisions: readonly DecisionLogEntry[], uptoLap: number): RaceState {
+    const track = trackForRound(ROUND);
+    const weather = weatherFor(track, SEED);
+    const qualifying = simulateQualifying({
+      track, entries: SNAP.entries, risks: SNAP.risks, wet: weather.wetAtStart,
+      round: ROUND, seed: SEED, aiBonus: SNAP.aiBonus, rosters: SNAP.rosters,
+    });
+    let state = startRace({
+      standings: SNAP.standings, track, entries: SNAP.entries, weather,
+      grid: qualifying.grid, round: ROUND, seed: SEED,
+      aiBonus: SNAP.aiBonus, rosters: SNAP.rosters,
+    });
+    for (let lap = 1; lap <= uptoLap && !state.finished; lap += 1) {
+      const forLap: Record<string, { compound: DecisionLogEntry['compound'] }> = {};
+      for (const d of decisions) {
+        if (d.lap === lap) forLap[`${d.teamKey}:${d.driverIdx}`] = { compound: d.compound };
+      }
+      state = advanceLap(state, track, forLap);
+    }
+    return state;
+  }
+
+  it('matches a live-ticked race — the one players actually watch', () => {
+    // Bu testin varlık sebebi: diğer bütün testler replayRace'i KENDİSİYLE
+    // karşılaştırıyor, yani iki tarafı birden bozan bir gerileme (döngü
+    // sınırında bir kayma + tur gruplamasında eşleşen bir değişiklik) hepsini
+    // geçerdi — ve her çökme sonrası kurtarma, oyuncuların izlediğinden FARKLI
+    // bir yarış üretirdi. Faz 3a-2'nin önlemek için var olduğu hata tam budur.
+    const laps = trackForRound(ROUND).laps;
+    assert.equal(JSON.stringify(liveTick(LOG_A, laps)), JSON.stringify(replay(LOG_A)));
+    assert.equal(JSON.stringify(liveTick(LOG_A, 40)), JSON.stringify(replay(LOG_A, 40)));
+  });
+
+  it('exports the lap grouping the tick loop needs', () => {
+    // Koşucu bu yardımcıyı kullanacak; elle yeniden yazsaydı yeniden oynatmayla
+    // ayrışabilirdi. Anahtar biçimi `takım:sürücü`.
+    assert.deepEqual(decisionsForLap(LOG_A, 12), {
+      'aurelia:0': { compound: 'SOFT' },
+      'aurelia:1': { compound: 'HARD' },
+    });
+    assert.deepEqual(decisionsForLap(LOG_A, 13), {});
+    assert.deepEqual(decisionsForLap(LOG_A, 45), { 'aurelia:0': { compound: 'MEDIUM' } });
+  });
+
+  it('throws on a non-finite uptoLap instead of returning the grid', () => {
+    // NaN, Math.min üzerinden sessizce "0. tur" döndürürdü: geçerli görünen,
+    // yayınlanabilir bir yalan. Bozuk DB okuması gürültüyle patlamalı.
+    assert.throws(() => replay(LOG_A, Number.NaN), /uptoLap/);
+    assert.throws(() => replay(LOG_A, Number.POSITIVE_INFINITY), /uptoLap/);
   });
 
   it('runs to the flag with an empty decision log', () => {
