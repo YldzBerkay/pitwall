@@ -12,10 +12,39 @@
 
 ---
 
-## DURUM (2026-09-23, oturum sonu)
+## DURUM
 
-**Bitti:** Görev 1 (`1ae9e64` + `4cea7a9`), Görev 2 (`af9b25e`), Görev 3 (`e8794ff`).
-**Sırada:** Görev 4 — `raceSlice.ts`.
+**Bitti:** Görev 1 (`1ae9e64`+`4cea7a9`), 2 (`af9b25e`), 3 (`e8794ff`), 4 (`55cd387`),
+5 (hafta sonu tercihleri), 7 (`1559deb` — ölü lig dilimi silindi).
+**Kısmen:** Görev 6 (`33ad8de`) — pit yolu sunucuya bağlandı, yerel motor DURUYOR.
+**Sırada:** aşağıdaki yeniden planlama.
+
+### PLAN HATASI — Görev 6 Aşama 1'de bitemez
+
+Spec §3 *"`LiveRacePanel` jenerik bir `RaceState` okuyor, yeniden yazılmayacak"*
+diyordu. **Yanlış.** Soket `RaceState` değil, daraltılmış bir `SerialisedRace`
+gönderiyor ve panel onda olmayan alanları okuyor (`weather.forecast`,
+`neutralised`). Görev 6 bunu bulup durdu ve doğru yaptı.
+
+Gerçek bağımlılık zinciri:
+
+1. **Sunucu yayını çizmeye yetmeli** — `weather` ve `neutralised` eklenmeli.
+   *(Yapılıyor. `standings`/`entries` EKLENMİYOR: yayın yarışı ÇİZMEK için
+   gerekeni taşır, yeniden HESAPLAMAK için gerekeni değil — onları göndermek
+   istemcinin kendi muhasebesini koşturmaya devam etmesine izin verirdi.)*
+2. **Yerel muhasebe sunucuya taşınmalı** — `settleRaceWeekend` `finishRace(w.race)`
+   çağırıyor, o da `state.weather` ve `state.standings` istiyor. Bu **Aşama 2**.
+3. **Sıralama seansının karşılığı yok** — sunucu ızgarayı `startRaceFor` içinde
+   türetiyor, dışa vermiyor. `weekend.qualifying` ise `settleRaceWeekend`'in ön
+   koşulu. Karar gerekiyor: sunucu ızgarayı yayınlasın mı, yoksa çevrimiçi hafta
+   sonundan sıralama seansı kalksın mı?
+
+**Sonuç: yerel motorun sökülmesi Aşama 2'nin SONUNA taşındı.** Aşama 1, Görev 8
+(entegrasyon + dokümantasyon) ile kapanıyor; yerel motor duruyor ama pit yolu
+canlı ve ölü uçlar temizlendi.
+
+Bunu Aşama 1'de zorlamak, tek commit'te 982 satırlık store'un sezon/ekonomi
+yolunu da baştan yazmak olurdu — kimsenin inceleyemeyeceği bir değişiklik.
 
 Mobil: 24/24 test, tipler temiz, `npm run econ` geçiyor.
 Sunucu: 562/562, üç tip denetimi temiz. Ağaç temiz.
