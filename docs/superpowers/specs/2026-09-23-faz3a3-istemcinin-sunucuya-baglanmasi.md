@@ -92,6 +92,35 @@ sunucu ikisini de oturumdan ve koltuktan türetiyor.
 **UI'ın söylemesi gereken:** tercihler `live`'dan önce gönderilmeli. Sonrası
 reddedilir ve bu bir hata değil, kuralın kendisi.
 
+### 5.1 İki lastik seçici bire iniyor
+
+İstemcide bugün iki ayrı seçici var: `weekend.qualiCompound` ve
+`weekend.raceCompound`. Motorda ise tek alan: `CarSetup.compound`, dokümanında
+*"Starting compound (and the qualifying tyre)"* yazıyor.
+
+Bu bir eksiklik değil, kasıtlı bir model. Gerçek F1'de Q2 kuralı sıralama
+lastiğiyle başlamayı zorunlu kılar, ve Faz 3a-2'de pit yolundan başlamanın
+telafisi olan **serbest lastik seçimi** tam olarak bu bağlanmadan muafiyettir.
+İkisini ayırırsak o telafi hiçbir şey ifade etmez ve parc fermé takası çöker.
+
+**Karar: istemcinin iki seçicisi tek seçiciye iniyor.** Sunucu tek `compound`
+saklar. Pit yolundan başlayan araç, o lastiği serbestçe seçebilen tek araçtır —
+ve bu, cezanın karşılığı olarak görünür olmalı.
+
+### 5.2 Güvenilirlik: yazılmış ama hiç bağlanmamış bir söz
+
+`factoryDepartments` ekranda "ENGINE LAB → Güvenilirlik +0,02" diyor, ama
+`factoryEffects()` güvenilirlikle ilgili hiçbir şey döndürmüyor — altı alanının
+hiçbiri. Söz oyuncuya gösteriliyor, hiçbir formüle girmiyordu.
+
+Sunucu artık `min(1, 0.3 + engineLab * 0.02)` ile türetiyor: departmanın kendi
+belgelenmiş sayısı. Silinmiş istemci kodundaki `(manufacturing + engine_lab)/10`
+formülü kullanılmadı, çünkü manufacturing'in belgelenmiş etkisi maliyet ve
+süre — güvenilirlik değil.
+
+Güvenilirlik bir **tercih değil**, türetilen bir değer; ışıklar sönerken
+donuyor.
+
 ## 6. Sıra: önce yarış, sonra ekonomi
 
 Yarış şu anda **kırık** (404), ekonomi ise yanlış ama çalışıyor. Önce kırık olan.
