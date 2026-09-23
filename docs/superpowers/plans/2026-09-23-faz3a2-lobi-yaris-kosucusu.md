@@ -759,3 +759,49 @@ git commit -m "test(server): yarış değişmezleri + Faz 3a-2 dokümantasyonu"
 **Faz 3b** — kadro, sözleşme, transfer, personel.
 **Faz 3c** — sponsor sözleşmeleri ve sezon muhasebesinin tamamı.
 **İstemci** — mobil store'un sunucudan okuması; ayrı plan.
+
+---
+
+## Yürütme sırasında çıkan, sonraki görevlere taşınan bulgular
+
+Bunlar uygulama ve inceleme sırasında keşfedildi; ilgili görevin promptuna girmeli.
+
+### Görev 6 (`runner.ts`) için
+
+- **Tik döngüsü her tikte baştan oynatmamalı.** Ölçüm: 70. tura yeniden oynatma
+  ~0,8 ms, tur başına ~11 µs. Her tikte baştan oynatmak O(tur²) — 78 turluk bir
+  yarış lobi başına ~33 ms, oysa durumu bellekte tutan tik ~0,9 ms. 300 eşzamanlı
+  lobide fark 0,25 s/tik. Yeniden oynatma **devam ve geç katılım** içindir,
+  sürekli hâl için değil.
+- `replay.ts` bunun için `decisionsForLap(...)` dışa veriyor. Tik döngüsü tur
+  gruplamasını ve `${teamKey}:${driverIdx}` anahtarlamasını **yeniden yazmamalı**;
+  asla birbirinden ayrışmaması gereken mantığın tek kopyası olmalı.
+- `startRace` `entries`, `standings` ve `rosters`'ı **referansla** saklıyor, yani
+  `state.entries === snapshot.entries`. Durumu mutasyona uğratan her şey tarifi
+  bozar ve sonraki tüm yeniden oynatmaları sessizce değiştirir.
+
+### Görev 8 (`checkin.ts`) için
+
+- **Tur sözleşmesi:** `state.lap === L` iken alınan bir pit çağrısı `lap: L + 1`
+  olarak yazılır — henüz koşmamış ilk tur. `replay.ts`'in başlığında yazılı.
+- **Asistan yönetimindeki aracın kararı motor tarafından sessizce yutuluyor**
+  (`raceEngine.ts:122` — `Decisions` yalnızca `managed: 'human'` için okunuyor).
+  Uç bunu reddetmeli, yoksa oyuncu hiçbir şey yapmayan bir çağrı yapmış olur.
+- **Pit çağrısı iptali ifade edilemiyor.** Bugünkü `league.ts:149` `compound: null`
+  ile çağrıyı geri alabiliyor; `DecisionLogEntry` `CompoundKey` zorunlu kılıyor.
+  Ekleme-yalnızca bir günlük için doğru karar, ama **bilinçli** olmalı: günlüğe
+  yazılmış karar geri alınamaz, çünkü geri alınabilseydi yeniden oynatma
+  deterministik olmazdı.
+- `loadDecisions` **tam bir sıra** dayatmalı (`order by lap, team_key, driver_idx`),
+  yalnızca `lap` yetmez.
+
+### Görev 12 (`settle.ts`) ve Görev 7 (`live.ts`) için
+
+- `state.entries` / `state.standings` mutasyona uğratılmamalı — tarifi bozar.
+
+### Kapsam dışı ama bilinmeli
+
+- `RaceSnapshot`'ta `session` alanı yok, yani `startRace` hep `'race'` varsayıyor.
+  Bir lobi sprint koşarsa tarifi bunu ifade edemez. Sprint uygulanırken çıkmasın.
+- Şema değişmiş bir migration'ı uygulamış ortam kendiliğinden yeniden koşmaz.
+  Dağıtımdan önce bu bir kereliğine elle sıfırlanmalı (dev'de yapıldı).
