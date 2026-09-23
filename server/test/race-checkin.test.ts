@@ -20,8 +20,10 @@ import { runMigrations } from '../src/db/migrate.ts';
 import { query, closePool } from '../src/db/pool.ts';
 import { createLobby } from '../src/lobby/lobbyRepo.ts';
 import { SEAT_LADDER } from '../src/lobby/grid.ts';
-import { loadDecisions } from '../src/lobby/raceRepo.ts';
-import { startRaceFor, RACE_TICK_MS } from '../src/lobby/runner.ts';
+import { loadDecisions, loadRun } from '../src/lobby/raceRepo.ts';
+import { replayRace } from '../src/lobby/replay.ts';
+import { openRace, startRaceFor, RACE_TICK_MS } from '../src/lobby/runner.ts';
+import { LEASE_MS } from '../src/lobby/lease.ts';
 
 /**
  * PAYLAŞILAN test veritabanı: başka ajanlar da aynı şemayı kullanıyor. Tablo
@@ -101,6 +103,26 @@ async function lightsOut(lobbyId: string, lapsAgo: number): Promise<Date> {
   const startedAt = new Date(Date.now() - lapsAgo * RACE_TICK_MS - 500);
   await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: startedAt });
   return startedAt;
+}
+
+/**
+ * `live` evresinde, kirası bu teste ait bir lobi + ışıkları sönmüş bir yarış.
+ *
+ * Kirayı `acquireDueLobbies` ile ALMIYORUZ bilerek: paylaşılan test
+ * veritabanında o tarama başka ajanların lobilerini de üstlenir. Kira sütunları
+ * tam da o fonksiyonun yazdığı gibi elle kuruluyor.
+ */
+const RUNNER_OWNER = 'test-checkin-owner';
+
+async function liveRace(lobbyId: string, startedAt: Date): Promise<void> {
+  await query(
+    `update lobbies
+        set phase = 'live', season_no = 1, round_no = 1,
+            race_owner = $2, race_lease_until = $3
+      where id = $1`,
+    [lobbyId, RUNNER_OWNER, new Date(Date.now() + LEASE_MS)],
+  );
+  await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: startedAt });
 }
 
 function startServer(): Promise<void> {
@@ -235,6 +257,78 @@ describe('race check-in and the live pit call', () => {
     const ahead = await post('/race/pit', user.token, { lobbyId, driverIdx: 0, compound: 'SOFT', lap: 12 });
     assert.equal(ahead.status, 200, JSON.stringify(ahead.body));
     assert.equal((await loadDecisions(lobbyId, 1, 1))[0].lap, 12);
+  });
+
+  /**
+   * ── KOŞAN TUR SAKLANAN BİR OLGUDUR, SAATİN TAHMİNİ DEĞİL ────────────────
+   *
+   * Yukarıdaki test saatin kapısını sınıyor. Ama saat iki yerde AYRI
+   * hesaplanıyordu (uç nokta ve tik döngüsü) ve aralarında kilit yoktu: tik
+   * günlüğü okuduktan SONRA, N. turu simüle etmeden ÖNCE gelen bir karar
+   * saatin kapısından GEÇER, canlı yarışça görülmez, sonraki her yeniden
+   * oynatmaca uygulanırdı — iki farklı yarış. Aşağıdaki testler o aralığı
+   * uykuyla değil, sırayı elle sürerek kuruyor: koşucuyu saatin ÖNÜNE
+   * geçiriyoruz, böylece "reddeden şey saat mi, saklanan olgu mu" sorusunun
+   * cevabı tek bir şeye indirgeniyor.
+   */
+  it('refuses a lap the runner has already simulated, even though the clock has not reached it', async () => {
+    const lobbyId = await makeLobby('pit-stamped');
+    const user = await seat(lobbyId, TEAM_A, 'human', 'pit-stamped-a');
+    // Yarış saati AZ ÖNCE başladı: saate göre henüz tek tur bile koşmadı.
+    const startedAt = new Date(Date.now() - 500);
+    await liveRace(lobbyId, startedAt);
+
+    // Koşucu kendi `now`uyla üç tur koşuyor — duvardaki saat hâlâ 0. turda.
+    const runner = await openRace({ lobbyId, seasonNo: 1, roundNo: 1, ownerId: RUNNER_OWNER, now: startedAt });
+    assert.ok(runner);
+    await runner.tick(new Date(startedAt.getTime() + 3 * RACE_TICK_MS));
+    assert.equal(runner.state.lap, 3, 'fixture: three laps must have been simulated');
+    assert.equal((await loadRun(lobbyId, 1, 1))?.lastLap, 3, 'fixture: the tick must have stamped');
+
+    // Saat "0. turdayız" diyor; OLGU "3. tur koştu" diyor. Otorite olgudur.
+    for (const lap of [1, 2, 3]) {
+      const res = await post('/race/pit', user.token, { lobbyId, driverIdx: 0, compound: 'SOFT', lap });
+      assert.equal(res.status, 409, `lap ${lap} has been simulated — the clock must not open it`);
+      assert.equal(res.body.error, 'lap_already_run');
+    }
+    assert.equal((await loadDecisions(lobbyId, 1, 1)).length, 0,
+      'a decision for an already simulated lap reached the immutable log');
+
+    // Varsayılan tur da saklanan olgudan türer: saat 0 derken 4. tura yazmalı.
+    const next = await post('/race/pit', user.token, { lobbyId, driverIdx: 0, compound: 'SOFT' });
+    assert.equal(next.status, 200, JSON.stringify(next.body));
+    assert.equal(next.body.lap, 4, 'the default lap ignored the stored progress');
+  });
+
+  it('a decision the endpoint accepts is one the live race actually consumes', async () => {
+    // Tasarımın tek şartı, uçtan uca: KABUL EDİLEN karar canlı yarışta görünür.
+    const lobbyId = await makeLobby('pit-consumed');
+    const user = await seat(lobbyId, TEAM_A, 'human', 'pit-consumed-a');
+    const startedAt = new Date(Date.now() - 500);
+    await liveRace(lobbyId, startedAt);
+
+    const runner = await openRace({ lobbyId, seasonNo: 1, roundNo: 1, ownerId: RUNNER_OWNER, now: startedAt });
+    assert.ok(runner);
+    await runner.tick(new Date(startedAt.getTime() + 3 * RACE_TICK_MS));
+
+    const accepted = await post('/race/pit', user.token, { lobbyId, driverIdx: 0, compound: 'SOFT', lap: 4 });
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+
+    await runner.tick(new Date(startedAt.getTime() + 6 * RACE_TICK_MS));
+
+    // Kontrol AYNI tarifin saf oynatmasıdır: başka bir lobi başka bir tohum,
+    // yani farkı karar değil tohum gösterirdi.
+    const run = await loadRun(lobbyId, 1, 1);
+    assert.ok(run);
+    const log = await loadDecisions(lobbyId, 1, 1);
+    assert.equal(log.length, 1, 'the accepted decision is not in the immutable log');
+    const oracle = (decisions: typeof log) => JSON.stringify(replayRace({
+      seed: run.seed, round: 1, snapshot: run.snapshot, decisions, uptoLap: 6,
+    }).cars);
+    assert.equal(JSON.stringify(runner.state.cars), oracle(log),
+      'the live race did not apply the decision the endpoint accepted');
+    assert.notEqual(JSON.stringify(runner.state.cars), oracle([]),
+      'the accepted decision changed nothing — this test cannot catch the real failure');
   });
 
   // ── 4. Check-in yapmayan pit çağıramaz ────────────────────────────────────

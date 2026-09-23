@@ -25,8 +25,21 @@
  * ekleme-only ve değişmez olduğu için yazılmış satır geri alınamaz — tek
  * savunma, geç kalmış bir kararı YAZMAMAKTIR. Bu yüzden:
  *  1. İstek, yazma taahhüt edilmeden `ok` DÖNMEZ (aşağıdaki `await`).
- *  2. Yarışın o anki turu hesaplanır ve KESİN İLERİDE olmayan her tur
- *     reddedilir (`lap_already_run`).
+ *  2. "Bu tur koştu mu" kararını BU DOSYA VERMEZ. Otorite `appendDecision`ın
+ *     yazmasının kendi `where`idir: koşu satırını `for update` ile kilitler ve
+ *     `race_runs.last_lap`e bakar (005_race_progress.sql).
+ *
+ * NEDEN SAAT ARTIK OTORİTE DEĞİL:
+ * Eskiden bu dosya `(now - started_at) / RACE_TICK_MS` ile turu kendisi
+ * hesaplar ve karara kendisi varırdı. Tik döngüsü de AYNI formülü ayrı
+ * hesaplıyordu ve ikisi arasında hiçbir kilit yoktu: tik günlüğü okuduktan
+ * SONRA ama N. turu simüle etmeden ÖNCE buradan geçen bir karar, saatin
+ * kapısından geçer ("N henüz koşmadı" — doğru), canlı yarışça GÖRÜLMEZ
+ * (günlük zaten okunmuştu), sonraki her yeniden oynatmaca UYGULANIR. Tik başına
+ * ~1 ms'lik bir pencere; yüzlerce lobi × yetmiş turda kaçınılmaz. Saatin
+ * hesabı burada YALNIZCA ucuz bir ön kontrol ve varsayılan tur seçimi olarak
+ * kaldı — REDDEDEBİLİR ama hiçbir şeyi KABUL EDEMEZ; kabul yalnızca kapılı
+ * yazmadan çıkar.
  *
  * ── PİT ÇAĞRISI İPTALİ YOK (kasıtlı) ─────────────────────────────────────
  * Bugünkü `src/league.ts` `compound: null` ile bir çağrıyı geri çekmeye izin
@@ -86,12 +99,13 @@ function readLobbyId(ctx: RequestContext): string | null {
 /**
  * Yarış saatinin dediği tur — `runner.ts` ile AYNI formül.
  *
- * Tur sayacı hiçbir yerde SAKLANMAZ; saklansaydı tarifin dışında ikinci bir
- * gerçek kaynağı olurdu. Otorite `race_runs.started_at` ile gerçek saattir:
- * `tur = (now - started_at) / RACE_TICK_MS`. Koşucunun tik döngüsü de tam
- * olarak buraya kadar oynatır, yani bu sayı "şu an koşulmuş olan son tur"dur.
+ * ARTIK OTORİTE DEĞİL, TAHMİN: koşucu daha tiklemediyse bu sayı saklanan
+ * `last_lap`in ÖNÜNDE olabilir (henüz koşulmamış turlar), kira boş kaldıysa
+ * arkasında kalamaz — çünkü damga yalnızca ileri gider. Bu yüzden yalnızca
+ * `max(last_lap, saat)` içinde, İKİSİNDEN BÜYÜĞÜNÜ almak için kullanılır:
+ * fazladan reddedebilir, fazladan kabul edemez.
  */
-function currentLap(now: Date, startedAt: Date): number {
+function clockLap(now: Date, startedAt: Date): number {
   return Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / RACE_TICK_MS));
 }
 
@@ -195,17 +209,28 @@ export function registerCheckinRoutes(router: Router): void {
     // karar yazdırabilirdi — canlı yarışın göremeyeceği, ama her yeniden
     // oynatmanın uygulayacağı bir karar.
     const now = new Date();
-    const lap = currentLap(now, run.startedAt);
-    // KESİN İLERİDE: `lap` şu an koşulmuş son turdur, ona (ya da öncesine)
-    // yazmak geriye dönük karar demektir. Varsayılan `lap + 1` yine de körü
-    // körüne yazılmaz; istemcinin istediği tur da aynı kapıdan geçer.
-    const targetLap = requestedLap ?? lap + 1;
-    if (targetLap <= lap) return conflict('lap_already_run');
+    // VARSAYILAN TUR — iki tahminin BÜYÜĞÜ: `last_lap` damgalanmış olgudur,
+    // saat ise koşucu henüz tiklememişse onun önünde olabilir. Burada amaç
+    // REDDETMEK değil, istemci tur belirtmediğinde makul bir hedef seçmek;
+    // seçilen tur da aşağıdaki kapıdan geçer.
+    const targetLap = requestedLap ?? Math.max(run.lastLap, clockLap(now, run.startedAt)) + 1;
 
+    // UCUZ ÖN ELEME — ve yalnızca o. Saatin kanıtlayabildiği tek şey "bu tur
+    // çoktan geçti"dir; bir ağ gidiş-dönüşü ve bir işlem harcamadan bariz
+    // bayat isteği eler. Kabul kararını VERMEZ: `last_lap`e bakmaz bile, çünkü
+    // burada okunan her değer yazmaya varana kadar bayatlayabilir. "Koştu mu"
+    // sorusunun tek otoritesi aşağıdaki kapılı yazmadır.
+    if (targetLap <= clockLap(now, run.startedAt)) return conflict('lap_already_run');
+
+    // OTORİTE BURASI. Yukarıdaki `floor` bu satır çalışana kadar bayatlamış
+    // olabilir (tam o aralıkta tik turu damgalamış olabilir); `appendDecision`
+    // koşu satırını kilitleyip `last_lap`e YAZMANIN KENDİ `where`inde bakar,
+    // yani cevabı bayat bir okumaya değil kilide dayanır.
+    //
     // Cevap, yazma TAAHHÜT EDİLENE kadar dönmez. `await`i kaldırıp erken `ok`
     // dönmek tam olarak yukarıdaki kuralı kırar: oyuncu kararının geçtiğini
     // sanırken tur onsuz koşulabilir.
-    const written = await withTransaction((client) => appendDecision(client, {
+    const result = await withTransaction((client) => appendDecision(client, {
       lobbyId,
       seasonNo: lobby.season_no,
       roundNo: lobby.round_no,
@@ -215,9 +240,13 @@ export function registerCheckinRoutes(router: Router): void {
       compound,
       now,
     }));
-    // `false` = aynı araç+tur için zaten bir karar var. Bu bir sunucu hatası
-    // DEĞİL, günlüğün değişmezliğidir: İLK karar geçerli.
-    if (!written) return conflict('already_decided');
+    // `already_decided` bir sunucu hatası DEĞİL, günlüğün değişmezliğidir:
+    // İLK karar geçerli. `lap_already_run` ise kapının kapandığı andır.
+    // `no_run`: tarif tam bu aralıkta silindi (lobi kapandı) — yukarıdaki
+    // `race_not_started` ile aynı dürüst cevap.
+    if (result === 'already_decided') return conflict('already_decided');
+    if (result === 'lap_already_run') return conflict('lap_already_run');
+    if (result === 'no_run') return conflict('race_not_started');
 
     return { status: 200, body: { ok: true, teamKey, driverIdx, compound, lap: targetLap } };
   });

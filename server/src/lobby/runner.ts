@@ -44,7 +44,7 @@ import { query, withTransaction } from '../db/pool.ts';
 import { renewLease, releaseLease } from './lease.ts';
 import { loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
-import { finishRun, loadDecisions, loadRun, startRun } from './raceRepo.ts';
+import { advanceLastLap, finishRun, loadDecisions, loadRun, startRun } from './raceRepo.ts';
 import { decisionsForLap, replayRace, type DecisionLogEntry, type RaceSnapshot } from './replay.ts';
 
 export interface StartRaceInput {
@@ -353,10 +353,34 @@ class RaceRunner implements OpenedRace {
     let advanced = 0;
 
     if (!this.current.finished && target > this.current.lap) {
+      // ── SIRALAMA: ÖNCE DAMGA, SONRA GÜNLÜK, EN SON SİMÜLASYON ────────────
+      // Üçünün sırası bu fazın tek yapısal garantisidir; değiştirmeyin.
+      //
+      // 1. `last_lap = target` damgalanır ve TAAHHÜT EDİLİR. O an itibarıyla
+      //    `appendDecision`ın kapısı `lap <= target` için KAPANIR: uç nokta
+      //    aynı satırı `for update` ile kilitlediği için, bu UPDATE sürerken
+      //    gelen bir karar bekler ve kilit çözülünce yeni `last_lap`i görüp
+      //    reddedilir. "Tur koşarken araya giren karar" diye bir şey kalmaz.
+      // 2. Günlük damgadan SONRA okunur. Kabul edilmiş her karar, damgadan
+      //    ÖNCE taahhüt edilmiş olmak zorundadır (1'den ötürü), dolayısıyla bu
+      //    okuma onların HEPSİNİ görür. Ters sıra — önce oku, sonra damgala —
+      //    tam da kapatmaya çalıştığımız pencereyi bırakırdı.
+      // 3. Simülasyon en son. Damganın simülasyondan önce olması "koşacağız"
+      //    demektir, "koştuk" değil: süreç arada çökerse `last_lap` koşulmamış
+      //    bir turu gösterir. Bu YANLIŞ YÖNDE yanılmaktır ve zararsızdır —
+      //    kurtarma yolu (`openRace`) o tura kadar zaten yeniden oynatır ve o
+      //    turlara karar yazılamadığı için oynatma canlı yarışla aynı kalır.
+      //    Tersi (önce simüle et, sonra damgala) koşulmuş bir tura karar
+      //    yazılmasına izin verirdi: iki farklı yarış.
+      await withTransaction((client) =>
+        advanceLastLap(client, { lobbyId: this.lobbyId, seasonNo: this.seasonNo, roundNo: this.roundNo }, target),
+      );
+
       // Günlük HER TİKTE yeniden okunur: az önce yazılmış bir pit çağrısı, etki
       // ettiği tur koşulmadan önce görünmek zorunda. Koşulmuş bir tura ait geç
       // bir satır ise doğal olarak etkisizdir — o tur bir daha koşulmaz, yani
-      // karar geriye dönük uygulanamaz.
+      // karar geriye dönük uygulanamaz. (Böyle bir satır uç noktadan artık
+      // GEÇEMEZ; yalnızca doğrudan SQL ile yazılabilir.)
       const decisions: DecisionLogEntry[] = await loadDecisions(this.lobbyId, this.seasonNo, this.roundNo);
       while (!this.current.finished && this.current.lap < target) {
         const lap = this.current.lap + 1;
@@ -426,7 +450,7 @@ export async function openRace(input: OpenRaceInput): Promise<OpenedRace | null>
   let run = await loadRun(lobbyId, seasonNo, roundNo);
   if (!run) {
     const started = await startRaceFor({ lobbyId, seasonNo, roundNo, now });
-    run = { seed: started.seed, snapshot: started.snapshot, startedAt: now, finishedAt: null };
+    run = { seed: started.seed, snapshot: started.snapshot, startedAt: now, finishedAt: null, lastLap: 0 };
   }
 
   const decisions = await loadDecisions(lobbyId, seasonNo, roundNo);
@@ -437,7 +461,12 @@ export async function openRace(input: OpenRaceInput): Promise<OpenedRace | null>
     round: roundNo,
     snapshot: run.snapshot,
     decisions,
-    uptoLap: lapForClock(now, run.startedAt, tickMs),
+    // SAAT DEĞİL, İKİSİNİN BÜYÜĞÜ. `last_lap` "şu tur simüle edildi" diyorsa
+    // canlı durum oranın GERİSİNDE açılamaz: o turlara karar yazma kapısı
+    // kapandı, yani onları burada yeniden koşmamak (ve sonra tekrar koşmak)
+    // oyunculara kararsız bir yarış gösterirdi. Saat ileriyse yetişme yine
+    // saatin dediği yere kadar sürer.
+    uptoLap: Math.max(lapForClock(now, run.startedAt, tickMs), run.lastLap),
   });
 
   return new RaceRunner(lobbyId, seasonNo, roundNo, ownerId, run.startedAt, tickMs, state);

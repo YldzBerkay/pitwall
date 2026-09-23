@@ -10,11 +10,11 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { runMigrations } from '../src/db/migrate.ts';
-import { query, closePool } from '../src/db/pool.ts';
+import { query, closePool, withTransaction } from '../src/db/pool.ts';
 import { createUserWithIdentity } from '../src/auth/userRepo.ts';
 import { createLobby } from '../src/lobby/lobbyRepo.ts';
 import { SEAT_LADDER } from '../src/lobby/grid.ts';
-import { loadDecisions, loadRun } from '../src/lobby/raceRepo.ts';
+import { advanceLastLap, appendDecision, loadDecisions, loadRun } from '../src/lobby/raceRepo.ts';
 import { loadTeamEconomy } from '../src/economy/repo.ts';
 import { replayRace, type DecisionLogEntry, type RaceSnapshot } from '../src/lobby/replay.ts';
 import { openRace, startRaceFor, RACE_TICK_MS } from '../src/lobby/runner.ts';
@@ -438,6 +438,132 @@ describe('lights out — freezing the race recipe', () => {
         JSON.stringify(late.state.cars), JSON.stringify((await withoutDecision(lateId)).cars),
         'a decision logged after its lap was applied retroactively',
       );
+    });
+
+    /**
+     * ── TURUN KOŞTUĞU SAKLANAN BİR OLGUDUR ───────────────────────────────
+     *
+     * Bu blok tasarımın tek şartını ("herkes aynı yarışı görür") yapısal
+     * kılan yeri sınar. Eskiden hem uç nokta hem tik döngüsü "kaçıncı
+     * turdayız"ı SAATTEN ayrı ayrı hesaplıyordu ve aralarında kilit yoktu:
+     * tik günlüğü okuduktan SONRA, N. turu simüle etmeden ÖNCE yazılan bir
+     * karar saatin kapısından geçer, canlı yarışça görülmez ve her yeniden
+     * oynatmaca uygulanırdı. Buradaki testler o aralığı ZAMANLAMAYLA değil,
+     * sırayı elle sürerek kuruyor — uyku yok, yarıştırma yok.
+     */
+    /** Kapılı yazma — uç noktanın kullandığı yolun aynısı. */
+    const decide = (lobbyId: string, lap: number, now: Date) => withTransaction((client) => appendDecision(client, {
+      lobbyId, seasonNo: 1, roundNo: ROUND, lap,
+      teamKey: HUMAN, driverIdx: 0, compound: 'SOFT', now,
+    }));
+
+    it('stamps last_lap before simulating, and the immutability trigger lets it through', async () => {
+      const t0 = new Date();
+      const lobbyId = await liveLobby('Stamp', t0);
+      const runner = await openRace({ lobbyId, seasonNo: 1, roundNo: ROUND, ownerId: OWNER, now: t0 });
+      assert.ok(runner);
+
+      const fresh = await loadRun(lobbyId, 1, ROUND);
+      assert.equal(fresh?.lastLap, 0, 'a race that has not ticked must stand on lap 0');
+
+      await runner.tick(at(t0, 3));
+      const stamped = await loadRun(lobbyId, 1, ROUND);
+      // `race_runs_immutable` (004) yalnızca seed/snapshot'ı reddeder; damga
+      // geçmeseydi tik ilk turda patlardı ve bu satıra hiç gelinmezdi.
+      assert.equal(stamped?.lastLap, 3, 'the tick left no stored lap behind');
+      assert.equal(stamped?.seed, fresh?.seed, 'the stamp disturbed the recipe');
+      assert.deepEqual(stamped?.snapshot, fresh?.snapshot, 'the stamp disturbed the recipe');
+    });
+
+    it('the stamp only ever moves forward', async () => {
+      // Geri düşen bir damga, koşulmuş bir tura karar yazma kapısını yeniden
+      // AÇARDI — kapatmak için var olan kapıyı. Koruma yazmanın kendi
+      // `where`inde, önceki bir okumada değil.
+      const t0 = new Date();
+      const lobbyId = await liveLobby('Monotone', t0);
+      await startRaceFor({ lobbyId, seasonNo: 1, roundNo: ROUND, now: t0 });
+      const key = { lobbyId, seasonNo: 1, roundNo: ROUND };
+
+      assert.equal(await withTransaction((c) => advanceLastLap(c, key, 5)), true);
+      assert.equal(await withTransaction((c) => advanceLastLap(c, key, 2)), false,
+        'the stamp accepted a lap behind the one already run');
+      assert.equal(await withTransaction((c) => advanceLastLap(c, key, 5)), false);
+      assert.equal((await loadRun(lobbyId, 1, ROUND))?.lastLap, 5, 'the stored lap went backwards');
+    });
+
+    it('refuses a decision for a lap that has run, and consumes the one it accepts', async () => {
+      // TASARIMIN SINAVI: uç noktanın KABUL ettiği her karar canlı yarışça
+      // MUTLAKA görülür. Araya girişi zamanlamayla değil, sırayı elle sürerek
+      // kuruyoruz: önce turu koş, sonra o tura karar yazmayı dene.
+      const t0 = new Date();
+      const lobbyId = await liveLobby('Interleave', t0);
+      const runner = await openRace({ lobbyId, seasonNo: 1, roundNo: ROUND, ownerId: OWNER, now: t0 });
+      assert.ok(runner);
+
+      await runner.tick(at(t0, 3));
+      assert.equal(runner.state.lap, 3, 'the fixture needs three simulated laps');
+
+      // KOŞMUŞ turlar: reddedilmeli ve DEĞİŞMEZ günlüğe hiçbir şey düşmemeli.
+      for (const lap of [1, 2, 3]) {
+        assert.equal(await decide(lobbyId, lap, at(t0, 3)), 'lap_already_run',
+          `lap ${lap} has been simulated — writing to it forks the race`);
+      }
+      assert.equal((await loadDecisions(lobbyId, 1, ROUND)).length, 0,
+        'a decision for an already simulated lap reached the immutable log');
+
+      // KOŞMAMIŞ tur: kabul edilmeli...
+      assert.equal(await decide(lobbyId, 4, at(t0, 3)), 'written');
+      // ...ve aynı araç+tur için ikincisi yine de reddedilmeli (ilk karar geçerli).
+      assert.equal(await decide(lobbyId, 4, at(t0, 3)), 'already_decided');
+
+      // ...ve GERÇEKTEN tüketilmeli. Kontrol AYNI tarifin saf oynatmasıdır:
+      // başka bir lobi başka bir tohum, yani başka bir yarış olurdu.
+      await runner.tick(at(t0, 6));
+      const run = await loadRun(lobbyId, 1, ROUND);
+      assert.ok(run);
+      const oracle = (decisions: DecisionLogEntry[]) => replayRace({
+        seed: run.seed, round: ROUND, snapshot: run.snapshot, decisions, uptoLap: 6,
+      }).cars;
+      const accepted: DecisionLogEntry[] = [{ lap: 4, teamKey: HUMAN, driverIdx: 0, compound: 'SOFT' }];
+      assert.equal(
+        JSON.stringify(runner.state.cars), JSON.stringify(oracle(accepted)),
+        'the live race did not apply the decision the endpoint accepted',
+      );
+      assert.notEqual(
+        JSON.stringify(runner.state.cars), JSON.stringify(oracle([])),
+        'the accepted decision changed nothing — this test cannot catch the real failure',
+      );
+    });
+
+    it('a decision arriving between the log read and the simulation cannot be accepted', async () => {
+      // Kapanan pencerenin TAM KENDİSİ. Tik: (1) damgala, (2) günlüğü oku,
+      // (3) simüle et. Eski kodda (2) ile (3) arasına düşen bir karar saatin
+      // kapısından geçerdi. Burada o anı elle kuruyoruz: damga 6. tura basılmış
+      // ama simülasyon henüz olmamış gibi davranıp 6. tura karar yazmayı
+      // deniyoruz — kapı, canlı durum daha 3. turdayken bile kapalı olmalı.
+      const t0 = new Date();
+      const lobbyId = await liveLobby('Window', t0);
+      const runner = await openRace({ lobbyId, seasonNo: 1, roundNo: ROUND, ownerId: OWNER, now: t0 });
+      assert.ok(runner);
+      await runner.tick(at(t0, 3));
+
+      await withTransaction((c) => advanceLastLap(c, { lobbyId, seasonNo: 1, roundNo: ROUND }, 6));
+      assert.equal(runner.state.lap, 3, 'the fixture must stamp ahead of the simulation');
+
+      for (const lap of [4, 5, 6]) {
+        assert.equal(await decide(lobbyId, lap, at(t0, 3)), 'lap_already_run',
+          `lap ${lap} is claimed by the tick that is about to simulate it`);
+      }
+      assert.equal(await decide(lobbyId, 7, at(t0, 3)), 'written',
+        'the gate must stay open for laps the tick has not claimed');
+    });
+
+    it('a decision for a race that has no recipe is refused, not a 500', async () => {
+      const t0 = new Date();
+      const lobbyId = await liveLobby('NoRun', t0);
+      // Işıklar hiç sönmedi: `race_runs` satırı yok. FK zaten reddederdi;
+      // çağıranın bunu bir sunucu hatası olarak görmemesi gerekir.
+      assert.equal(await decide(lobbyId, 4, t0), 'no_run');
     });
 
     it('renews the lease while ticking and releases it at the flag', async () => {
