@@ -251,9 +251,8 @@ lobbies            + race_owner text
                    + race_lease_until timestamptz
 
 race_runs          lobby_id, season_no, round_no,
-                   seed bigint,
-                   entries jsonb,          -- ışıklar sönerken donan katılım
-                   grid jsonb,             -- sıralama sonucu
+                   seed integer,           -- motor tohumu 32 bite kırpıyor
+                   snapshot jsonb,         -- yeniden oynatmanın TÜM girdisi
                    started_at, finished_at,
                    PRIMARY KEY (lobby_id, season_no, round_no)
 
@@ -271,6 +270,17 @@ kararı reddeder — oyuncu fikrini değiştirirse son karar değil **ilk** kara
 geçerlidir, çünkü yeniden oynatmanın deterministik olması gerekir.
 
 `race_settlements` muhasebenin idempotency anahtarıdır.
+
+`snapshot` tek sütundur ve ızgarayı **içermez**. Izgara `(tohum, tur, entries,
+rosters, risks, wet, pist)` üzerinden `simulateQualifying`'in saf sonucudur;
+saklamak ikinci bir doğruluk kaynağı yaratır ve yeniden oynatmayla çelişebilir.
+`snapshot`'ın taşıması gerekenler: `entries` (kimin insan/asistan olduğu dahil),
+`risks`, `standings`, `aiBonus`, `rosters`. `risks`'i unutmak sessizce farklı
+bir ızgara, dolayısıyla farklı bir yarış üretir.
+
+`race_runs` yazıldıktan sonra değişmez; `seed` ve `snapshot` güncellemeleri bir
+tetikleyiciyle reddedilir. Aksi halde koşu ortasında yapılan bir güncelleme her
+yeniden oynatmanın sonucunu sessizce değiştirirdi.
 
 ---
 
