@@ -63,6 +63,7 @@ import type { LiveHub } from './live.ts';
 import { advanceDuePhases } from './phase.ts';
 import { acquireDueLobbies, releaseLease } from './lease.ts';
 import { openRace, type OpenedRace } from './runner.ts';
+import { rolloverRace } from './rollover.ts';
 
 /** Bir atışın rapor edeceği kadarı — testin göreceği tek şey. */
 export interface SweepResult {
@@ -112,6 +113,12 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
         // Bkz. modül docblock'u: normal bir çökme-sonrası son. Bu koşucuyu
         // artık elimizde tutmanın anlamı yok, ödeme çoktan yapılmış.
         driving.delete(lobbyId);
+        // Bu yarış ÖDENMİŞ ama lobi hâlâ `result`te takılı kalmış olabilir
+        // (kendi süreç çöktü, `flag()`ten sonraki hafta sonu dönüşünü hiç
+        // görmedi). `rolloverRace`in kendi koruması (`rollover.ts`) bunu
+        // güvenli kılar: lobi başka biri tarafından zaten döndürülmüşse
+        // UPDATE'in `where`i eşleşmez, hiçbir şey olmaz.
+        await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
         return { ticked: false, finished: true };
       }
       // Beklenmeyen bir hata bu lobiyi BATIRMAMALI: diğer lobiler sürmeye
@@ -139,6 +146,11 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
       // yaptı ve kirayı bıraktı; burada yapılacak ek bir şey yok, yalnızca
       // artık sürmediğimiz bu lobiyi haritadan düşürüyoruz.
       driving.delete(lobbyId);
+      // Lobi tam bu anda `result`e düştü — bir sonraki hafta sonuna
+      // ittirilmesi gerekiyor (bkz. `rollover.ts` docblock'u: `result`
+      // `acquireDueLobbies`in taradığı evrelerden biri değil, onu buradan
+      // itmezsek lobi BİR DAHA ASLA yarışmaz).
+      await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
     }
 
     return { ticked: result.advanced > 0, finished: result.finished };

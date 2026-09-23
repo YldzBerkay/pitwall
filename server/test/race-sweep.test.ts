@@ -107,6 +107,11 @@ async function lobbyPhase(lobbyId: string): Promise<string> {
   return res.rows[0].phase;
 }
 
+async function lobbyRound(lobbyId: string): Promise<number> {
+  const res = await query<{ round_no: number }>('select round_no from lobbies where id = $1', [lobbyId]);
+  return res.rows[0].round_no;
+}
+
 async function settlementCount(lobbyId: string): Promise<number> {
   const res = await query(
     'select 1 from race_settlements where lobby_id = $1 and season_no = 1 and round_no = $2',
@@ -165,7 +170,7 @@ describe('race sweep — the loop that drives everything', () => {
     assert.ok(run2!.last_lap > run!.last_lap, 'the second sweep did not advance the race further');
   });
 
-  it('a finished race is settled exactly once even if the sweep runs again afterwards', async () => {
+  it('a finished race is settled exactly once, and the sweep rolls it into the next round', async () => {
     const hub = createLiveHub();
     const sweep = createRaceSweep('owner-3', hub);
     const { lobbyId } = await makeLobby('finish');
@@ -176,13 +181,18 @@ describe('race sweep — the loop that drives everything', () => {
     // Yarış saatini bayrağın ötesine geçir: tek atışta yetişip bitmeli.
     const flagResult = await sweep.sweepOnce(at(t0, LAPS + 2));
     assert.ok(flagResult.finished >= 1, 'the race never reached the flag');
-    assert.equal(await lobbyPhase(lobbyId), 'result');
     assert.equal(await settlementCount(lobbyId), 1, 'race was not settled exactly once');
+    // Faz 3a-3: `result` artık uç durak değil — aynı atış lobiyi bir sonraki
+    // hafta sonuna İTER (`rollover.ts`). Sonsuza dek `result`te kalan bir lobi
+    // tam olarak bu görevin düzelttiği hatadır.
+    assert.equal(await lobbyPhase(lobbyId), 'open', 'the sweep did not roll the finished lobby into its next round');
+    assert.equal(await lobbyRound(lobbyId), ROUND + 1, 'the round did not advance');
 
-    // Bittikten sonra süpürme tekrar geçse bile: `result` evresi
-    // `acquireDueLobbies`in taradığı evrelerden biri değil, dokunulmamalı.
+    // Bir sonraki hafta sonu vakti henüz gelmedi (`nextRaceAt`), yani hemen
+    // ardından geçen bir süpürme onu YENİDEN devralmamalı ve YENİDEN
+    // ödememeli.
     const again = await sweep.sweepOnce(at(t0, LAPS + 3));
-    assert.equal(again.claimed, 0, 'a settled, finished lobby was claimed again');
+    assert.equal(again.claimed, 0, 'a lobby not yet due for its next round was claimed');
     assert.equal(await settlementCount(lobbyId), 1, 'a second sweep paid the race again');
   });
 
