@@ -18,6 +18,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { League } from './league.ts';
 import { Router } from './http/router.ts';
@@ -28,6 +29,8 @@ import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
 import { registerCheckinRoutes } from './lobby/checkin.ts';
 import { createLiveHub, LIVE_PATH } from './lobby/live.ts';
+import { createRaceSweep } from './lobby/sweep.ts';
+import { RACE_TICK_MS } from './lobby/runner.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const env = (key: string, fallback: number) => Number(process.env[key] ?? fallback);
@@ -136,6 +139,35 @@ server.on('upgrade', (req, socket, head) => {
 
 const port = env('PORT', 8787);
 
+// ── Lobi başına yarış süpürücüsü ───────────────────────────────────────────
+// `openRace`i ve `hub.publish`i gerçekten ÇAĞIRAN tek yer burasıdır (Faz
+// 3a-2'ye kadar ikisi de yalnızca testlerden çağrılıyordu). Zamanlayıcı MODÜL
+// YÜKLENİRKEN DEĞİL, sunucu gerçekten dinlemeye başladığında kurulur — testin
+// `sweepOnce`i gerçek bir zamanlayıcı olmadan doğrudan çağırabilmesi bunun
+// koşuludur (bkz. `lobby/sweep.ts` docblock'u).
+const raceSweepOwnerId = randomUUID();
+const raceSweep = createRaceSweep(raceSweepOwnerId, liveHub);
+let raceSweepTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Kapanışta: zamanlayıcı durur ve elimizdeki her kira HEMEN bırakılır. Bunu
+ * atlarsak yeniden başlayan bir süreç, sürdüğümüz her lobi için `LEASE_MS`
+ * (15 sn) beklemek zorunda kalır — kısa bir deploy bile oyunculara donmuş bir
+ * ekran gibi görünür.
+ */
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[pit-wall] ${signal} alındı, kapanılıyor…`);
+  if (raceSweepTimer) clearInterval(raceSweepTimer);
+  try {
+    await raceSweep.releaseAll();
+  } catch (err) {
+    console.error('[pit-wall] kapanışta kiraları bırakırken hata:', err);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
 // We must not serve any request — league or identity — against a
 // half-applied schema, so migrations run to completion before the server
 // starts listening. A migration failure is fatal: log it and exit rather
@@ -145,6 +177,16 @@ runMigrations()
     server.listen(port, () => {
       const s = league.publicState();
       console.log(`[pit-wall] league on :${port} · ${s.track.gp} · lights out ${new Date(s.raceStartAt).toISOString()} · check-in opens ${new Date(s.checkinOpensAt).toISOString()}`);
+      // `now` HER ATIŞTA burada, `new Date()` ile örneklenir — süpürücünün
+      // kendisi saati asla okumaz (server/README.md §"now sadece route'ta
+      // örneklenir"). Atış aralığı tur uzunluğuyla (`RACE_TICK_MS`) aynı:
+      // daha seyrek olsaydı yayın turun gerisinde kalırdı, daha sık olsaydı
+      // aynı turu boşuna yeniden sorgulardık.
+      raceSweepTimer = setInterval(() => {
+        void raceSweep.sweepOnce(new Date()).catch((err: unknown) => {
+          console.error('[pit-wall] yarış süpürmesi patladı:', err);
+        });
+      }, RACE_TICK_MS);
     });
   })
   .catch((err: unknown) => {

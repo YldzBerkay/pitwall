@@ -107,10 +107,20 @@ const defaultDeps: SettleDeps = { addRp };
  * oynatmada tekrar ödenir).
  *
  * `AlreadySettledError` fırlatır: bu yarış daha önce ödendi.
+ *
+ * `client` VERİLİRSE (Faz 3a-2 süpürme döngüsü): yazmalar ÇAĞIRANIN
+ * işleminde yapılır, burada yeni bir `withTransaction` AÇILMAZ. Bunun
+ * nedeni `runner.ts`teki bayrak anı — koşu satırının `finished_at`ı ve lobi
+ * evresinin `result`e geçmesi, ödemeyle AYNI taahhütte olmalı. İkisi ayrı
+ * işlemlerde olsaydı arada çöken bir süreç "bitmiş ama hiç ödenmemiş" bir
+ * yarış bırakırdı — bu görevin asıl düzelttiği hata. `client` verilmediğinde
+ * (testler, doğrudan çağrılar) davranış öncekiyle birebir aynı: fonksiyon
+ * kendi işlemini açar ve kapatır.
  */
 export async function settleRace(
   input: SettleRaceInput,
   deps: SettleDeps = defaultDeps,
+  client?: PoolClient,
 ): Promise<RaceSettlement> {
   const { lobbyId, seasonNo, roundNo, now } = input;
 
@@ -136,9 +146,14 @@ export async function settleRace(
 
   const economies = await loadLobbyEconomy(lobbyId);
 
-  return withTransaction(async (client) => {
+  // Yazma gövdesi bir kapanışta: `client` ÇAĞIRANDAN geldiyse onun üzerinde
+  // çalışır ve `withTransaction`ı hiç görmez (commit/rollback çağıranın
+  // işidir — bkz. `runner.ts` `flag()`); verilmediyse eskisi gibi kendi
+  // işlemini kendisi açar. İki yol da AYNI gövdeyi çalıştırır, yani "kim
+  // taahhüt eder" dışında davranışları ayrışamaz.
+  const writePayouts = async (c: import('pg').PoolClient): Promise<RaceSettlement> => {
     // ÖNCE KAPI: ödeme yazmalarıyla AYNI işlemde ve yazmalardan önce.
-    if (!(await markSettled(client, lobbyId, seasonNo, roundNo, now))) {
+    if (!(await markSettled(c, lobbyId, seasonNo, roundNo, now))) {
       // FIRLAT, DÖNME. Dönmek buraya kadar yazılanları taahhüt ederdi; burada
       // henüz bir şey yazılmamış olsa bile kural aynı kalmalı, çünkü bu satırın
       // altına ileride bir yazma eklenmesi yeterdi.
@@ -157,10 +172,12 @@ export async function settleRace(
       // hafta sonu seçimleri de henüz sunucuda saklanmıyor (Faz 3c), ve
       // olmayan veriden ödeme uydurmak ekonomi kapısını sessizce kaydırırdı.
       const rp = racePrize(position, standings.length);
-      await deps.addRp(client, lobbyId, econ.teamKey, rp);
+      await deps.addRp(c, lobbyId, econ.teamKey, rp);
       payouts.push({ teamKey: econ.teamKey, position, rp });
     }
 
     return { standings, payouts };
-  });
+  };
+
+  return client ? writePayouts(client) : withTransaction(writePayouts);
 }

@@ -41,6 +41,7 @@ import { trackForRound } from '@pitwall/shared/tracks';
 import { freshStandings } from '@pitwall/shared/season';
 import type { TeamStanding } from '@pitwall/shared/teams';
 import { query, withTransaction } from '../db/pool.ts';
+import { settleRace, type SettleDeps } from '../economy/settle.ts';
 import { renewLease, releaseLease } from './lease.ts';
 import { loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
@@ -291,6 +292,8 @@ export interface OpenRaceInput {
   ownerId: string;
   now: Date;
   tickMs?: number;
+  /** Testin muhasebeyi yarıda patlatabilmesi için; üretimde hep varsayılan. */
+  settleDeps?: SettleDeps;
 }
 
 export interface TickResult {
@@ -330,6 +333,10 @@ class RaceRunner implements OpenedRace {
     private readonly startedAt: Date,
     private readonly tickMs: number,
     state: RaceState,
+    // Testin "damgadan SONRA patlarsa her şey geri alınır" iddiasını
+    // kanıtlayabilmesi için enjekte edilebilir (bkz. `settleRace`in kendi
+    // `deps` deseni). Üretimde her zaman varsayılan `addRp`.
+    private readonly settleDeps?: SettleDeps,
   ) {
     this.current = state;
   }
@@ -395,15 +402,28 @@ class RaceRunner implements OpenedRace {
   }
 
   /**
-   * Damalı bayrak: koşu damgalanır, lobi `result` evresine geçer, kira bırakılır.
+   * Damalı bayrak: koşu damgalanır, lobi `result` evresine geçer, MUHASEBE
+   * yapılır ve kira bırakılır.
    *
-   * Damga ile evre TEK işlemde: ikisi ayrılsaydı arada çöken bir süreç ya
-   * bitmiş ama hâlâ `live` görünen bir lobi ya da damgasız bir `result`
-   * bırakırdı — ikisi de tarama döngüsünü yanlış yola sokar.
+   * Damga + evre + muhasebe TEK işlemde. Eskiden `settleRace` ayrı bir
+   * işlemde çağrılıyordu (süpürme döngüsünün işiydi) ve tam da bu ayrım bir
+   * çöküş deliği açıyordu: `finishRun` + evre geçişi taahhüt edilip süreç
+   * `settleRace`den ÖNCE çökerse, lobi `result` evresinde ama HİÇ ödenmemiş
+   * kalırdı — ve `result` evresi artık `acquireDueLobbies`in taradığı
+   * evrelerden biri olmadığı için (`lease.ts` `DUE_PHASES`), bu yarış BİR
+   * DAHA ASLA kimse tarafından ele alınmaz, ödemesi sonsuza dek kaybolurdu.
+   * Üçünü tek taahhüde almak bu üçlü yazmayı ATOMIK yapar: ya hepsi birden
+   * kalıcı olur ya hiçbiri — arada çöken bir süreç, bıraktığı yarışı hâlâ
+   * `live` ve hâlâ ödenmemiş bulur, sonraki devralan onu SIFIRDAN bitirir.
    *
    * Evre güncellemesinin `phase = 'live'` koşulu kasıtlı: lobiyi bu arada
    * başkası ilerletmişse (ya da sezon ilerlemesi devralmışsa) onun yazdığını
-   * ezmeyiz. Ödeme (`markSettled`) burada YOK; o ayrı bir görevin işi.
+   * ezmeyiz.
+   *
+   * `AlreadySettledError` BURADA YUTULMAZ — yukarı, çağıran süpürme döngüsüne
+   * fırlar. Neden yutulmaması gerektiği o döngünün kendi dokümantasyonunda:
+   * bu istisna normal bir çökme-sonrası durumdur, `flag()`in kendisinin
+   * anlayabileceği ya da anlamlandırması gereken bir şey değildir.
    */
   private async flag(now: Date): Promise<void> {
     if (this.flagged) return;
@@ -414,8 +434,16 @@ class RaceRunner implements OpenedRace {
         `update lobbies set phase = 'result' where id = $1 and phase = 'live'`,
         [this.lobbyId],
       );
+      // AYNI CLIENT, AYNI İŞLEM: `settleRace`e üçüncü argüman olarak
+      // geçirilen `client`, onun kendi `withTransaction`ını hiç açmamasını
+      // sağlar (bkz. `economy/settle.ts` docblock'u). Yukarıdaki iki yazmayla
+      // birlikte tek taahhütte gider.
+      await settleRace({ lobbyId: this.lobbyId, seasonNo: this.seasonNo, roundNo: this.roundNo, now }, this.settleDeps, client);
     });
     // Kirayı gönüllü bırakmak, sıradaki taramanın 15 sn beklemesini önler.
+    // Yalnızca yukarıdaki işlem BAŞARIYLA taahhüt edildiyse buraya varılır —
+    // fırlayan bir `settleRace` bu satırı hiç çalıştırmaz, kira kendi
+    // süresince kalır ve bir sonraki devralan yarışı sıfırdan bitirir.
     await releaseLease(this.ownerId, this.lobbyId);
   }
 }
@@ -469,5 +497,5 @@ export async function openRace(input: OpenRaceInput): Promise<OpenedRace | null>
     uptoLap: Math.max(lapForClock(now, run.startedAt, tickMs), run.lastLap),
   });
 
-  return new RaceRunner(lobbyId, seasonNo, roundNo, ownerId, run.startedAt, tickMs, state);
+  return new RaceRunner(lobbyId, seasonNo, roundNo, ownerId, run.startedAt, tickMs, state, input.settleDeps);
 }
