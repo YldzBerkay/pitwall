@@ -1,16 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import { DEPARTMENT_MAX_LEVEL, departmentCost, type FactoryDepartment } from '@pitwall/shared/factory';
+import { DEPARTMENT_MAX_LEVEL, departmentCost, factoryDepartments, type FactoryDepartment } from '@pitwall/shared/factory';
 import { AppText, GlassCard, Cols, ScreenHeader, SegmentTabs } from '@/components/atoms';
 import { CarUpgradeStage, type CarUpgradeStageHandle, type UpgradeZone } from '@/components/organisms';
-import { UPGRADE_MAX_MS, describeSpec, formatDuration, tierOf, tierUnlocks } from '@pitwall/shared/carCustomisation';
+import { describeSpec, formatDuration, tierOf, tierUnlocks } from '@pitwall/shared/carCustomisation';
 import { useGameStore } from '@/store/gameStore';
+import { displayFactory, STAT_LABEL_TO_SERVER } from '@/store/slices/factoryDisplay';
 import { haptic } from '@/lib/haptics';
 import { statName } from '@/components/molecules/CarStatCard';
 import { sfx } from '@/lib/sfx';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { CustomisationPanel } from './CustomisationPanel';
+
+/**
+ * Server error codes, distinct — never flattened into one generic failure
+ * string (`economyApiSlice.ts`'s own rule). Falls back to the raw code for
+ * anything not called out explicitly, so an unmapped code is still visible
+ * rather than silently swallowed.
+ */
+const economyErrorText: Record<string, string> = {
+  not_enough_rp: 'RP yetersiz.',
+  not_enough_gold: 'Altın yetersiz.',
+  cap_reached: 'Bugünkü tavana ulaştın.',
+  already_running: 'Fabrika zaten dolu.',
+  already_claimed: 'Bu iş zaten alınmış.',
+  not_ready: 'İş henüz bitmedi.',
+  not_found: 'İş bulunamadı.',
+  bad_payload: 'Geçersiz istek.',
+  no_economy: 'Ekonomi verisi yok.',
+  not_signed_in: 'Oturum açık değil.',
+};
 
 type Tab = 'upgrade' | 'garage';
 
@@ -25,109 +45,122 @@ type Tab = 'upgrade' | 'garage';
  */
 export function DevelopmentScreen() {
   const shell = useShellLayout();
-  const {
-    rp,
-    carStats,
-    departments,
-    build,
-    buildTimeFor,
-    buildCostFor,
-    startUpgrade,
-    collectUpgrade,
-    skipBuild,
-    skipBuildCost,
-    gold,
-    upgradeDepartment,
-    livery,
-    compound,
-    rim,
-    spokes,
-    sponsorships,
-  } = useGameStore();
+  const { livery, compound, rim, spokes, sponsorships } = useGameStore();
+  // The server-backed economy (`economyApiSlice.ts`), not the local
+  // `economySlice.ts`/`gameStore.ts` upgrade logic — this screen is the one
+  // being migrated onto it (see this task's brief). `race.lobbyId` is the
+  // app's own "are we seated in a lobby" signal, the same one
+  // `raceSlice.ts`'s `displayRace`/`displayQualifying` already key off; NOT
+  // `economyApi.lobbyId`, which only appears after the first successful
+  // call — see `factoryDisplay.ts`'s doc comment.
+  const lobbyId = useGameStore((s) => s.race.lobbyId);
+  const economyApi = useGameStore((s) => s.economyApi);
   const [stageWidth, setStageWidth] = useState(0);
   const [tab, setTab] = useState<Tab>('upgrade');
-  const [now, setNow] = useState(() => Date.now());
+  const [message, setMessage] = useState<string | undefined>(undefined);
   const stage = useRef<CarUpgradeStageHandle>(null);
-
-  // Refresh the countdown once a minute; the clock lives in state so render stays pure.
+  // A render pulse only — the countdown math itself reads the slice's
+  // monotonic anchor (`displayFactory`/`economyClock.ts`), never
+  // `Date.now()`. This just makes the screen re-render often enough for
+  // that derived number to visibly tick down.
+  const [, forceTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
+    const id = setInterval(() => forceTick((n) => n + 1), 1_000);
     return () => clearInterval(id);
   }, []);
-  const buildDone = !!build && now >= build.endsAt;
 
-  const stat = (label: string) => carStats.find((s) => s.label === label)?.value ?? 50;
-  const motor = stat('MOTOR');
-  const aero = stat('AERO');
-  const grip = stat('GRIP');
+  useEffect(() => {
+    if (lobbyId) void useGameStore.getState().economyApi.hydrate(lobbyId);
+  }, [lobbyId]);
+
+  const display = displayFactory(lobbyId, economyApi);
+
+  const statValue = (label: string): number =>
+    display.kind === 'ready' ? display.carStats.find((s) => s.label === label)?.value ?? 50 : 50;
+  const motor = statValue('MOTOR');
+  const aero = statValue('AERO');
+  const grip = statValue('GRIP');
   const spec = describeSpec(motor, aero, grip);
 
-  /**
-   * Yarış günü kilidi bir tuzak değil, bilinçli bir tercih olmalı: uzun bir
-   * geliştirme başlatmadan önce hesabı göster. Oyuncu bir yarışı feda edip
-   * büyük yatırımı öne almayı SEÇEBİLMELİ.
-   *
-   * Not: store'da henüz gerçek bir yarış başlangıç zaman damgası yok
-   * (`mock.raceStartsInMs` sabit bir görüntü değeri), o yüzden "yarıştan X
-   * saat sonra biter" diyemiyoruz. Yarış saati geldiğinde bu eşik oraya
-   * bağlanmalı; şimdilik uyarı, yarım günden uzun süren geliştirmelerde
-   * çıkıyor. (Hiçbir iş 22 saati aşmaz — `UPGRADE_MAX_MS`.)
-   */
-  const LONG_BUILD_MS = 12 * 60 * 60 * 1000;
+  const currentUpgrade = display.kind === 'ready' ? display.currentUpgrade : undefined;
+  const buildDone = Boolean(currentUpgrade?.ready);
 
-  const confirmLongBuild = (label: string, onConfirm: () => void) => {
-    const ms = buildTimeFor(label);
-    if (ms < LONG_BUILD_MS) {
-      onConfirm();
-      return;
-    }
-    const stat = carStats.find((c) => c.label === label);
-    const halved = stat ? Math.round(stat.value / 2) : 0;
-    Alert.alert(
-      'Bu parça yarışa yetişmeyebilir',
-      `${statName[label] ?? label} üretimi ${formatDuration(ms)} sürüyor. Işıklar söndüğünde tezgahta duruyorsa araç sökük yarışır: ${statName[label] ?? label} ${stat?.value ?? 0} yerine ${halved} sayılır ve DNF riskin iki katına çıkar.\n\nHızlandırma her zaman açık: saat başı 5 Altın.`,
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        { text: 'Yine de başlat', style: 'destructive', onPress: onConfirm },
-      ],
-    );
-  };
+  /** Departments to draw: `factoryDepartments`'s static catalog (name, icon,
+   * description text — level-independent, see `shared/factory.ts`) with the
+   * LIVE level merged in from the server when a lobby is seated. Without a
+   * lobby there is no server level to merge, so the catalog's own seed
+   * level is shown as-is (the pre-migration, purely-local display). */
+  const departmentList: FactoryDepartment[] = factoryDepartments.map((d) => ({
+    ...d,
+    level: display.kind === 'ready' ? display.factoryLevels[d.code] ?? 0 : d.level,
+  }));
 
-  const onStartUpgrade = (label: string) => {
-    const started = startUpgrade(label);
-    if (started !== 'ok') {
+  const onStartUpgrade = async (label: string) => {
+    if (!lobbyId) return;
+    const serverLabel = STAT_LABEL_TO_SERVER[label] ?? label.toLowerCase();
+    const result = await useGameStore.getState().economyApi.startUpgrade(lobbyId, serverLabel);
+    if (!result.ok) {
       stage.current?.reject();
       haptic.error();
+      setMessage(economyErrorText[result.error] ?? result.error);
       return;
     }
+    setMessage(undefined);
     haptic.medium();
     sfx.play('wrench');
+    // The real duration is only known now that the server actually started
+    // the job — never predicted ahead of time (see `factoryDisplay.ts`'s doc
+    // comment on why a pre-start estimate is not shown at all).
+    const fresh = displayFactory(lobbyId, useGameStore.getState().economyApi);
+    const remainingMs = fresh.kind === 'ready' ? fresh.currentUpgrade?.remainingMs : undefined;
     stage.current?.play(
       label as UpgradeZone,
-      `${statName[label] ?? label} üretimde · ${formatDuration(buildTimeFor(label))}`,
+      remainingMs !== undefined
+        ? `${statName[label] ?? label} üretimde · ${formatDuration(remainingMs)}`
+        : `${statName[label] ?? label} üretimde`,
     );
   };
 
-  const onCollectUpgrade = () => {
-    // Read the label first: collecting clears the bench.
-    const label = build?.label ?? '';
-    const result = collectUpgrade();
-    if (!result) {
+  const onCollectUpgrade = async () => {
+    if (!lobbyId || !currentUpgrade) return;
+    const label = currentUpgrade.label;
+    const oldValue = statValue(label);
+    const result = await useGameStore.getState().economyApi.claimUpgrade(lobbyId, currentUpgrade.jobId);
+    if (!result.ok) {
       stage.current?.reject();
+      setMessage(economyErrorText[result.error] ?? result.error);
       return;
     }
+    setMessage(undefined);
     haptic.success();
     sfx.play('partFitted');
-    const unlock = result.tierUp ? tierUnlocks[label]?.[tierOf(result.value) as 2 | 3] : undefined;
-    stage.current?.play(label as UpgradeZone, unlock ?? `${statName[label] ?? label} +2 → ${result.value}`);
+    const fresh = displayFactory(lobbyId, useGameStore.getState().economyApi);
+    const newValue = fresh.kind === 'ready' ? fresh.carStats.find((s) => s.label === label)?.value ?? oldValue : oldValue;
+    const tierUp = tierOf(newValue) !== tierOf(oldValue);
+    const unlock = tierUp ? tierUnlocks[label]?.[tierOf(newValue) as 2 | 3] : undefined;
+    stage.current?.play(label as UpgradeZone, unlock ?? `${statName[label] ?? label} ${oldValue} → ${newValue}`);
   };
 
-  const onUpgradeDept = (dept: FactoryDepartment) => {
-    const ok = upgradeDepartment(dept.code);
-    if (!ok) {
-      stage.current?.reject();
+  const onSkipUpgrade = async () => {
+    if (!lobbyId || !currentUpgrade) return;
+    const result = await useGameStore.getState().economyApi.skipUpgrade(lobbyId, currentUpgrade.jobId);
+    if (!result.ok) {
+      setMessage(economyErrorText[result.error] ?? result.error);
       return;
     }
+    setMessage(undefined);
+    haptic.success();
+  };
+
+  const onUpgradeDept = async (dept: FactoryDepartment) => {
+    if (!lobbyId) return;
+    const result = await useGameStore.getState().economyApi.upgradeFactory(lobbyId, dept.code);
+    if (!result.ok) {
+      stage.current?.reject();
+      setMessage(economyErrorText[result.error] ?? result.error);
+      return;
+    }
+    setMessage(undefined);
     stage.current?.play('FACTORY', `${dept.name} seviye ${dept.level + 1}`);
   };
 
@@ -144,11 +177,11 @@ export function DevelopmentScreen() {
       showsVerticalScrollIndicator={false}
     >
       <ScreenHeader
-        eyebrow={`Harcanabilir ${rp} RP`}
+        eyebrow={display.kind === 'ready' ? `Harcanabilir ${display.rp} RP` : '—'}
         icon="development"
         title="Geliştirme"
         subtitle={tab === 'upgrade'
-          ? 'Her yükseltme +2 verir ama fabrikada üretilir: ilk yükseltme 6 saat, aynı değerin her yenisi 1,5 kat uzun.'
+          ? 'Yükseltme fabrikada üretilir; süre ve maliyet işi başlatınca sunucudan gelir.'
           : 'Boya, jant ve lastik görünüşü. Performansı etkilemez; takımının kimliği.'}
         right={
           <SegmentTabs<Tab>
@@ -200,25 +233,38 @@ export function DevelopmentScreen() {
               <AppText variant="cardTitle" color={colors.textPrimary}>
                 Araç performansı
               </AppText>
-              {carStats.map((s) => (
-                <StatRow
-                  key={s.label}
-                  label={s.label}
-                  value={s.value}
-                  cost={buildCostFor(s.label)}
-                  affordable={rp >= buildCostFor(s.label)}
-                  buildMs={buildTimeFor(s.label)}
-                  building={build?.label === s.label}
-                  busy={!!build && build.label !== s.label}
-                  remainingMs={build?.label === s.label ? build.endsAt - now : 0}
-                  done={buildDone && build?.label === s.label}
-                  skipGold={skipBuildCost()}
-                  canSkip={gold >= skipBuildCost()}
-                  onSkip={() => { haptic.success(); skipBuild(); }}
-                  onUpgrade={() => confirmLongBuild(s.label, () => onStartUpgrade(s.label))}
-                  onCollect={onCollectUpgrade}
-                />
-              ))}
+              {display.kind === 'no-lobby' && (
+                <AppText variant="bodySmall" color={colors.textTertiary}>
+                  Bu ekran bir lig lobisine bağlı değil; araç geliştirme çevrimiçi lig içindir.
+                </AppText>
+              )}
+              {display.kind === 'loading' && (
+                <AppText variant="bodySmall" color={colors.textTertiary}>
+                  Fabrika verisi yükleniyor…
+                </AppText>
+              )}
+              {display.kind === 'ready' &&
+                display.carStats.map((s) => (
+                  <StatRow
+                    key={s.label}
+                    label={s.label}
+                    value={s.value}
+                    building={currentUpgrade?.label === s.label}
+                    busy={!!currentUpgrade && currentUpgrade.label !== s.label}
+                    remainingMs={currentUpgrade?.label === s.label ? currentUpgrade.remainingMs : 0}
+                    done={buildDone && currentUpgrade?.label === s.label}
+                    skipGold={currentUpgrade?.label === s.label ? currentUpgrade.skipCostGold : 0}
+                    canSkip={currentUpgrade?.label === s.label && display.gold >= currentUpgrade.skipCostGold}
+                    onSkip={() => void onSkipUpgrade()}
+                    onUpgrade={() => void onStartUpgrade(s.label)}
+                    onCollect={() => void onCollectUpgrade()}
+                  />
+                ))}
+              {message && (
+                <AppText variant="labelSmall" color={colors.solarAmber}>
+                  {message}
+                </AppText>
+              )}
             </GlassCard>
           ) : (
             <GlassCard contentStyle={{ gap: spacing.md }}>
@@ -235,12 +281,12 @@ export function DevelopmentScreen() {
           <AppText variant="cardTitle" color={colors.textPrimary}>
             Fabrika departmanları
           </AppText>
-          {departments.map((dept) => (
+          {departmentList.map((dept) => (
             <DepartmentCard
               key={dept.code}
               dept={dept}
-              affordable={rp >= departmentCost(dept.level)}
-              onUpgrade={() => onUpgradeDept(dept)}
+              affordable={display.kind === 'ready' && display.rp >= departmentCost(dept.level)}
+              onUpgrade={() => void onUpgradeDept(dept)}
             />
           ))}
         </View>
@@ -252,10 +298,6 @@ export function DevelopmentScreen() {
 interface StatRowProps {
   label: string;
   value: number;
-  cost: number;
-  affordable: boolean;
-  /** How long this stat's next build takes. */
-  buildMs: number;
   /** This stat is on the bench right now. */
   building: boolean;
   /** Another stat is on the bench — the factory is taken. */
@@ -264,7 +306,8 @@ interface StatRowProps {
   done: boolean;
   onUpgrade: () => void;
   onCollect: () => void;
-  /** Kalan süreyi satın almanın Altın fiyatı. */
+  /** Kalan süreyi satın almanın Altın fiyatı — sunucunun kendi rakamı
+   * (`SlotStateJob.skipCostGold`), yalnızca bir iş üretimdeyken bilinir. */
   skipGold: number;
   canSkip: boolean;
   onSkip: () => void;
@@ -273,9 +316,6 @@ interface StatRowProps {
 function StatRow({
   label,
   value,
-  cost,
-  affordable,
-  buildMs,
   building,
   busy,
   remainingMs,
@@ -333,21 +373,15 @@ function StatRow({
           <Pressable
             className="flex-row items-center gap-1 rounded-md border px-2.5 py-1.5"
             style={{
-              borderColor: affordable && !busy ? colors.borderActive : colors.borderDefault,
-              backgroundColor: affordable && !busy ? colors.accentSoft : 'transparent',
-              opacity: affordable && !busy ? 1 : 0.5,
+              borderColor: !busy ? colors.borderActive : colors.borderDefault,
+              backgroundColor: !busy ? colors.accentSoft : 'transparent',
+              opacity: !busy ? 1 : 0.5,
             }}
             disabled={busy}
             onPress={onUpgrade}
           >
             <AppText variant="labelSmall" color={colors.accentLime} style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11 }}>
               Yükselt
-            </AppText>
-            <AppText variant="statSmall" color={colors.accentLime} style={{ fontSize: 12 }}>
-              {cost}
-            </AppText>
-            <AppText variant="labelSmall" color={colors.textSecondary} style={{ fontSize: 10 }}>
-              RP
             </AppText>
           </Pressable>
         )}
@@ -372,10 +406,13 @@ function StatRow({
         {building
           ? done
             ? 'Parça hazır — araca takılmayı bekliyor.'
-            : `Fabrikada üretiliyor · toplam ${formatDuration(buildMs)}`
+            : 'Fabrikada üretiliyor.'
           : busy
             ? 'Fabrika başka bir parçayı üretiyor.'
-            : `Üretim süresi ${formatDuration(buildMs)}${buildMs >= UPGRADE_MAX_MS ? ' · üst sınır' : ' · sonraki yükseltme 1,5 kat uzun'}`}
+            /* Maliyet ve süre sunucudan gelir; iş başlamadan önce bilinmez
+             * — bkz. `factoryDisplay.ts`'in "WHAT THIS DELIBERATELY DOES NOT
+             * COMPUTE" bölümü. */
+            : 'Maliyet ve süre işi başlatınca sunucudan gelir.'}
       </AppText>
       {nextUnlock && (
         <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontSize: 10 }}>
