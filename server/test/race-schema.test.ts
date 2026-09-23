@@ -106,31 +106,118 @@ describe('race schema', () => {
 
   it('rejects a second decision for the same car on the same lap', async () => {
     await insertRun(lobbyId);
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'bosphorus', 0, 'soft']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'bosphorus', 0, 'SOFT']);
 
     // Günlük tur tur büyümeli: aynı araç başka turlarda karar verebilir...
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 20, 'bosphorus', 0, 'hard']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 20, 'bosphorus', 0, 'HARD']);
     // ...ve aynı turda takım arkadaşı ayrı bir satırdır.
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'bosphorus', 1, 'medium']);
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'ravensworth', 0, 'soft']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'bosphorus', 1, 'MEDIUM']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 12, 'ravensworth', 0, 'SOFT']);
+    // ...ve aynı araç, aynı tur numarası, BAŞKA bir yarışta yine karar verir.
+    // Bu satır olmadan anahtardan season_no/round_no düşse bile testin geri
+    // kalanı geçerdi: günlük yarışlar arasında karışırdı ve fark edilmezdi.
+    await insertRun(lobbyId, 2, 3);
+    await query(INSERT_DECISION, [lobbyId, 2, 3, 12, 'bosphorus', 0, 'SOFT']);
 
     // ...ama aynı araç + aynı tur ikinci kez yazılamaz: yeniden oynatmanın
     // deterministik kalması için İLK karar geçerlidir.
     const code = await expectViolation(INSERT_DECISION,
-      [lobbyId, 1, 1, 12, 'bosphorus', 0, 'hard']);
+      [lobbyId, 1, 1, 12, 'bosphorus', 0, 'HARD']);
     assert.equal(code, '23505', 'a duplicate decision on the same lap was accepted');
   });
 
   it('accepts only driver_idx 0 or 1', async () => {
     await insertRun(lobbyId);
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 5, 'aurelia', 0, 'soft']);
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 5, 'aurelia', 1, 'soft']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 5, 'aurelia', 0, 'SOFT']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 5, 'aurelia', 1, 'SOFT']);
 
     for (const bad of [2, -1]) {
       const code = await expectViolation(INSERT_DECISION,
-        [lobbyId, 1, 1, 5, 'aurelia', bad, 'soft']);
+        [lobbyId, 1, 1, 5, 'aurelia', bad, 'SOFT']);
       assert.equal(code, '23514', `driver_idx ${bad} was accepted`);
     }
+  });
+
+  it('accepts every CompoundKey and rejects anything else', async () => {
+    await insertRun(lobbyId);
+    // shared/src/carCustomisation.ts `CompoundKey` — beşi de yazılabilmeli.
+    const keys = ['SOFT', 'MEDIUM', 'HARD', 'INTERMEDIATE', 'WET'];
+    for (const [i, key] of keys.entries()) {
+      await query(INSERT_DECISION, [lobbyId, 1, 1, 30 + i, 'aurelia', 0, key]);
+    }
+
+    // Küçük harf hâli de dahil, tanınmayan hiçbir değer girmemeli: böyle bir
+    // satır günlük değişmez olduğu için koşuyu kalıcı olarak zehirler.
+    for (const bad of ['soft', 'ultrasoft', '']) {
+      const code = await expectViolation(INSERT_DECISION,
+        [lobbyId, 1, 1, 40, 'aurelia', 0, bad]);
+      assert.equal(code, '23514', `compound ${JSON.stringify(bad)} was accepted`);
+    }
+  });
+
+  it('reads the seed back as a JS number, not a string', async () => {
+    // `bigint` olsaydı node-postgres bunu string döndürürdü (havuz int8 için
+    // tip ayrıştırıcı kaydetmiyor) ve `seed: number` sessizce string alırdı.
+    // Sütunu genişletmek isteyen bu testi düşürür.
+    await insertRun(lobbyId);
+    const res = await query<{ seed: number }>(
+      'select seed from race_runs where lobby_id = $1', [lobbyId],
+    );
+    assert.equal(typeof res.rows[0].seed, 'number');
+    assert.equal(res.rows[0].seed, 4242);
+  });
+
+  it('freezes the replay recipe but lets the flag be stamped', async () => {
+    await insertRun(lobbyId);
+
+    // Bayrakta koşucu bitişi damgalar — bu güncelleme SERBEST olmalı.
+    await query(
+      `update race_runs set finished_at = now()
+       where lobby_id = $1 and season_no = 1 and round_no = 1`, [lobbyId],
+    );
+    const done = await query<{ finished_at: Date | null }>(
+      'select finished_at from race_runs where lobby_id = $1', [lobbyId],
+    );
+    assert.notEqual(done.rows[0].finished_at, null, 'finished_at could not be stamped');
+
+    // Tarif ise DEĞİŞMEZ: ikisini de değiştirmek reddedilmeli, yoksa aynı
+    // günlük başka bir yarış üretirdi.
+    for (const set of ['seed = 7', `snapshot = '{"entries":[1]}'::jsonb`]) {
+      const code = await expectViolation(
+        `update race_runs set ${set} where lobby_id = $1`, [lobbyId],
+      );
+      assert.equal(code, '23001', `${set} was accepted on an immutable run`);
+    }
+  });
+
+  it('rejects out-of-range laps and round numbers', async () => {
+    await insertRun(lobbyId);
+    // Sınır değerler geçmeli.
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 1, 'aurelia', 0, 'SOFT']);
+
+    for (const bad of [0, -3]) {
+      const lapCode = await expectViolation(INSERT_DECISION,
+        [lobbyId, 1, 1, bad, 'aurelia', 0, 'SOFT']);
+      assert.equal(lapCode, '23514', `lap ${bad} was accepted`);
+    }
+    for (const [season, round] of [[0, 1], [1, 0]]) {
+      const code = await expectViolation(
+        `insert into race_runs (lobby_id, season_no, round_no, seed, snapshot)
+         values ($1, $2, $3, 1, '{}'::jsonb)`,
+        [lobbyId, season, round],
+      );
+      assert.equal(code, '23514', `season ${season} / round ${round} was accepted`);
+    }
+  });
+
+  it('indexes due lobbies with the equality column first', async () => {
+    // Tarama `phase in (...) and next_race_at <= now()`; Postgres aralık
+    // sütunundan sonrasını indeksten süzemez, o yüzden sıra önemlidir.
+    const res = await query<{ indexdef: string }>(
+      `select indexdef from pg_indexes
+       where tablename = 'lobbies' and indexname = 'lobbies_due_idx'`,
+    );
+    assert.match(res.rows[0].indexdef, /\(phase, next_race_at\)/);
   });
 
   it('refuses to pay out the same race twice', async () => {
@@ -146,7 +233,7 @@ describe('race schema', () => {
 
   it('cascades every race row away when the lobby is deleted', async () => {
     await insertRun(lobbyId);
-    await query(INSERT_DECISION, [lobbyId, 1, 1, 7, 'northgate', 1, 'medium']);
+    await query(INSERT_DECISION, [lobbyId, 1, 1, 7, 'northgate', 1, 'MEDIUM']);
     await query(INSERT_SETTLEMENT, [lobbyId, 1, 1]);
 
     await query('delete from lobbies where id = $1', [lobbyId]);
