@@ -120,7 +120,7 @@ export async function rolloverRace(
       // kez uygulardı. Fabrika seviyelerine DOKUNULMAZ (taşınan tek şey
       // odur); yalnızca araç, `shared/src/season.ts`in TEK formülüyle,
       // `shared/src/factory.ts`in TEK fabrika tabanına doğru geriler.
-      const economies = await loadLobbyEconomy(lobbyId);
+      const economies = await loadLobbyEconomy(lobbyId, client);
       for (const econ of economies) {
         const floor = factoryEffects(econ.factoryLevels).winterFloorBonus;
         for (const field of CAR_FIELDS) {

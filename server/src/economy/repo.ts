@@ -106,11 +106,22 @@ export async function loadTeamEconomy(lobbyId: string, teamKey: string): Promise
   return res.rows[0] ? toTeamEconomy(res.rows[0]) : null;
 }
 
-export async function loadLobbyEconomy(lobbyId: string): Promise<TeamEconomy[]> {
-  const res = await query<EconomyRow>(
-    `select * from lobby_economy where lobby_id = $1`,
-    [lobbyId],
-  );
+/**
+ * Bir lobinin tüm takım ekonomileri.
+ *
+ * `client` VERİLMELİDİR eğer çağrı bir transaction'ın içindeyse. Aksi hâlde
+ * çağıran bir havuz bağlantısını tutarken çıplak havuzdan ikincisini ister;
+ * havuz dolduğunda tutan da isteyen de birbirini bekler ve süreç kilitlenir.
+ * Bu, Faz 3a-2'de sezon dönüşü yük testinde gerçekten gözlendi.
+ */
+export async function loadLobbyEconomy(
+  lobbyId: string,
+  client?: PoolClient,
+): Promise<TeamEconomy[]> {
+  const sql = `select * from lobby_economy where lobby_id = $1`;
+  const res = client
+    ? await client.query<EconomyRow>(sql, [lobbyId])
+    : await query<EconomyRow>(sql, [lobbyId]);
   return res.rows.map(toTeamEconomy);
 }
 
