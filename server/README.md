@@ -438,14 +438,28 @@ kırılmayabilir, aynı testte ikisi de kanıtlanmalı.
 
 ## Uç noktalar
 
+Eski TEK global lig (`src/league.ts`) ve onu servis eden `/join`, `/weekend`,
+`/checkin`, `/pit`, `/state`, WS `/live` uçları Faz 3a-2'de kaldırıldı —
+bir istemciye kendi lobisininkinden BAŞKA bir yarış verirlerdi
+(`test/legacy-gone.test.ts` bunların 404 döndüğünü, yeni ailenin ayakta
+olduğunu doğrular). Yerlerini aşağıdaki lobi başına yarış uçları aldı.
+Kimlik (`/auth/*`, `/onboarding/bootstrap`, `/me`), ekonomi
+(`/economy/action`) ve Altın (`/gold/*`) uçları yukarıdaki kendi
+bölümlerinde, lobi/slot uçları (`/slots`, `/lobby/*`, `/invites`) aşağıda
+ayrı bir tabloda.
+
+### Yarış (`src/lobby/checkin.ts`, `weekendChoices.ts`, `live.ts` — hepsi `Authorization: Bearer <token>` ister, WS hariç)
+
 | Yöntem | Yol | Gövde | Açıklama |
 |---|---|---|---|
-| GET | `/state` | — | Faz, ışık saati, check-in açılışı, pist, tablo, takımlar |
-| POST | `/join` | `teamKey, managerId` | Takımı üstlen; dolu koltuk `taken` |
-| POST | `/weekend` | `teamKey, managerId, setup?, tactics?, risk?, reliability?` | Hafta sonu seçimleri (yarış canlıyken reddedilir) |
-| POST | `/checkin` | `teamKey, managerId` | Sadece `checkin` fazında; yoksa `closed` |
-| POST | `/pit` | `teamKey, managerId, driverIdx, compound\|null` | Sonraki tur için pit çağrısı; check-in yapmamış takım için reddedilir |
-| WS | `/live` | — | `{type:'phase'}`, `{type:'lap', race}`, `{type:'result', result}` |
+| POST | `/race/checkin` | `lobbyId` | "Bu yarışı kendim süreceğim." Yalnızca `checkin` fazında; değilse `409 wrong_phase`. Koltuğu yoksa `403 forbidden` |
+| POST | `/race/pit` | `lobbyId, driverIdx (0\|1), compound, lap?` | Değişmez karar günlüğüne tek satır. Yalnızca `live`; `lap` verilmezse sunucu bir sonraki geçerli turu seçer. Hata kodları: `race_not_started`, `race_finished`, `not_checked_in`, `already_decided`, `lap_already_run` |
+| POST | `/race/weekend-choices` | `lobbyId, compound?, bias?, tactics?, qualiRisk?` | "Bu hafta sonu böyle yarışacağım." Dört alan da opsiyonel, verilmeyen dokunulmadan kalır. `open` ve `checkin` fazlarında kabul edilir, `live`den itibaren `409 wrong_phase` |
+| WS | `/race/live` | İlk uygulama mesajı: `{type:'subscribe', lobbyId, token}` | Lobi başına oda. Çerçeveler: `{type:'state', lobbyId, race}` (abone olunca / geç bağlananda), `{type:'lap', lobbyId, race}` (her tur), `{type:'unsubscribed', lobbyId}`, `{type:'error', error}` (`unauthorized`\|`forbidden`\|`invalid_request`\|`internal_error`). Token URL'de DEĞİL, ilk mesajın gövdesinde gider (bkz. `live.ts` docblock'u) |
+
+`teamKey` hiçbir zaman gövdeden okunmaz — üçü de takımı çağıranın kendi
+`lobby_seats` satırından türetir; gövdede gönderilen bir `teamKey` yok
+sayılır.
 
 ### Lobi ve slot (Faz 2 — hepsi `Authorization: Bearer <token>` ister)
 

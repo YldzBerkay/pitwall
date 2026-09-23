@@ -25,7 +25,7 @@
 - ✅ Yardımcı bot (check-in yoksa): taktik ön ayarı + hata payı; stratejist hatayı azaltır
 - ✅ Mühendis brifingi: lastik, hava, yarış kontrolü, geçiş, setup → tutulan öneri başına +8 RP, +5 skor; zayıf stratejist yanlış öneri verir
 - ✅ Sezon öncesi 3 test günü: mühendis raporu, doğru program +2 stat
-- 🔶 Online lig sunucusu (`server/`): aynı motor, WebSocket tur yayını, **5 dk check-in penceresi**, yapmayan takım yardımcı bota düşer. Bu satırın anlattığı TEK global lig ve onun `/join`/`/weekend`/`/checkin`/`/pit` uçları Faz 3a-2'de kaldırıldı — yerini lobi başına Postgres'te kalıcı yarışlar aldı (aşağıdaki "Yarış — lobi başına canlı yarış" bölümüne bakın). İstemci (`store/slices/leagueSlice.ts`) hâlâ ESKİ, artık var olmayan uçları çağırıyor; yeni `/race/*` ailesine bağlanma sırada.
+- 🔶 Online lig sunucusu (`server/`): aynı motor, WebSocket tur yayını, **5 dk check-in penceresi**, yapmayan takım yardımcı bota düşer. Bu satırın anlattığı TEK global lig ve onun `/join`/`/weekend`/`/checkin`/`/pit` uçları Faz 3a-2'de kaldırıldı — yerini lobi başına Postgres'te kalıcı yarışlar aldı (aşağıdaki "Yarış — lobi başına canlı yarış" bölümüne bakın). **Faz 3a-3 Aşama 1'de** istemcinin pit çağrısı ve hafta sonu tercihleri yolu yeni `/race/*` ailesine bağlandı (aşağıdaki "İstemci — sunucuya bağlanma" bölümüne bakın) — ama yarışın KENDİSİ hâlâ istemcide yerel olarak koşuyor; bağlanan yalnızca pit KARARLARI.
 
 ## Ekonomi ve sonuç — [ekonomi-tasarim.md](superpowers/specs/2026-09-19-ekonomi-tasarim.md)
 - ✅ **Tek ölçek knob'u**: `ECONOMY_SCALE = 1.5` (`data/economy.ts`); sponsor, ödül, maaş, transfer, fabrika ve casusluk fiyatlarının hepsi onu okur. Orta sıra takım yarış başına ~1.100 RP kazanır
@@ -122,9 +122,14 @@ akışı olmadan test edilebilir durumda.
 - ✅ **Yarış koşucusu, yarış sonuçlandırma, parc fermé / pit-lane başlangıcı,
   eski ligin kaldırılması** — Faz 3a-2'de tamamlandı, aşağıdaki "Yarış — lobi
   başına canlı yarış" bölümüne bakın.
-- ⬜ **İstemci bağlanması** — kendi planı var, bu fazın kapsamında değil;
-  mobil hâlâ kendi store'undaki ekonomiyi kullanıyor (`leagueSlice.ts`
-  artık var olmayan `/join`/`/weekend`/`/checkin`/`/pit`'i çağırıyor).
+- ⬜ **İstemci bağlanması** — kendi planı var (Faz 3a-3), bu fazın
+  kapsamında değil. **Aşama 1'de yalnızca yarışın PİT ÇAĞRISI yolu
+  bağlandı** (aşağıdaki "İstemci — sunucuya bağlanma" bölümüne bakın);
+  ekonominin kendisi (RP, Altın, geliştirme/antrenman/casusluk işleri) hâlâ
+  mobilin kendi `gameStore.ts`'inde yerel hesaplanıyor, yani **cihaz saati
+  hilesi (saati ileri alıp bir işi anında bitirmek) bugün hâlâ istemci
+  tarafında açık** — sunucudaki kapı (Faz 3a-1) sağlam ama istemci ona
+  henüz bağlı değil.
 
 ## Yarış — lobi başına canlı yarış (`server/src/lobby/*`) — Faz 3a-2
 
@@ -186,10 +191,78 @@ kaydırırdı.
   bonusu, rütbe puanı bu fazın kapsamında ödemeye başlayacak
 - ⬜ Sezon özeti, arşiv, ayrılma cezası (Faz 4)
 - ⬜ Arkadaş sistemi (Faz 5)
-- ⬜ **Mobil istemcinin yeniden bağlanması**: `mobile/src/store/slices/leagueSlice.ts`
-  hâlâ Faz 3a-2'de silinen `/join`, `/weekend`, `/checkin`, `/pit`'i çağırıyor;
-  yeni `/race/checkin`, `/race/pit`, `/race/live`'a taşınması bu fazın
-  kapsamında değildi.
+- ✅ **Mobil istemcinin yeniden bağlanması — Aşama 1'de tamamlandı**: bkz.
+  aşağıdaki "İstemci — sunucuya bağlanma" bölümü. Ölü `leagueSlice.ts` ve
+  onun artık var olmayan uçlara yaptığı çağrılar silindi.
+
+## İstemci — sunucuya bağlanma (`mobile/src/lib/api/race.ts`, `raceSocket.ts`, `store/slices/raceSlice.ts`) — Faz 3a-3 Aşama 1
+
+Plan: [2026-09-23-faz3a3-asama1-yaris.md](superpowers/plans/2026-09-23-faz3a3-asama1-yaris.md).
+Kullanıcının şartı yine aynı: **lobideki herkes AYNI yarışı görmeli**.
+Faz 3a-2 sunucu tarafını bitirdi (yarışı otorite olarak koşan, tarif saklayan
+bir sunucu); bu aşama istemcinin PİT ÇAĞRISI ve hafta sonu tercihi yolunu o
+sunucuya bağladı.
+
+- ✅ **`lib/api/race.ts`**: `checkin`, `pit`
+  (`{lobbyId, driverIdx, compound, lap?}`), `weekendChoices` — sunucunun
+  anlamlı hata kodlarını (`lap_already_run`, `already_decided`,
+  `not_checked_in`, `race_not_started`, `race_finished`, `wrong_phase`)
+  olduğu gibi taşır, tek bir jenerik hataya düşürmez.
+- ✅ **`lib/api/raceSocket.ts`**: `/race/live` soketi. Dört bağlantı durumu
+  (`connecting`/`connected`/`disconnected`/`session-invalid`), üstel geri
+  çekilmeli yeniden bağlanma, **yerel yedek YOK** — kopukken son gerçek
+  kareyi korur, hiçbir şey uydurmaz (ayrıntı ve gerekçe:
+  `mobile/README.md`'nin "Bağlantı sözleşmesi" bölümü).
+- ✅ **`store/slices/raceSlice.ts`**: `gameStore`'a bağlandı, iki durum daha
+  ekler (`idle`, `signed-out`); **kopukken pit çağrısı reddedilir, kuyruğa
+  ASLA alınmaz** — kuyruğa almak oyuncuya "gönderdim" yalanını söylerdi,
+  çünkü kuyruk boşaldığında hedeflenen tur çoktan koşmuş olurdu.
+- ✅ Hafta sonu tercihleri sunucuya gidiyor; **iki lastik seçici bire indi**
+  (`PracticePanel`/`QualifyingPanel`) — gerekçe: `mobile/README.md`'nin
+  "Tek lastik seçici" bölümü.
+- ✅ Ölü `store/slices/leagueSlice.ts` (silinmiş dört uca ve eski `/live`'a
+  çağrı yapıyordu) ve `LeagueCard`'daki ham sunucu URL alanı kaldırıldı;
+  kart artık bağlantı durumunu gösteriyor.
+- ✅ Canlı yayın artık `weather` ve `neutralised` taşıyor —
+  `LiveRacePanel`'in okuduğu alanlar sunucudan geliyor.
+- ✅ **Uçtan uca kanıt**: `server/test/race-client-integration.test.ts` —
+  gerçek sunucuyu ayağa kaldırıp mobilin KENDİ `race.ts`/`raceSocket.ts`
+  modüllerini (hiçbir sahte olmadan) ona karşı çalıştırıyor: hafta sonu
+  tercihi sunucuda görünüyor, check-in `checkin` fazında kabul ediliyor,
+  soket gerçek bir `state` çerçevesi alıyor, ileri bir tura pit çağrısı
+  kabul ediliyor, koşulmuş bir tura olanı `lap_already_run` ile reddediliyor.
+
+### Bu aşamanın BİTİRMEDİĞİ — dürüstçe söylenmeli
+
+**Yerel yarış motoru hâlâ `mobile/src/store/gameStore.ts`'te duruyor** —
+sökülmedi. Lobide koltuğu olan bir oyuncunun pit çağrıları artık sunucuya
+gidiyor, ama ekranda gördüğü yarışın KENDİSİ hâlâ istemcide yerel olarak
+hesaplanıyor; sunucunun otoriter yarışı ile istemcinin çizdiği yarış bugün
+İKİ AYRI hesap. Sebep planlı bir erteleme, gözden kaçan bir eksik değil:
+`settleRaceWeekend`in çağırdığı `finishRace(w.race)` `state.weather` ve
+`state.standings` istiyor, ve yayın BİLEREK bunları taşımıyor (`standings`/
+`entries` göndermek istemcinin kendi muhasebesini koşturmaya devam etmesine
+izin verirdi — tam olarak bu fazın kapatmaya çalıştığı ikinci gerçeklik).
+Ayrıca sunucunun oyuncuya gösterdiği bir sıralama seansı yok; ızgarayı
+`startRaceFor` içeride türetiyor. Bu ikisi Faz 3a-3 Aşama 2'nin işi —
+ayrıntı ve gerekçe için yukarıdaki plan dosyasındaki "PLAN HATASI" bölümüne
+bakın.
+
+**İstemci hâlâ yerel bir ekonomi de koşturuyor** (yukarıdaki "İstemci
+bağlanması" ⬜ maddesine bakın) — yani **cihaz saati hilesi bugün hâlâ
+istemci tarafında AÇIK**: cihaz saatini ileri almak, sunucudaki gerçek
+zamanlayıcıya dokunmadan, istemcinin kendi hesapladığı bir geliştirmeyi
+anında bitirebiliyor. Bu, ekonomi sunucuya taşındığında (Faz 3a-1) KAPANMIŞ
+gibi görünebilir ama görünmüyor: sunucu tarafı kapı sağlam, fakat istemci
+onu henüz KULLANMIYOR — Faz 3a-3 Aşama 2, yerel yarış motorüyle BİRLİKTE
+yerel ekonomiyi de söküp istemciyi sunucunun ekonomisine bağladığında
+kapanacak.
+
+- ⬜ **Faz 3a-3 Aşama 2**: sunucu yayınına `weather`/`standings`i besleyecek
+  muhasebe sunucuya taşınır, sıralama seansı kararı verilir (sunucu ızgarayı
+  yayınlar mı, yoksa istemcideki sıralama seansı kalkar mı), sonunda yerel
+  yarış motoru VE yerel ekonomi sökülür — cihaz saati hilesi burada kapanır.
+- ⬜ **Faz 3a-3 Aşama 3**: kapsamı Aşama 2'nin sonunda netleşecek.
 
 ## Kapsam dışı / sırada
 - ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)
