@@ -254,6 +254,177 @@ katılamaz. Bugün bu sorun değil çünkü satın alma yolunun günlük tavanı
 transaction içinde koşullu upsert) tekrarlanmalı, iki transaction art arda
 dizilmemeli.
 
+## Yarış (`src/lobby/runner.ts`, `replay.ts`, `raceRepo.ts`, `lease.ts`, `parcFerme.ts`, `sweep.ts`, `live.ts`)
+
+Spec: Faz 3a-2 — her lobiye kendi yarışı. Kullanıcının tek şartı: **herkes
+aynı yarışı görmeli, kimse farklı bir sonuç izlememeli**.
+
+### Tarifi sakla, yarışı değil
+
+Yarış DURUMU (o anki araçlar, olay günlüğü, tur sayacı) hiçbir yerde
+saklanmıyor. Saklanan, o durumu yeniden üreten TARİF: bir tohum, ışıklar
+söndüğü anda dondurulmuş katılımlar (`RaceSnapshot`) ve her pit kararının
+hangi tura yazıldığını tutan değişmez bir günlük (`race_decisions`).
+
+Bunun yeterli olmasının nedeni motorun DETERMİNİST olması: `advanceLap`
+rastgeleliğini yalnızca `(seed, round, lap)` üçlüsünden çeker, taşınan bir
+durumdan değil (bkz. `shared/src/raceEngine.ts`). Aynı tarifi iki kez
+oynatmak bit düzeyinde aynı yarışı verir (`replay.ts`). Bu yüzden "herkes
+aynı yarışı görür" DİSİPLİNLE (herkesin aynı anda aynı sunucuya bakması)
+değil, YAPIYLA sağlanıyor: tarif tek olduğu sürece yarış da tektir — kaç
+süreç, kaç istemci, kaç yeniden başlatma olursa olsun. Aynı yapı iki şeyi
+bedavaya getiriyor: geç bağlanan bir istemciye o ana kadarki gerçek durum
+yeniden oynatılarak gösterilebiliyor, ve çöken bir sunucu karar günlüğünden
+aynı yere geri dönebiliyor.
+
+### Tarifin parçaları — `risks` de dahil
+
+`RaceSnapshot`: `entries` (araç kurulumu, güvenilirlik, taktik, kimin
+sürdüğü), `risks` (sıralama yaklaşımı), `standings` (turdan önceki tablo),
+`aiBonus`, `rosters`, `pitLaneStarts?` (parc fermé cezası — aşağıya bakın).
+
+**`risks` süs değil, tarifin zorunlu parçası.** Başlangıç gridi
+`simulateQualifying`'in `risks`'i okumasından çıkar, grid de bütün yarışı
+belirler (`replay.ts`). Ölçüldü: `risks` snapshot'tan düşürüldüğünde yarış
+hâlâ "çalışıyor" — hiçbir şey patlamıyor — ama lideri DEĞİŞTİRİYOR: P2'den
+başlayan bir araç yerine P18'den başlayan bir araç kazanıyor
+(`race-runner.test.ts` "a dropped `risks` still runs — but produces a
+DIFFERENT race"). Bu tarifin sessiz ölümünün tam görünümü: alan eksik olsa
+da tip sistemi susuyor, yalnızca BAŞKA bir yarış üretiliyor.
+
+### Kritik kural: karar, onu tüketen turdan ÖNCE kalıcı olmalı
+
+Bu fazın değiştirilemeyen kuralı. Eskiden hem uç nokta hem tik döngüsü
+"kaçıncı turdayız"ı SAATTEN ayrı ayrı hesaplıyordu ve aralarında kilit yoktu
+— günlüğü okuduktan SONRA ama N. turu simüle etmeden ÖNCE yazılan bir karar
+saatin kapısından geçer, canlı yarışça hiç görülmez, yalnızca sonraki bir
+yeniden oynatmada uygulanırdı. İki farklı yarış.
+
+Artık kapı `race_runs.last_lap`'e bakıyor ve YAPISAL olarak kapatılmış:
+
+1. Tik döngüsü `last_lap = target`'ı simülasyondan ÖNCE damgalar ve
+   TAAHHÜT EDER (`advanceLastLap`, `runner.ts`).
+2. `appendDecision` aynı satırı `for update` ile KİLİTLER (`raceRepo.ts`).
+   Damga sürerken gelen bir yazma bekler; kilit çözülünce Postgres satırı
+   YENİDEN OKUR ve `last_lap`'in artık TAAHHÜT EDİLMİŞ değerini görür.
+3. `insert ... select ... where run.last_lap < $lap`: tur koşmuşsa hiç satır
+   üretilmez.
+
+**Kapının `insert`in kendi `where`'inde olması TEK BAŞINA yetmezdi.**
+READ COMMITTED altında düz bir `select last_lap` (kilitsiz) damganın ESKİ,
+taahhüt-öncesi değerini görebilir — kilit yoksa okuma damgalama işlemini
+BEKLEMEZ. Kapıyı gerçekten kapatan `for update`'in kendisi: yazmayı
+damganın taahhüdüne kadar erteleyen o. Bu satır dosyada `run` CTE'sinin
+`for update`'i olmadan aynı `where` ifadesiyle dursaydı, testler yeşil
+kalır ama pencere açık kalırdı — tam da bu yüzden değişmezlik testleri
+(`race-invariants.test.ts` #3) kırıp geri koyarak yazıldı, salt okuma
+kanıtı yeterli sayılmadı.
+
+### İlk karar kazanır — pit çağrısı iptal desteklenmiyor
+
+Aynı `(tur, takım, sürücü)` için ikinci bir karar sessizce reddedilir
+(`race_decisions_pk`, `ilk karar geçerli`). Zorunlu: günlük değişmez
+olmalı ki yeniden oynatma deterministik kalsın — günlüğü erken okuyup
+yarışı oynatmış bir istemci ile geç okuyan bir başkası aksi halde FARKLI
+yarış görürdü. Bunun doğal sonucu: **pit çağrısını iptal etmek ya da
+değiştirmek bilerek desteklenmiyor.** "Vazgeçtim" bir üçüncü karar değil,
+aynı (tur, takım, sürücü) için İKİNCİ bir yazmadır ve aynı kuralla
+reddedilir.
+
+### Kiralı sahiplik
+
+Bir lobinin yarışını aynı anda yalnızca bir süreç sürer — kalıcı bir bayrak
+değil, süresi olan bir KİRA (`lease.ts`). Sahip her tikte `renewLease` ile
+kirasını yeniler; UPDATE'in `where`'i hem "hâlâ sahibim" hem "kira canlı"
+sorusunu aynı anda, kontrol-sonra-davran penceresi bırakmadan cevaplar.
+
+`LEASE_MS = 15_000`, tik aralığının (`RACE_TICK_MS = 2_500`) ALTI KATI —
+rastgele değil, iki yönde de ölçülen bir arıza biçiminin ortası: çok kısa
+olsaydı sağlıklı ama o an yavaş bir sahip (GC duraklaması, ağır bir tik) tek
+tikte kirasını kaybeder ve yarış İKİ süreçte sürülür; çok uzun olsaydı ölü
+bir sahibin yarışı kira dolana kadar donmuş kalır ve o süre boyunca oyuncular
+hareketsiz bir ekran görür. Altı kat, sağlıklı bir sahibin arka arkaya beş
+tik kaçırabilmesini, ölü bir sahibin ise en geç 15 sn'de devredilmesini
+sağlıyor.
+
+### Evre ilerlemesi kirasız, tik döngüsü kiralı
+
+`acquireDueLobbies`'in taradığı ve kiraladığı evreler (`open`, `checkin`,
+`live`) İLE bir lobinin `open→checkin→live→result` evre geçişini kimin
+yaptığı AYRI meseleler. Evre geçişi veritabanı-otoriter ve kirasız çalışır
+— hangi süreç ilerletirse ilerletsin sonuç aynıdır, çünkü karar sadece
+`phase`/`next_race_at` sütunlarına bakar. Kira SADECE tikleyen tarafı
+(yani `RaceState`i bellekte ilerleten `RaceRunner`'ı) tekilleştirmek için
+var, çünkü onun sonucu iki süreçte AYRIŞABİLİR — bir evre geçişi ayrışmaz.
+`openRace`'in "bu lobi yarışıyor mu" sorusunu kendi `advanceDuePhases`
+çağrısının dönüşüne değil, doğrudan `phase = 'live'` satırına dayandırması
+da aynı gerekçeden: dönüş boş gelebilir, satır otoriterdir.
+
+### Bellekteki durum kararlı yol, yeniden oynatma kurtarma yolu
+
+Her tikte tarifi baştan oynatmak DOĞRU sonucu verir ama maliyeti turların
+KARESİDİR: bu depoda ölçüldü, 78 turluk bir Grand Prix'yi baştan oynatmak
+lobi başına ~33 ms CPU; durumu bellekte tutup tik başına tek `advanceLap`
+çağırmak ~0.9 ms. 300 eşzamanlı lobide fark tik turu başına ~0.25 saniye —
+tik aralığının onda biri, tek bir işi yeniden yapmak için. Bu yüzden
+`RaceRunner`'ın bellekteki `RaceState`i KARARLI yoldur; `replayRace` yalnızca
+ÇÖKME SONRASI DEVAM ve GEÇ BAĞLANAN İSTEMCİ için çağrılır. İkisinin aynı
+yarışı vermesi tesadüf değil koşuldur: ikisi de `decisionsForLap`'i ve
+`advanceLap`'i kullanır; iki kopya olsaydı ayrışabilirlerdi.
+
+### Parc fermé / pit yolu başlangıcı
+
+Gerçek F1 kuralı: sıralama bitince araçlar parc fermé'ye girer, takım artık
+dokunamaz. Dokunursa araç grid yerini KAYBEDER — "sondan başlamak" değil,
+ondan DAHA KÖTÜsü: son gridçi ışıklarla kalkar, pit yolundan çıkan araç
+sahanın TAMAMI geçtikten sonra, üstüne pit yolu transitini ödeyerek katılır.
+Ceza tek başına saf bir kayıp olsaydı hiçbir takım bilerek almazdı; gerçek
+kuralda ceza iki TELAFİYLE gelir — sınırsız setup serbestisi ve başlangıç
+lastiğinin serbest seçimi (`runner.ts` `pitLaneCompound`).
+
+Bu yüzden **telafinin gerçekten verilmesi zorunlu** — düşürülürse mekanik
+tersine döner (saf ceza, gizli bir tuzak). `parcFerme.ts` cezayı hesaplarken
+lastiği bilerek BOŞ bırakır (saat/tohum orada yok); `runner.ts` doldurmazsa
+motor `setup.compound`'a düşer ve oyuncu telafisiz ceza yer. Orta satırın
+(`biten ama claim edilmemiş iş`) iki AYRI sözü olduğu için
+(`race-invariants.test.ts` #6) bunu iki BAĞIMSIZ iddiayla sınıyor: ceza
+YAZILDI mı, iyileşme GERÇEKTEN uygulandı mı — biri kırılıp diğeri
+kırılmayabilir, aynı testte ikisi de kanıtlanmalı.
+
+### Dört sözleşme — bu fazda ölçülerek bulundu
+
+1. **Havuzu ISITMAYAN bir eşzamanlılık testi hiçbir şey KANITLAMAZ.**
+   `pool.connect()`'in soğuk gecikmesi eşzamanlı çağıranları istemeden
+   sıraya dizer ve yarış penceresini tamamen gizler. Ölçüldü: ısıtmadan 30
+   eşzamanlı çağırandan yalnızca 1'i gerçekten çekişme penceresine giriyor
+   — yani DELİBERATE OLARAK kırılmış bir kod bile 5/5 koşuda "geçiyor".
+   `Promise.all` ile ~10 önemsiz sorgu atıp havuzu ısıtmadan yazılan hiçbir
+   eşzamanlılık iddiası güvenilir değildir (bkz. `race-repo.test.ts`,
+   `race-lease.test.ts`).
+2. **`for update skip locked` burada bir VERİM tercihidir, DOĞRULUK
+   tercihi değil.** Dışlamayı sağlayan satır kilidinin kendisi
+   (`for update`): ölçüldü, düz `for update` de (skip locked'sız) 10/10
+   koşuda tek sahiplik verdi, çünkü bekleyen çağıran kilit çözülünce
+   `where`'i YENİDEN değerlendiriyor ve artık kirası dolu olan satırı
+   eliyor. `skip locked`'ın tek doğruluğa-yakın kazancı: bekleyen kalmadığı
+   için, aynı anda birden çok satır kilitleyen iki taramanın satırları
+   FARKLI sırada alıp birbirini kilitlemesi (deadlock) riski de yok —
+   `order by next_race_at` eşit değerlerde toplam sıra vermiyor, yani bu
+   olasılık gerçek.
+3. **Bir transaction İÇİNDEYKEN yapılan okuma o transaction'ın client'ını
+   kullanmalı.** Elde tutulan bir transaction client'ı varken düz havuzdan
+   (`query()`) okumak İKİNCİ bir bağlantı ister; havuz dolunca elindeki
+   bağlantıyı bırakmayan tutucu ile yeni bağlantı bekleyen istekçi
+   BİRBİRİNİ bekler. Kanıtlandı: `PG_POOL_MAX=1` ile eski desen
+   `race-season.test.ts`'teki 6 testten 5'ini düşürüyor.
+4. **Postgres `jsonb` anahtarlarını YENİDEN SIRALAR.** Değerler jsonb
+   gidiş-dönüşünden bozulmadan çıkar ama anahtar sırası değişebilir — bu
+   yüzden bir tarifi ya da durumu SERİLEŞTİRİLMİŞ METİN olarak
+   karşılaştırmak yanlış alarm üretir. Karşılaştırma `cars`/`events` gibi
+   somut alanları (ya da tümü için `assert.deepEqual`, hiçbir zaman
+   `JSON.stringify` eşitliği tüm nesne üzerinde) hedeflemeli
+   (`race-runner.test.ts` "resumes after a crash..." testindeki yorum).
+
 ## Uç noktalar
 
 | Yöntem | Yol | Gövde | Açıklama |

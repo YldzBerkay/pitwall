@@ -25,7 +25,7 @@
 - ✅ Yardımcı bot (check-in yoksa): taktik ön ayarı + hata payı; stratejist hatayı azaltır
 - ✅ Mühendis brifingi: lastik, hava, yarış kontrolü, geçiş, setup → tutulan öneri başına +8 RP, +5 skor; zayıf stratejist yanlış öneri verir
 - ✅ Sezon öncesi 3 test günü: mühendis raporu, doğru program +2 stat
-- ✅ Online lig sunucusu (`server/`): aynı motor, sabit saat, WebSocket tur yayını; `/join`, `/weekend`, `/checkin`, `/pit`; **5 dk check-in penceresi**, yapmayan takım yardımcı bota düşer; istemcide Race Week → Online Lig kartı, yarış sunucudan aynı canlı panele akar (`store/slices/leagueSlice.ts`). Kalıcılık yok (Postgres sırada)
+- 🔶 Online lig sunucusu (`server/`): aynı motor, WebSocket tur yayını, **5 dk check-in penceresi**, yapmayan takım yardımcı bota düşer. Bu satırın anlattığı TEK global lig ve onun `/join`/`/weekend`/`/checkin`/`/pit` uçları Faz 3a-2'de kaldırıldı — yerini lobi başına Postgres'te kalıcı yarışlar aldı (aşağıdaki "Yarış — lobi başına canlı yarış" bölümüne bakın). İstemci (`store/slices/leagueSlice.ts`) hâlâ ESKİ, artık var olmayan uçları çağırıyor; yeni `/race/*` ailesine bağlanma sırada.
 
 ## Ekonomi ve sonuç — [ekonomi-tasarim.md](superpowers/specs/2026-09-19-ekonomi-tasarim.md)
 - ✅ **Tek ölçek knob'u**: `ECONOMY_SCALE = 1.5` (`data/economy.ts`); sponsor, ödül, maaş, transfer, fabrika ve casusluk fiyatlarının hepsi onu okur. Orta sıra takım yarış başına ~1.100 RP kazanır
@@ -119,14 +119,77 @@ akışı olmadan test edilebilir durumda.
   musluğu, eşzamanlılıkta günlük tavan, vb.) kapanış kanıtı; `npm test`
   413 sunucu testiyle geçiyor, `npm run typecheck` (server + shared +
   mobile) temiz.
-- ⬜ **Yarış koşucusu, yarış sonuçlandırma, parc fermé / pit-lane başlangıcı**
-  (Faz 3a-2) — bitmemiş bir iş yarışa nasıl gireceğini bu faz kararlaştırmadı,
-  sadece mümkün kılacak veri modelini kurdu.
-- ⬜ **Eski ligin kaldırılması** (Faz 3a-2) — `server/src/lobby`'nin canlı
-  yarış motoru hâlâ eski (istemci tarafı) ekonomiye bağlı; yeni ekonomi
-  onun yerini alana kadar ikisi bir arada duruyor.
+- ✅ **Yarış koşucusu, yarış sonuçlandırma, parc fermé / pit-lane başlangıcı,
+  eski ligin kaldırılması** — Faz 3a-2'de tamamlandı, aşağıdaki "Yarış — lobi
+  başına canlı yarış" bölümüne bakın.
 - ⬜ **İstemci bağlanması** — kendi planı var, bu fazın kapsamında değil;
-  mobil hâlâ kendi store'undaki ekonomiyi kullanıyor.
+  mobil hâlâ kendi store'undaki ekonomiyi kullanıyor (`leagueSlice.ts`
+  artık var olmayan `/join`/`/weekend`/`/checkin`/`/pit`'i çağırıyor).
+
+## Yarış — lobi başına canlı yarış (`server/src/lobby/*`) — Faz 3a-2
+
+Ayrıntı ve tasarım gerekçesi için `server/README.md`'nin "Yarış" bölümüne
+bakın. Kullanıcının şartı: **herkes aynı yarışı görmeli**, ve bu fazın
+çözümü yarış DURUMUNU değil onu üreten TARİFİ (tohum + dondurulmuş katılım +
+değişmez pit karar günlüğü) saklamak — motor deterministik olduğu için
+tarifi yeniden oynatmak bit düzeyinde aynı yarışı veriyor.
+
+- ✅ **Şema** (`004_race.sql`, `005_race_progress.sql`): `race_runs` (tarif,
+  değişmez tetikleyiciyle korunur), `race_decisions` (ekleme-only karar
+  günlüğü, ilk karar kazanır), `race_settlements` (ödeme tekilleştirme).
+- ✅ **Işıklar söner** (`runner.ts` `startRaceFor`): lobinin o anki katılımını,
+  parc fermé kararını ve sıralama risklerini tek bir tarife dondurur, bir kez
+  yazar. İkinci bir başlatma veritabanı kısıtından fırlar.
+- ✅ **Yeniden oynatma** (`replay.ts`): saf, deterministik, çöken sunucunun
+  devamı ve geç bağlanan istemcinin görüntüsü aynı fonksiyondan çıkar.
+- ✅ **Tik döngüsü** (`runner.ts`): bellekteki `RaceState` kararlı yol
+  (~0.9 ms/tik), tam yeniden oynatma yalnızca kurtarmada (~33 ms/78 tur) —
+  ikisi aynı yarışı vermek ZORUNDA, `race-runner.test.ts` ve
+  `race-invariants.test.ts` bunu çökme senaryosuyla kanıtlıyor.
+- ✅ **Kritik kural yapısal**: bir pit kararı onu tüketen tur simüle
+  edilmeden önce kalıcı olmak zorunda — `race_runs.last_lap` simülasyondan
+  ÖNCE damgalanıp taahhüt ediliyor, `appendDecision` aynı satırı `for
+  update` ile kilitleyip o damgaya göre kapı veriyor. Pit çağrısı iptali
+  bilerek desteklenmiyor (ilk karar kazanır, günlük değişmez).
+- ✅ **Kiralı sahiplik** (`lease.ts`): bir lobinin yarışını aynı anda tek
+  süreç sürer, `LEASE_MS` (15 sn) tikin (2.5 sn) altı katı; evre ilerlemesi
+  ise veritabanı-otoriter ve kirasız.
+- ✅ **Parc fermé / pit-lane başlangıcı** (`parcFerme.ts`): devam eden iş
+  aracı sakatlar (normal start); bitmiş-ama-teslim-alınmamış iş TAM
+  uygulanır VE araç pit yolundan başlar, serbest başlangıç lastiğiyle
+  birlikte (telafisiz ceza mekaniği tersine çevirirdi).
+- ✅ **Muhasebe** (`economy/settle.ts`): yarış bittiğinde HER koltuğa
+  (AI dahil) RP yazılır, şampiyona tablosu aynı transaction'da üretilir,
+  `finishRun` + evre geçişi + ödeme TEK taahhütte (aksi halde çöken bir
+  süreç "bitmiş ama hiç ödenmemiş" bir yarış bırakırdı — bu fazın düzelttiği
+  gerçek hata).
+- ✅ **Sezon/tur dönüşü ve süpürme döngüsü** (`sweep.ts`, `rollover.ts`):
+  vakti gelen lobileri kiralar, tikler, bayrakta bir sonraki tura döner.
+- ✅ **Eski tek global lig kaldırıldı**: `server/src/league.ts` ve onu
+  servis eden `/join`, `/weekend`, `/checkin`, `/pit`, `/state`, eski
+  WS `/live` silindi (`test/legacy-gone.test.ts`). Yerlerini `/race/checkin`,
+  `/race/pit` ve lobi başına `/race/live` odaları aldı.
+- ✅ **`server/test/race-invariants.test.ts`**: spec §12'deki 10
+  değişmezliğin kapanış kanıtı — her biri kaynakta kırılıp testin gerçekten
+  kırmızıya döndüğü, sonra geri konulduğu ölçülmüş bir turla yazıldı.
+
+**Kazanç döngüsü kısmen kapandı — hangi kısmı DEĞİL:** yarış ödülü
+(`racePrize`, `@pitwall/shared/sponsors`) artık gerçekten RP OLARAK ödeniyor.
+Sponsor ücreti, brifing bonusu ve rütbe puanı **HENÜZ ödenmiyor** — bilerek,
+uydurma sayı yerine: sunucuda yarış başına bir rütbe puanı formülü yok,
+`lobby_seats` hiçbir hafta sonu seçimini (setup/taktik/risk) saklamıyor, ve
+bir sponsorluk tablosu yok. Bu üçü olmadan ödemek ekonomi kapısını sessizce
+kaydırırdı.
+
+- ⬜ Roster/sözleşme/personel sunucuya taşınması (Faz 3b)
+- ⬜ Sponsorlar ve tam sezon muhasebesi (Faz 3c) — sponsor ücreti, brifing
+  bonusu, rütbe puanı bu fazın kapsamında ödemeye başlayacak
+- ⬜ Sezon özeti, arşiv, ayrılma cezası (Faz 4)
+- ⬜ Arkadaş sistemi (Faz 5)
+- ⬜ **Mobil istemcinin yeniden bağlanması**: `mobile/src/store/slices/leagueSlice.ts`
+  hâlâ Faz 3a-2'de silinen `/join`, `/weekend`, `/checkin`, `/pit`'i çağırıyor;
+  yeni `/race/checkin`, `/race/pit`, `/race/live`'a taşınması bu fazın
+  kapsamında değildi.
 
 ## Kapsam dışı / sırada
 - ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)
