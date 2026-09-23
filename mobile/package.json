@@ -9,7 +9,8 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
-    "econ": "tsx scripts/econ-check.ts"
+    "econ": "tsx scripts/econ-check.ts",
+    "test": "tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "dependencies": {
     "@expo-google-fonts/barlow-condensed": "^0.4.1",
