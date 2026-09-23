@@ -6,7 +6,8 @@
  * ayağa kaldırıp şunu doğrular: eski uçlar 404, yeni `/race/...` ailesi ve
  * ilgisiz bir uç (`/onboarding/bootstrap`) hâlâ ayakta.
  */
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
+import { closePool } from '../src/db/pool.ts';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
@@ -30,12 +31,25 @@ async function waitForServer(url: string, tries = 100): Promise<void> {
 }
 
 describe('legacy single-league surface is gone', () => {
+  let stopServer: (() => Promise<void>) | null = null;
+
   before(async () => {
     // `src/index.ts` kendi kendini ayağa kaldıran bir modül: import etmek
     // migrasyonları çalıştırıp gerçek sunucuyu dinlemeye başlatır — tıpkı
     // `npx tsx src/index.ts` gibi, ama aynı süreç içinde.
-    await import('../src/index.ts');
+    const app = await import('../src/index.ts');
+    stopServer = app.shutdown;
+    await app.ready;
     await waitForServer(`${base}/onboarding/bootstrap`);
+  });
+
+  // Sunucu, soketler ve süpürme zamanlayıcısı kapatılmazsa olay döngüsü
+  // boşalmaz: bu dosyanın alt süreci hiç bitmez ve `node --test` sırayla
+  // koştuğu için ondan SONRAKİ hiçbir test dosyası çalışmaz. Paket sessizce
+  // asılı kalır, başarısız bile olmaz.
+  after(async () => {
+    await stopServer?.();
+    await closePool();
   });
 
   it('legacy GET /state returns 404', async () => {

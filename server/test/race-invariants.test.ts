@@ -85,7 +85,12 @@ const at = (t0: Date, laps: number) => new Date(t0.getTime() + laps * RACE_TICK_
 
 describe('race invariants — Faz 3a-2 §12', () => {
   before(async () => { await runMigrations(); });
+  // 9. değişmez gerçek sunucuyu ayağa kaldırıyor. Kapatılmazsa olay döngüsü
+  // boşalmaz, alt süreç bitmez ve `node --test` sonraki dosyalara hiç geçmez.
+  let stopServer: (() => Promise<void>) | null = null;
+
   after(async () => {
+    await stopServer?.();
     for (const id of createdLobbies) await query('delete from lobbies where id = $1', [id]);
     for (const id of createdUsers) await query('delete from users where id = $1', [id]);
     await closePool();
@@ -257,12 +262,9 @@ describe('race invariants — Faz 3a-2 §12', () => {
     process.env.PORT ??= '8798';
     const base = `http://127.0.0.1:${process.env.PORT}`;
 
-    await import('../src/index.ts');
-    for (let i = 0; i < 100; i += 1) {
-      try { await fetch(`${base}/onboarding/bootstrap`); break; } catch {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }
+    const app = await import('../src/index.ts');
+    stopServer = app.shutdown;
+    await app.ready;
 
     for (const path of ['/join', '/weekend', '/checkin', '/pit', '/state']) {
       const res = await fetch(`${base}${path}`, { method: 'POST', body: '{}' });

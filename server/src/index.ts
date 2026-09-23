@@ -80,30 +80,58 @@ const raceSweep = createRaceSweep(raceSweepOwnerId, liveHub);
 let raceSweepTimer: NodeJS.Timeout | null = null;
 
 /**
- * Kapanışta: zamanlayıcı durur ve elimizdeki her kira HEMEN bırakılır. Bunu
+ * Süreci canlı tutan HER ŞEYİ durdurur: süpürme zamanlayıcısı, açık soketler,
+ * dinleyen sunucu — ve elimizdeki her kira HEMEN bırakılır. Kirayı bırakmayı
  * atlarsak yeniden başlayan bir süreç, sürdüğümüz her lobi için `LEASE_MS`
- * (15 sn) beklemek zorunda kalır — kısa bir deploy bile oyunculara donmuş bir
+ * (15 sn) beklemek zorunda kalır; kısa bir deploy bile oyunculara donmuş bir
  * ekran gibi görünür.
+ *
+ * `process.exit` ÇAĞIRMAZ ve bu bilinçlidir. Bu modülü içeri alan bir test,
+ * gerçek bir sunucuya ihtiyaç duyduğu için alır; kapatma yolu yoksa alt süreç
+ * olay döngüsü boşalmadığı için hiç bitmez ve `node --test` sırayla koştuğu
+ * için ondan sonraki hiçbir dosya çalışmaz. Sinyal işleyicileri çıkışı kendisi
+ * yapar; testler sadece `shutdown()` çağırıp doğal kapanışa bırakır.
+ *
+ * Tekrar çağrılabilir: ikinci çağrı ilkinin sözünü döndürür.
  */
-async function shutdown(signal: string): Promise<void> {
-  console.log(`[pit-wall] ${signal} alındı, kapanılıyor…`);
-  if (raceSweepTimer) clearInterval(raceSweepTimer);
-  try {
-    await raceSweep.releaseAll();
-  } catch (err) {
-    console.error('[pit-wall] kapanışta kiraları bırakırken hata:', err);
-  }
-  process.exit(0);
+let shutdownPromise: Promise<void> | null = null;
+export function shutdown(): Promise<void> {
+  shutdownPromise ??= (async () => {
+    if (raceSweepTimer) clearInterval(raceSweepTimer);
+    raceSweepTimer = null;
+    try {
+      await raceSweep.releaseAll();
+    } catch (err) {
+      console.error('[pit-wall] kapanışta kiraları bırakırken hata:', err);
+    }
+    // Açık soketler tek başlarına olay döngüsünü canlı tutar; `close()` yeni
+    // bağlantıyı reddeder ama mevcutları beklerdi.
+    for (const socket of liveWss.clients) socket.terminate();
+    await new Promise<void>((resolve) => liveWss.close(() => resolve()));
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  })();
+  return shutdownPromise;
 }
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT', () => void shutdown('SIGINT'));
+
+function shutdownOnSignal(signal: string): void {
+  console.log(`[pit-wall] ${signal} alındı, kapanılıyor…`);
+  void shutdown().then(() => process.exit(0));
+}
+process.on('SIGTERM', () => shutdownOnSignal('SIGTERM'));
+process.on('SIGINT', () => shutdownOnSignal('SIGINT'));
 
 // We must not serve any request against a half-applied schema, so
 // migrations run to completion before the server starts listening. A
 // migration failure is fatal: log it and exit rather than silently falling
 // back to whatever schema state happens to exist.
-runMigrations()
-  .then(() => {
+/**
+ * Sunucu gerçekten dinlemeye başladığında çözülür. Testler bunu bekler —
+ * sabit bir `sleep` yerine, çünkü göç süresi makineye göre değişir ve uyku
+ * ya yavaş ya da güvenilmezdir.
+ */
+export const ready: Promise<void> = runMigrations()
+  .then(() => new Promise<void>((resolve) => {
     server.listen(port, () => {
       console.log(`[pit-wall] listening on :${port}`);
       // `now` HER ATIŞTA burada, `new Date()` ile örneklenir — süpürücünün
@@ -116,8 +144,9 @@ runMigrations()
           console.error('[pit-wall] yarış süpürmesi patladı:', err);
         });
       }, RACE_TICK_MS);
+      resolve();
     });
-  })
+  }))
   .catch((err: unknown) => {
     console.error('[pit-wall] migrations failed, refusing to start:', err);
     process.exit(1);
