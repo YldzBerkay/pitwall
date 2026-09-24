@@ -38,15 +38,28 @@ import type { LobbyPhase } from './lobbyRepo.ts';
  */
 export const CHECKIN_WINDOW_MS = 5 * 60 * 1000;
 
-/** Bu çağrıda gerçekten ilerleyen bir lobi. */
+/**
+ * Bu çağrıda gerçekten ilerleyen bir lobi.
+ *
+ * `seasonNo`/`roundNo` BURADA, çünkü `sweep.ts` bu geçişi `hub.publishPhase`
+ * ile duyururken istemciye SEZON VE TUR da vermek zorunda (görev brifi:
+ * "istemcinin doğru settlement'ı isteyebilmesi ve yerel tur sayacının
+ * kalkacak olması" için). İkinci bir sorguyla lobiyi yeniden okumak yerine
+ * bu UPDATE'in zaten döndürdüğü satırdan taşımak: aynı satır kilidi altında
+ * okunan tek bir gerçek, araya sızabilecek bir yarış koşulu yok.
+ */
 export interface PhaseAdvance {
   lobbyId: string;
   from: LobbyPhase;
   to: LobbyPhase;
+  seasonNo: number;
+  roundNo: number;
 }
 
 interface AdvancedRow {
   id: string;
+  season_no: number;
+  round_no: number;
 }
 
 /**
@@ -79,20 +92,24 @@ export async function advanceDuePhases(now: Date): Promise<PhaseAdvance[]> {
     const toCheckin = await client.query<AdvancedRow>(
       `update lobbies set phase = 'checkin'
         where phase = 'open' and next_race_at <= $1
-        returning id`,
+        returning id, season_no, round_no`,
       [checkinThreshold],
     );
-    for (const row of toCheckin.rows) moved.push({ lobbyId: row.id, from: 'open', to: 'checkin' });
+    for (const row of toCheckin.rows) {
+      moved.push({ lobbyId: row.id, from: 'open', to: 'checkin', seasonNo: row.season_no, roundNo: row.round_no });
+    }
 
     // 2) checkin → live: yarış anı geçtiyse. Yukarıdaki adımın yeni
     // yazdıklarını da görür — yetişme tam olarak buradan doğar.
     const toLive = await client.query<AdvancedRow>(
       `update lobbies set phase = 'live'
         where phase = 'checkin' and next_race_at <= $1
-        returning id`,
+        returning id, season_no, round_no`,
       [now],
     );
-    for (const row of toLive.rows) moved.push({ lobbyId: row.id, from: 'checkin', to: 'live' });
+    for (const row of toLive.rows) {
+      moved.push({ lobbyId: row.id, from: 'checkin', to: 'live', seasonNo: row.season_no, roundNo: row.round_no });
+    }
 
     return moved;
   });

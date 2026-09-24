@@ -27,6 +27,7 @@ import { SEAT_LADDER } from '../src/lobby/grid.ts';
 import { RACE_TICK_MS } from '../src/lobby/runner.ts';
 import { createLiveHub, LIVE_PATH, type LiveHub } from '../src/lobby/live.ts';
 import { createRaceSweep } from '../src/lobby/sweep.ts';
+import { CHECKIN_WINDOW_MS } from '../src/lobby/phase.ts';
 import { trackForRound } from '@pitwall/shared/tracks';
 
 const createdLobbies: string[] = [];
@@ -297,10 +298,19 @@ describe('race sweep — the loop that drives everything', () => {
       ws.send(JSON.stringify({ type: 'subscribe', lobbyId, token }));
       const ack = await next();
       assert.equal(ack.type, 'state');
+      await next(); // abonelik anının `phase` mesajı — bu testin konusu değil
 
       // İlk atış yarışı başlatır (lap 0); yayın gerekmiyor. İkinci atış bir
       // tur ilerletir ve BUNU yayınlamalıdır.
       await sweep.sweepOnce(t0);
+      // Yukarıdaki ilk atış aynı zamanda `open→checkin→live` YETİŞMESİNİ de
+      // yapıyor (`advanceDuePhases`in yetişme davranışı — `phase.ts`
+      // docblock'u): `setDueOpen` lobiyi hem check-in penceresinin hem de
+      // yarış anının içine yerleştiriyor. Bu, iki `phase` çerçevesini
+      // (checkin, live) kuyruğa koyar; bu testin konusu onlar DEĞİL —
+      // `race-sweep.test.ts`teki ayrı "phase change" testleri onları sınıyor.
+      await next(); // phase: checkin
+      await next(); // phase: live
       await sweep.sweepOnce(at(t0, 1));
 
       const lap = await next();
@@ -310,6 +320,116 @@ describe('race sweep — the loop that drives everything', () => {
 
       ws.close();
       await once(ws, 'close');
+    });
+
+    /** Bu iç describe'ın soketine bağlanan küçük bir yardımcı — yukarıdaki
+     * testteki tekrar eden kuyruklama mantığının tek bir yerde toplanmış
+     * hâli, aşağıdaki iki YENİ testin ihtiyacı için. */
+    function connectClient(): Promise<{ ws: WebSocket; next: () => Promise<any>; close: () => Promise<void> }> {
+      const ws = new WebSocket(`${base}${LIVE_PATH}`);
+      const queue: any[] = [];
+      let waiting: ((msg: any) => void) | null = null;
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(String(raw));
+        if (waiting) { const w = waiting; waiting = null; w(msg); } else queue.push(msg);
+      });
+      const next = (): Promise<any> => new Promise((resolve) => {
+        const head = queue.shift();
+        if (head !== undefined) resolve(head);
+        else waiting = resolve;
+      });
+      return once(ws, 'open').then(() => ({
+        ws,
+        next,
+        close: async () => { ws.close(); await once(ws, 'close'); },
+      }));
+    }
+
+    /** Abone olur ve abonelik anının iki mesajını (`state`, `phase`) tüketir. */
+    async function subscribeClient(lobbyId: string, token: string) {
+      const client = await connectClient();
+      client.ws.send(JSON.stringify({ type: 'subscribe', lobbyId, token }));
+      const state = await client.next();
+      const phase = await client.next();
+      return { client, state, phase };
+    }
+
+    // ── 7. ASIL TEST: yarış SÜRMEZKEN de faz değişikliği aboneye ulaşır ──────
+    //
+    // Görevin çıkış noktası tam bu: `open → checkin` hiçbir yarış tiklemeden,
+    // yalnızca `advanceDuePhases`in kendi UPDATE'iyle olur. Bu geçişi
+    // duyurmayan bir yayın, demoda yarış sırasında çalışıp asıl kör noktada
+    // (hafta sonunun yarış DIŞI kısmında) sessiz kalırdı — tam olarak brifin
+    // uyardığı "bazen çalışan çerçeve".
+
+    it('a phase change (open→checkin) reaches a subscribed client while no race is ticking', async () => {
+      const sweep = createRaceSweep('owner-6', hub);
+      const { lobbyId, token } = await makeLobby('phase-checkin');
+      const t0 = new Date();
+      // Yarışa CHECKIN_WINDOW_MS'ten az kaldı ama vakti HENÜZ gelmedi: bu
+      // atışta yalnızca open→checkin olmalı, hiçbir yarış AÇILMAMALI.
+      await query(
+        `update lobbies set phase = 'open', season_no = 1, round_no = $2,
+                            next_race_at = $3, race_owner = null, race_lease_until = null
+          where id = $1`,
+        [lobbyId, ROUND, new Date(t0.getTime() + CHECKIN_WINDOW_MS - 1_000)],
+      );
+
+      const { client, phase } = await subscribeClient(lobbyId, token);
+      assert.equal(phase.type, 'phase');
+      assert.equal(phase.phase, 'open');
+
+      const result = await sweep.sweepOnce(t0);
+      assert.equal(result.claimed, 0, 'bu atışta bir yarış devralınmamalıydı — henüz checkin bile değildi');
+      assert.ok(result.phaseAdvances >= 1, 'open→checkin ilerlemedi');
+
+      const change = await client.next();
+      assert.equal(change.type, 'phase', 'faz değişikliği aboneye HİÇ ulaşmadı');
+      assert.equal(change.lobbyId, lobbyId);
+      assert.equal(change.phase, 'checkin');
+      assert.equal(change.seasonNo, 1);
+      assert.equal(change.roundNo, ROUND);
+      assert.equal('standings' in change, false, 'faz çerçevesi standings taşıyor — tarif sızıyor');
+      assert.equal('entries' in change, false, 'faz çerçevesi entries taşıyor — tarif sızıyor');
+      assert.equal('rosters' in change, false, 'faz çerçevesi rosters taşıyor — tarif sızıyor');
+
+      await client.close();
+    });
+
+    // ── 8. result→open de aboneye ulaşır, YENİ sezon/tur bilgisiyle ─────────
+
+    it('a phase change (result→open, into the next round) reaches a subscribed client', async () => {
+      const sweep = createRaceSweep('owner-7', hub);
+      const { lobbyId, token } = await makeLobby('phase-rollover');
+      const t0 = new Date();
+      await setDueOpen(lobbyId, t0);
+      await sweep.sweepOnce(t0); // yarışı açar
+
+      const { client } = await subscribeClient(lobbyId, token);
+
+      const flagResult = await sweep.sweepOnce(at(t0, LAPS + 2));
+      assert.ok(flagResult.finished >= 1, 'yarış hiç bayrağı görmedi');
+
+      // Bayrağı gören atış son turu da yayınlar — önce onu tüketiyoruz.
+      const lap = await client.next();
+      assert.equal(lap.type, 'lap');
+
+      const resultPhase = await client.next();
+      assert.equal(resultPhase.type, 'phase');
+      assert.equal(resultPhase.phase, 'result');
+      assert.equal(resultPhase.seasonNo, 1);
+      assert.equal(resultPhase.roundNo, ROUND);
+
+      const openPhase = await client.next();
+      assert.equal(openPhase.type, 'phase', 'result→open aboneye ulaşmadı');
+      assert.equal(openPhase.phase, 'open');
+      assert.equal(openPhase.seasonNo, 1);
+      assert.equal(openPhase.roundNo, ROUND + 1, 'yeni tur bilgisiyle gelmedi');
+      assert.equal('standings' in openPhase, false);
+      assert.equal('entries' in openPhase, false);
+      assert.equal('rosters' in openPhase, false);
+
+      await client.close();
     });
   });
 });

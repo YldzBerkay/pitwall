@@ -118,7 +118,13 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
         // görmedi). `rolloverRace`in kendi koruması (`rollover.ts`) bunu
         // güvenli kılar: lobi başka biri tarafından zaten döndürülmüşse
         // UPDATE'in `where`i eşleşmez, hiçbir şey olmaz.
-        await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
+        const outcome = await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
+        // `rolled` FALSE olabilir (başka biri zaten döndürmüş) — o durumda
+        // duyurmuyoruz, çünkü bu süreç GERÇEKTEN bir yazı yapmadı ve hangi
+        // fazın hâlâ doğru olduğunu bilmiyor. Faz duyurusu yalnızca BU
+        // çağrının GERÇEKTEN yaptığı bir yazıyı anlatır — `sweep.ts`in genel
+        // ilkesi (bkz. dosya docblock'u, `AlreadySettledError` bölümü).
+        if (outcome.rolled) hub.publishPhase(lobbyId, 'open', outcome.seasonNo, outcome.roundNo);
         return { ticked: false, finished: true };
       }
       // Beklenmeyen bir hata bu lobiyi BATIRMAMALI: diğer lobiler sürmeye
@@ -146,11 +152,18 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
       // yaptı ve kirayı bıraktı; burada yapılacak ek bir şey yok, yalnızca
       // artık sürmediğimiz bu lobiyi haritadan düşürüyoruz.
       driving.delete(lobbyId);
+      // Bayrağı GERÇEKTEN BU çağrı gördü (`flag()` `runner.tick()`in içinde
+      // az önce koştu) — yani lobinin `result`e düştüğü bilgisi taze ve
+      // doğru. `live→result` geçişi `advanceDuePhases`in taramasında YOK
+      // (bkz. `sweep.ts` docblock'u), bu yüzden onu buradan, koşucunun
+      // kendi `seasonNo`/`roundNo`sundan duyuruyoruz.
+      hub.publishPhase(lobbyId, 'result', runner.seasonNo, runner.roundNo);
       // Lobi tam bu anda `result`e düştü — bir sonraki hafta sonuna
       // ittirilmesi gerekiyor (bkz. `rollover.ts` docblock'u: `result`
       // `acquireDueLobbies`in taradığı evrelerden biri değil, onu buradan
       // itmezsek lobi BİR DAHA ASLA yarışmaz).
-      await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
+      const outcome = await rolloverRace(lobbyId, runner.seasonNo, runner.roundNo, now);
+      if (outcome.rolled) hub.publishPhase(lobbyId, 'open', outcome.seasonNo, outcome.roundNo);
     }
 
     return { ticked: result.advanced > 0, finished: result.finished };
@@ -158,6 +171,15 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
 
   async function sweepOnce(now: Date): Promise<SweepResult> {
     const advances = await advanceDuePhases(now);
+    // BU İKİ GEÇİŞ (`open→checkin`, `checkin→live`) HİÇBİR YARIŞ TİKLEMEDEN
+    // olur — `advanceDuePhases`in kendi UPDATE'i. Görevin çıkış noktası tam
+    // bu: `open→checkin` ve `result→open` yarış sürmezken gerçekleşiyor, ve
+    // istemcinin bunu öğrenmesi TEK kanaldan (bu satırdan) geçiyor. Kirası
+    // olmayan, kirasız bir fonksiyonun sonucu olduğu için hiçbir `driving`/
+    // `openRace` bağlılığı yok — aşağıdaki devralma adımından bağımsız.
+    for (const advance of advances) {
+      hub.publishPhase(advance.lobbyId, advance.to, advance.seasonNo, advance.roundNo);
+    }
 
     let ticked = 0;
     let finished = 0;

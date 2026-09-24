@@ -53,6 +53,7 @@ import type { WebSocket } from 'ws';
 import type { QualifyingResult, RaceState } from '@pitwall/shared/raceEngine';
 import { verifySession } from '../auth/jwt.ts';
 import { query } from '../db/pool.ts';
+import type { LobbyPhase } from './lobbyRepo.ts';
 import { loadDecisions, loadRun } from './raceRepo.ts';
 import { qualifyingForRecipe, replayRace } from './replay.ts';
 
@@ -69,6 +70,7 @@ export const LIVE_PATH = '/race/live';
 type Outgoing =
   | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
+  | { type: 'phase'; lobbyId: string; phase: LobbyPhase; seasonNo: number; roundNo: number }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
 
@@ -205,11 +207,46 @@ async function currentRace(lobbyId: string): Promise<SerialisedRaceState | null>
   return { ...serialise(state), qualifying };
 }
 
+interface LobbyPhaseRow {
+  phase: LobbyPhase;
+  season_no: number;
+  round_no: number;
+}
+
+/**
+ * Lobinin O ANKİ fazı — abone olan herkese, yarışsız dönemlerde de.
+ *
+ * NEDEN AYRI BİR SORGU, `currentRace`İN İÇİNE GÖMÜLMEDİ:
+ * `currentRace` yalnızca `phase = 'live'` olan lobiler için bir şey döner
+ * (görev budur — geç gelen abonenin yarış görüntüsü). Ama görevin çıkış
+ * noktası TAM OLARAK bunun yetmediği: istemcinin `weekend.phase`i yalnızca
+ * yarış sırasında değil, `open`/`checkin`/`result` sırasında da bilmesi
+ * gerekiyor (bkz. modül brifi — hafta sonunun yarış DIŞI kısmı hiçbir
+ * kanaldan gelmiyordu). Bu yüzden faz KOŞULSUZ okunur, `currentRace`in
+ * `where phase = 'live'` filtresinden bağımsız.
+ */
+async function currentPhase(lobbyId: string): Promise<{ phase: LobbyPhase; seasonNo: number; roundNo: number } | null> {
+  const res = await query<LobbyPhaseRow>(
+    'select phase, season_no, round_no from lobbies where id = $1',
+    [lobbyId],
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  return { phase: row.phase, seasonNo: row.season_no, roundNo: row.round_no };
+}
+
 export interface LiveHub {
   /** Yeni bir soketi dinlemeye başla (abonelik mesajlarını bekler). */
   attach(socket: WebSocket): void;
   /** Bir lobinin turunu YALNIZCA o lobinin odasına yolla. */
   publish(lobbyId: string, state: RaceState): void;
+  /**
+   * Lobinin FAZ değişikliğini o lobinin odasına yolla — `sweep.ts`in
+   * `advanceDuePhases`/`rolloverRace`/bayrak anlarında çağırdığı tek kanal.
+   * `publish`la aynı oda, aynı koltuk kapısı: hiçbir yeni yetki kontrolü
+   * icat edilmiyor, mevcut abonelik zaten bunu sağlıyor.
+   */
+  publishPhase(lobbyId: string, phase: LobbyPhase, seasonNo: number, roundNo: number): void;
   roomSize(lobbyId: string): number;
   hasRoom(lobbyId: string): boolean;
   /** Açık oda sayısı — sızıntı testinin baktığı sayaç. */
@@ -274,6 +311,13 @@ class Hub implements LiveHub {
     // görebilir (görüntü + yayın) ama HİÇ görmemesi mümkün değil. Turlar
     // idempotent bir resim taşıdığı için tekrar zararsız, boşluk değil.
     send(socket, { type: 'state', lobbyId, race: await currentRace(lobbyId) });
+    // FAZ, `state`TEN SONRA: mevcut `subscribe()` çağıranları (ve testleri)
+    // ilk mesajın hâlâ `state` olduğuna güvenir; yeni bir çerçeveyi arka
+    // arkaya EKLEMEK bu sözleşmeyi bozmaz, BAŞA koymak bozardı. Lobi hiç
+    // bulunamazsa (silinmiş/tutarsız — olmaması gereken bir durum) sessizce
+    // atlanır, `state` zaten yollandı.
+    const phase = await currentPhase(lobbyId);
+    if (phase) send(socket, { type: 'phase', lobbyId, ...phase });
   }
 
   private join(socket: WebSocket, lobbyId: string): void {
@@ -313,6 +357,18 @@ class Hub implements LiveHub {
     // Tek serileştirme, tek gönderim listesi: mesaj `lobbyId` taşıyor, yani
     // istemci hangi yarışı izlediğini mesajın kendisinden bilir.
     const payload = JSON.stringify({ type: 'lap', lobbyId, race: serialise(state) });
+    for (const socket of room) {
+      if (socket.readyState === 1) socket.send(payload);
+    }
+  }
+
+  publishPhase(lobbyId: string, phase: LobbyPhase, seasonNo: number, roundNo: number): void {
+    const room = this.rooms.get(lobbyId);
+    if (!room || room.size === 0) return;
+    // `publish`la BİREBİR aynı desen: tek bir gövde üretilip odadaki her
+    // soketin kendi kuyruğuna yazılır. Bu çerçeve tur içermez — turdan
+    // bağımsız duyurulabilmesi işin bütün noktası (bkz. `sweep.ts`).
+    const payload = JSON.stringify({ type: 'phase', lobbyId, phase, seasonNo, roundNo });
     for (const socket of room) {
       if (socket.readyState === 1) socket.send(payload);
     }

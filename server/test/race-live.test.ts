@@ -185,6 +185,7 @@ describe('per-lobby live race rooms', () => {
     const ack = await subscribe(client, race.lobbyId, race.token);
     assert.equal(ack.type, 'state');
     assert.equal(ack.lobbyId, race.lobbyId);
+    await client.next(); // abonelik anının `phase` mesajı — bu testin konusu değil, ayrı test 11'de sınanıyor
 
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     assert.ok(ticked.advanced > 0, 'the runner did not advance a lap');
@@ -207,7 +208,9 @@ describe('per-lobby live race rooms', () => {
     const clientB = await connect();
 
     await subscribe(clientA, a.lobbyId, a.token);
+    await clientA.next(); // abonelik anının `phase` mesajı
     await subscribe(clientB, b.lobbyId, b.token);
+    await clientB.next(); // abonelik anının `phase` mesajı
 
     // ÖNCE B yayınlanır. Soket başına sıra korunduğu için, A'nın istemcisine
     // sızan bir B turu A'nınkinden ÖNCE gelirdi ve aşağıdaki iddia patlardı.
@@ -263,6 +266,7 @@ describe('per-lobby live race rooms', () => {
     assert.equal(ack.type, 'state');
     // Saklanan `last_lap`e hizalı: geç gelen sonraki turu beklemez.
     assert.equal(ack.race.lap, ticked.state.lap);
+    await client.next(); // abonelik anının `phase` mesajı
 
     const next = await race.runner.tick(at(race.startedAt, 5));
     hub.publish(race.lobbyId, next.state);
@@ -279,6 +283,7 @@ describe('per-lobby live race rooms', () => {
     const race = await liveRace('unsub', 0);
     const client = await connect();
     await subscribe(client, race.lobbyId, race.token);
+    await client.next(); // abonelik anının `phase` mesajı
     assert.equal(hub.roomSize(race.lobbyId), 1);
 
     client.ws.send(JSON.stringify({ type: 'unsubscribe', lobbyId: race.lobbyId }));
@@ -323,6 +328,7 @@ describe('per-lobby live race rooms', () => {
     const race = await liveRace('weather', 0);
     const client = await connect();
     await subscribe(client, race.lobbyId, race.token);
+    await client.next(); // abonelik anının `phase` mesajı
 
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     hub.publish(race.lobbyId, ticked.state);
@@ -342,6 +348,7 @@ describe('per-lobby live race rooms', () => {
     const race = await liveRace('neutral', 0);
     const client = await connect();
     await subscribe(client, race.lobbyId, race.token);
+    await client.next(); // abonelik anının `phase` mesajı
 
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     hub.publish(race.lobbyId, ticked.state);
@@ -381,6 +388,7 @@ describe('per-lobby live race rooms', () => {
     const race = await liveRace('quali-noresend', 0);
     const client = await connect();
     await subscribe(client, race.lobbyId, race.token);
+    await client.next(); // abonelik anının `phase` mesajı
 
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     hub.publish(race.lobbyId, ticked.state);
@@ -398,6 +406,7 @@ describe('per-lobby live race rooms', () => {
     const race = await liveRace('leak-recipe', 0);
     const client = await connect();
     await subscribe(client, race.lobbyId, race.token);
+    await client.next(); // abonelik anının `phase` mesajı
 
     const ticked = await race.runner.tick(at(race.startedAt, 2));
     hub.publish(race.lobbyId, ticked.state);
@@ -425,6 +434,78 @@ describe('per-lobby live race rooms', () => {
     await client.next();
 
     assert.deepEqual(ticked.state, before, 'serialise() paylaşılan durumu değiştirdi');
+
+    await client.close();
+  });
+
+  // ── 11. Abone olurken lobinin FAZI da bildirilir ──────────────────────────
+  //
+  // Görevin gerekçesi: `weekend.phase` istemcide bugün YALNIZCA yerel motorun
+  // fonksiyonlarınca ilerliyor, sunucudaki gerçek faz hiçbir kanaldan
+  // gelmiyor. Bu test o kanalın ilk yarısını kanıtlıyor: abone olan biri en
+  // azından O ANKİ fazı öğrenmeli.
+
+  it('a subscribed client is told the lobby phase when it subscribes', async () => {
+    const race = await liveRace('phase-sub', 0);
+    const client = await connect();
+
+    const ack = await subscribe(client, race.lobbyId, race.token);
+    assert.equal(ack.type, 'state');
+
+    const phaseMsg = await client.next();
+    assert.equal(phaseMsg.type, 'phase');
+    assert.equal(phaseMsg.lobbyId, race.lobbyId);
+    assert.equal(phaseMsg.phase, 'live');
+    assert.equal(phaseMsg.seasonNo, 1);
+    assert.equal(phaseMsg.roundNo, 1);
+    // Sözleşme burada da geçerli: çizim verisi taşınır, tarif taşınmaz.
+    assert.equal('standings' in phaseMsg, false);
+    assert.equal('entries' in phaseMsg, false);
+    assert.equal('rosters' in phaseMsg, false);
+
+    await client.close();
+  });
+
+  // ── 12. Faz yayını da odayla sınırlı ──────────────────────────────────────
+
+  it('a phase broadcast for lobby A never reaches a client subscribed only to lobby B', async () => {
+    const a = await liveRace('phase-iso-a', 0);
+    const b = await liveRace('phase-iso-b', 0);
+    const clientB = await connect();
+    await subscribe(clientB, b.lobbyId, b.token);
+    await clientB.next(); // B'nin kendi abonelik anındaki `phase` mesajı
+
+    hub.publishPhase(a.lobbyId, 'result', 9, 9);
+
+    // B'nin sırasında hâlâ A'nın mesajı YOK: B'ye gerçek bir tur yollayıp
+    // sıradaki mesajın o olduğunu (A'nın faz mesajı değil) kanıtlıyoruz.
+    const ticked = await b.runner.tick(at(b.startedAt, 2));
+    hub.publish(b.lobbyId, ticked.state);
+    const next = await clientB.next();
+    assert.equal(next.type, 'lap');
+    assert.equal(next.lobbyId, b.lobbyId);
+
+    await clientB.close();
+  });
+
+  // ── 13. Koltuğu olmayan faz mesajı da almaz ───────────────────────────────
+
+  it('a client with no seat receives no phase frame', async () => {
+    const race = await liveRace('phase-gate', 0);
+    const outsider = await makeUser('phase-gate-outsider');
+    const client = await connect();
+
+    const res = await subscribe(client, race.lobbyId, outsider.token);
+    assert.equal(res.type, 'error');
+
+    hub.publishPhase(race.lobbyId, 'result', 1, 1);
+
+    // Reddedilen soket hiçbir odada değil. Dolaylı kanıt: aynı soketle
+    // yeniden (bu kez koltuklu) abone olunca ilk mesaj yine `state` —
+    // sızmış bir `phase` mesajı olsaydı sıradaki mesaj o olurdu.
+    const seated = await seat(race.lobbyId, SEAT_LADDER[1], 'phase-gate-seated');
+    const ack = await subscribe(client, race.lobbyId, seated.token);
+    assert.equal(ack.type, 'state');
 
     await client.close();
   });
