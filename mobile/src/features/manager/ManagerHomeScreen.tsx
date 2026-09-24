@@ -6,14 +6,15 @@ import { teamState } from '@/data/mock';
 import { overallOf, playerTeam } from '@pitwall/shared/teams';
 import { useGameStore, type WeekendPhase } from '@/store/gameStore';
 import { trackForRound } from '@pitwall/shared/tracks';
-import { AppText, Avatar, Cols, GlassCard, Icon, ScreenHeader, type IconName } from '@/components/atoms';
-import { CarStatCard } from '@/components/molecules';
+import { AppText, Avatar, Cols, GlassCard, Icon, LiquidProgressBar, ScreenHeader, type IconName } from '@/components/atoms';
+import { statName } from '@/components/molecules/CarStatCard';
 import { CarTurntable, NextRaceWidget, RPEconomyCard } from '@/components/organisms';
 import { describeSpec, formatDuration } from '@pitwall/shared/carCustomisation';
 import { brandByKey } from '@pitwall/shared/sponsors';
 import { explainPace } from '@pitwall/shared/raceEngine';
 import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
+import { displayFactory } from '@/store/slices/factoryDisplay';
 
 /** Height of the 3D car panel: generous but bounded so a landscape phone keeps room below it. */
 const CAR_VIEW_HEIGHT = 200;
@@ -45,14 +46,21 @@ interface Todo {
 export function ManagerHomeScreen() {
   const shell = useShellLayout();
   const router = useRouter();
+  // `rp`/`weekEarned` are the LOCAL solo settlement's ledger
+  // (`settleRaceWeekend` in `gameStore.ts`) — offline race prize/sponsor
+  // income, unrelated to the server-backed car-upgrade economy below.
+  // Moving settlement onto the server is the next task, not this one; see
+  // this task's brief.
   const rp = useGameStore((s) => s.rp);
   const weekEarned = useGameStore((s) => s.weekEarned);
-  const carStats = useGameStore((s) => s.carStats);
-  const build = useGameStore((s) => s.build);
-  const buildTimeFor = useGameStore((s) => s.buildTimeFor);
-  const buildCostFor = useGameStore((s) => s.buildCostFor);
-  const startUpgrade = useGameStore((s) => s.startUpgrade);
-  const collectUpgrade = useGameStore((s) => s.collectUpgrade);
+  // Car/factory state is NEVER computed locally here: `displayFactory`
+  // (`factoryDisplay.ts`) is the exact same server-backed selector
+  // `DevelopmentScreen.tsx` uses. Home only VIEWS it — starting, claiming or
+  // skipping an upgrade is Development's job; this screen just links there
+  // (see `onOpenFactory` below), so there is only one place car-upgrade
+  // actions are ever sent to the server.
+  const lobbyId = useGameStore((s) => s.race.lobbyId);
+  const economyApi = useGameStore((s) => s.economyApi);
   const livery = useGameStore((s) => s.livery);
   const compound = useGameStore((s) => s.compound);
   const rim = useGameStore((s) => s.rim);
@@ -73,30 +81,27 @@ export function ManagerHomeScreen() {
   const [carWidth, setCarWidth] = useState(0);
   const [now, setNow] = useState(() => Date.now());
 
-  // Refresh the build countdown once a minute; the clock lives in state so render stays pure.
+  // Refresh the factory countdown once a second; the clock itself reads the
+  // slice's monotonic anchor (`displayFactory`/`economyClock.ts`), never
+  // `Date.now()` directly — this state is only a render pulse, same as
+  // `DevelopmentScreen.tsx`'s `forceTick`.
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
+    const id = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(id);
   }, []);
-  const buildDone = !!build && now >= build.endsAt;
 
-  const stat = (label: string) => carStats.find((s) => s.label === label)?.value ?? 50;
+  useEffect(() => {
+    if (lobbyId) void useGameStore.getState().economyApi.hydrate(lobbyId);
+  }, [lobbyId]);
+
+  const display = displayFactory(lobbyId, economyApi);
+  const stat = (label: string) => (display.kind === 'ready' ? display.carStats.find((s) => s.label === label)?.value : undefined) ?? 50;
   const spec = describeSpec(stat('MOTOR'), stat('AERO'), stat('GRIP'));
+  const currentUpgrade = display.kind === 'ready' ? display.currentUpgrade : undefined;
 
-  const onUpgrade = (label: string) => {
-    if (startUpgrade(label) === 'ok') {
-      haptic.success();
-    } else {
-      haptic.error();
-    }
-  };
-
-  const onCollect = () => {
-    if (collectUpgrade()) {
-      haptic.success();
-    } else {
-      haptic.error();
-    }
+  const onOpenFactory = () => {
+    haptic.select();
+    router.push('/(tabs)/development');
   };
 
   // What deserves attention right now, derived from state — not a mock inbox.
@@ -114,13 +119,14 @@ export function ManagerHomeScreen() {
   const emptySeats = (['mechanic', 'strategist', 'pitCrew'] as const).filter((r) => !staff[r]).length;
   if (emptySeats > 0) todos.push({ icon: 'mechanic', title: `${emptySeats} personel kadrosu boş`, detail: 'Mekanik, stratejist ve pit şefi yarış sonucunu doğrudan etkiler.', route: '/(tabs)/paddock' });
   if (!missions.some((m) => !m.outcome) && now >= nextMissionAt()) todos.push({ icon: 'spy', title: 'Ajan gönderilebilir', detail: 'Bir rakibin güçlü olduğu alanı hedefle; başarı sonraki yükseltmeni ×1,5 yapar.', route: '/(tabs)/paddock' });
-  if (build && buildDone) {
+  // The upgrade job itself — cost, duration, whether one is even running —
+  // is entirely the server's (`currentUpgrade`, from `displayFactory`); this
+  // never previews a cost/duration itself (see `factoryDisplay.ts`'s "WHAT
+  // THIS DELIBERATELY DOES NOT COMPUTE").
+  if (currentUpgrade?.ready) {
     todos.push({ icon: 'development', title: 'Yeni parça hazır', detail: 'Fabrikadaki parçayı araca tak; değer şimdi yükselir.', route: '/(tabs)/development', urgent: true });
-  } else if (build) {
-    todos.push({ icon: 'development', title: `Fabrika üretimde · ${formatDuration(build.endsAt - now)} kaldı`, detail: 'Tek tezgâh var; bu parça bitene kadar yeni yükseltme başlatılamaz.', route: '/(tabs)/development' });
-  } else {
-    const affordable = carStats.filter((s) => rp >= buildCostFor(s.label)).length;
-    if (affordable > 0) todos.push({ icon: 'development', title: `RP'n ${affordable} yükseltmeye yetiyor`, detail: 'İlk yükseltme 6 saat sürer, aynı değerin sonraki her yükseltmesi 1,5 kat uzun.', route: '/(tabs)/development' });
+  } else if (currentUpgrade) {
+    todos.push({ icon: 'development', title: `Fabrika üretimde · ${formatDuration(currentUpgrade.remainingMs)} kaldı`, detail: 'Tek tezgâh var; bu parça bitene kadar yeni yükseltme başlatılamaz.', route: '/(tabs)/development' });
   }
 
   return (
@@ -244,31 +250,55 @@ export function ManagerHomeScreen() {
                 Işık: bu değer sıradaki piste ne kadar uyuyor
               </AppText>
             </View>
-            <Pressable onPress={() => router.push('/(tabs)/development')} className="flex-row items-center gap-1">
+            <Pressable onPress={onOpenFactory} className="flex-row items-center gap-1">
               <AppText variant="labelSmall" color={colors.accentLime}>
                 Fabrika
               </AppText>
               <Icon name="chevron" size={14} color={colors.accentLime} />
             </Pressable>
           </View>
-          {carStats.map((s, i) => (
-            <CarStatCard
-              key={s.label}
-              {...s}
-              cost={buildCostFor(s.label)}
-              last={i === carStats.length - 1}
-              building={build?.label === s.label}
-              done={buildDone && build?.label === s.label}
-              busy={!!build && build.label !== s.label}
-              timeLabel={
-                build?.label === s.label
-                  ? formatDuration(build.endsAt - now)
-                  : formatDuration(buildTimeFor(s.label))
-              }
-              onUpgrade={() => onUpgrade(s.label)}
-              onCollect={onCollect}
-            />
-          ))}
+          {/*
+           * READ-ONLY VIEW of the server-backed factory (`displayFactory`),
+           * exactly like `DevelopmentScreen.tsx`'s own stat rows — this card
+           * never starts, claims or skips an upgrade itself. That control
+           * lives in one place only (Development, via `onOpenFactory`
+           * above), so there is exactly one path that can ever spend RP on
+           * a car upgrade against the server.
+           */}
+          {display.kind === 'no-lobby' && (
+            <AppText variant="bodySmall" color={colors.textTertiary}>
+              Araç geliştirme çevrimiçi lig içindir; bir lig lobisine katılınca burada görünür.
+            </AppText>
+          )}
+          {display.kind === 'loading' && (
+            <AppText variant="bodySmall" color={colors.textTertiary}>
+              Fabrika verisi yükleniyor…
+            </AppText>
+          )}
+          {display.kind === 'ready' && (
+            <>
+              {display.carStats.map((s, i) => (
+                <View key={s.label} className={`gap-1.5 py-2 ${i === display.carStats.length - 1 ? '' : 'border-b border-border-default'}`}>
+                  <View className="flex-row items-center justify-between">
+                    <AppText variant="label" color={colors.textSecondary}>
+                      {statName[s.label] ?? s.label}
+                    </AppText>
+                    <AppText variant="stat" color={colors.textPrimary}>
+                      {s.value}
+                    </AppText>
+                  </View>
+                  <LiquidProgressBar value={s.value} colorFrom={colors.accentLime} colorTo={colors.accentLime} width={999} className="w-full self-stretch" />
+                </View>
+              ))}
+              <AppText variant="labelSmall" color={currentUpgrade ? colors.solarAmber : colors.textTertiary} uppercase>
+                {currentUpgrade
+                  ? currentUpgrade.ready
+                    ? 'Parça hazır — fabrikaya git'
+                    : `Üretimde · ${formatDuration(currentUpgrade.remainingMs)}`
+                  : 'Yeni yükseltme başlatmak için fabrikaya git'}
+              </AppText>
+            </>
+          )}
         </GlassCard>
       </Cols>
 
