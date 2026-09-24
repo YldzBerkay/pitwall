@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
 import { AppText, GlassCard, Cols, ScreenHeader } from '@/components/atoms';
@@ -15,9 +15,29 @@ import {
   type SponsorOffer,
 } from '@pitwall/shared/sponsors';
 import { useGameStore } from '@/store/gameStore';
+import { displaySponsors } from '@/store/slices/sponsorsDisplay';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
 import { useShellLayout } from '@/lib/useShellLayout';
+
+/**
+ * Server error codes from `/sponsors/sign` and `/sponsors/release`, kept
+ * distinct - never flattened into one generic failure string
+ * (`sponsorsApiSlice.ts`'s own rule). `slot_taken` ("someone signed that
+ * position first") and `offer_not_found` ("that offer rolled off your
+ * table - the round moved on") need different words: the second one is a
+ * normal, expected thing that happens when the round rolls over, not a
+ * bug. Falls back to the raw code for anything unmapped.
+ */
+const sponsorErrorText: Record<string, string> = {
+  slot_taken: 'O alanı biri senden önce aldı.',
+  offer_not_found: 'Bu teklif artık masanda değil - sıra yenilendi.',
+  not_signed: 'Bu alanda sözleşmen yok.',
+  no_lobby: 'Lig bulunamadı.',
+  forbidden: 'Bu takımda yetkin yok.',
+  invalid_request: 'Geçersiz istek.',
+  not_signed_in: 'Oturum açık değil.',
+};
 
 const tierLabel: Record<string, string> = {
   title: 'ana sponsor',
@@ -42,13 +62,14 @@ const prestigeLabel: Record<string, string> = {
  */
 export function SponsorScreen() {
   const shell = useShellLayout();
+  // The app's own "are we seated in a lobby" signal - the same one
+  // `raceSlice.ts`'s `displayRace`/`displayQualifying` and
+  // `factoryDisplay.ts`'s `displayFactory` key off, not
+  // `sponsorsApi.lobbyId` (only set after the first successful call).
+  const lobbyId = useGameStore((s) => s.race.lobbyId);
+  const sponsorsApi = useGameStore((s) => s.sponsorsApi);
   const {
     championshipPosition,
-    sponsorships,
-    offers,
-    signSponsor,
-    declineOffer,
-    releaseSponsor,
     lastSettlement,
     livery,
     compound,
@@ -59,31 +80,57 @@ export function SponsorScreen() {
     season,
   } = useGameStore();
   const [carWidth, setCarWidth] = useState(0);
+  const [message, setMessage] = useState<string | undefined>(undefined);
+  // Declining an offer has no server counterpart - there's nothing to sign
+  // or pay for, so it's a purely local "hide this from my sheet this
+  // session" preference, not economy state. Kept in component state rather
+  // than the store for exactly that reason: it carries no money and
+  // doesn't need to survive a remount.
+  const [declinedIds, setDeclinedIds] = useState<string[]>([]);
 
-  const sheet = offers();
+  useEffect(() => {
+    if (lobbyId) void useGameStore.getState().sponsorsApi.hydrateOffers(lobbyId);
+  }, [lobbyId]);
+
+  const display = displaySponsors(lobbyId, sponsorsApi);
+
+  const sheet: SponsorOffer[] = display.kind === 'ready'
+    ? display.offers.filter((o) => !declinedIds.includes(o.id))
+    : [];
+  // `sponsorships` is `null` until a sign/release response has landed this
+  // session - `GET /sponsors/offers` doesn't return them (see
+  // `sponsorsDisplay.ts`'s doc comment on that server gap). Treated as
+  // "none known yet", never as "none signed".
+  const sponsorships = display.kind === 'ready' ? display.sponsorships ?? [] : [];
   const income = sponsorships.reduce((sum, s) => sum + s.perRace, 0);
   const potential = sponsorships.reduce((sum, s) => sum + s.perRace + s.bonus, 0);
   const factor = standingFactor(championshipPosition);
 
-  const onSign = (offer: SponsorOffer) => {
-    if (signSponsor(offer.id)) {
+  const onSign = async (offer: SponsorOffer) => {
+    if (!lobbyId) return;
+    const outcome = await useGameStore.getState().sponsorsApi.sign(lobbyId, offer.id);
+    if (outcome.ok) {
       haptic.success();
       sfx.play('partFitted');
+      setMessage(undefined);
     } else {
       haptic.error();
       sfx.play('denied');
+      setMessage(sponsorErrorText[outcome.error] ?? outcome.error);
     }
   };
 
   const onDecline = (offer: SponsorOffer) => {
     haptic.select();
-    declineOffer(offer.id);
+    setDeclinedIds((ids) => [...ids, offer.id]);
   };
 
-  const onRelease = (slot: SlotKey) => {
+  const onRelease = async (slot: SlotKey) => {
+    if (!lobbyId) return;
     haptic.warning();
     sfx.play('denied');
-    releaseSponsor(slot);
+    const outcome = await useGameStore.getState().sponsorsApi.release(lobbyId, slot);
+    if (!outcome.ok) setMessage(sponsorErrorText[outcome.error] ?? outcome.error);
   };
 
   // Paid out by the race weekend (RaceWeekScreen); this screen only shows it.
@@ -97,6 +144,35 @@ export function SponsorScreen() {
         : '') +
       (lastSettlement.expired.length ? ` · ${lastSettlement.expired.length} sözleşme bitti` : '')
     : null;
+
+  // NO LOCAL FALLBACK: outside a lobby there is no server sheet to ask for,
+  // and this screen must say so rather than render the old local
+  // `sponsorships`/`offers()` numbers - see `sponsorsDisplay.ts`'s doc
+  // comment for why that would be the exact second-reality bug this
+  // migration exists to remove.
+  if (display.kind === 'no-lobby') {
+    return (
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{
+          paddingTop: shell.contentTop,
+          paddingLeft: shell.contentPaddingLeft,
+          paddingRight: shell.contentPaddingRight,
+          paddingBottom: shell.contentPaddingBottom,
+          gap: spacing.lg,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        <ScreenHeader icon="sponsors" title="Sponsorluk" subtitle="Bir lige katılınca sponsorluk masası burada açılır." />
+        <GlassCard>
+          <AppText variant="bodySmall" color={colors.textSecondary}>
+            Şu anda bir lige bağlı değilsin. Sponsorluk teklifleri ve sözleşmeler sunucudan, ligin kendi
+            sıralamasına göre gelir - bir lige katıldığında burada görünecekler.
+          </AppText>
+        </GlassCard>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView
@@ -129,6 +205,22 @@ export function SponsorScreen() {
             {settlement}
           </AppText>
         </View>
+      )}
+
+      {message && (
+        <View className="rounded-md border border-border-default px-3 py-2">
+          <AppText variant="labelSmall" color={colors.neonCoral}>
+            {message}
+          </AppText>
+        </View>
+      )}
+
+      {display.kind === 'loading' && (
+        <GlassCard>
+          <AppText variant="bodySmall" color={colors.textSecondary}>
+            Sponsorluk masası yükleniyor…
+          </AppText>
+        </GlassCard>
       )}
 
       {/* Car with the sold slots marked */}

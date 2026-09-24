@@ -88,6 +88,7 @@ import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
 import { createRaceSlice, type RaceSlice } from './slices/raceSlice';
 import { createEconomyApiSlice, type EconomyApiSlice } from './slices/economyApiSlice';
+import { createSponsorsApiSlice, type SponsorsApiSlice } from './slices/sponsorsApiSlice';
 import type { StatKey } from '@pitwall/shared/driverMarket';
 
 /** Stat label on the garage card → engine key. */
@@ -380,7 +381,8 @@ export type GameState = CoreState &
   AuthSlice &
   LobbySlice &
   RaceSlice &
-  EconomyApiSlice;
+  EconomyApiSlice &
+  SponsorsApiSlice;
 
 const initialStandings = seedStandings(teamState.round - 1);
 
@@ -403,6 +405,7 @@ export const useGameStore = create<GameState>()(
   ...createLobbySlice(set, get),
   ...createRaceSlice(set, get),
   ...createEconomyApiSlice(set, get),
+  ...createSponsorsApiSlice(set, get),
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},
