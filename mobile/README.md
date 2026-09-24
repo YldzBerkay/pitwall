@@ -1,8 +1,13 @@
 # Pit Wall — Mobil İstemci
 
-Expo/React Native uygulaması. Kimlik, ekonomi ve (Aşama 1'den itibaren) yarışın
-pit-çağrısı yolu gerçek bir Node/Postgres sunucusuna (`../server`) bağlanır;
-sunucu adresi Race Week → Online Lig kartından girilir.
+Expo/React Native uygulaması. **İstemci sunucunun bir görünümüdür** — kimlik,
+araç geliştirme ekonomisi, sponsorlar, yarış (laplar, sıralama sonucu, hafta
+sonu evresi) ve muhasebe hepsi gerçek bir Node/Postgres sunucusundan
+(`../server`) okunur; sunucu adresi Race Week → Online Lig kartından girilir.
+Faz 3a-3'ün kapanışıyla istemcinin kendi yarış motoru ve kendi araç-geliştirme
+ekonomisi tamamen söküldü — bkz. aşağıdaki "Bağlantı sözleşmesi" ve "Seçici
+deseni" bölümleri, ve `docs/FEATURES.md`'nin "İstemci — sunucunun görünümü"
+bölümü.
 
 ## Çalıştırma
 
@@ -102,3 +107,43 @@ anlam kazanıyor. Sıralama ve yarış lastiğini iki ayrı seçiciye ayırmak b
 bağı çözer ve pit-yolu telafisini anlamsızlaştırırdı; bu yüzden
 `PracticePanel`/`QualifyingPanel`'deki iki eski seçici Aşama 1'de tek
 seçiciye indirildi.
+
+## Seçici deseni — kararlar `.tsx`'te değil, saf fonksiyonlarda
+
+`store/slices/raceSlice.ts`, `settlementDisplay.ts`, `sponsorsDisplay.ts`,
+`standingsDisplay.ts` ve `factoryDisplay.ts` her biri bir `display*` ihraç
+eder: `displayRace`, `displayQualifying`, `displayFactory`,
+`displaySponsors`, `displaySettlement`, `displayPhase`, `displayStandings`.
+Hepsi aynı şekli takip eder — ham store durumunu (soket çerçevesi, API
+yanıtı, oturum/lobi bilgisi) girdi alır, ekranın çizeceği ayrık bir durumu
+(`{kind:'loading'}` / `{kind:'no-lobby'}` / `{kind:'ready', ...}` gibi) saf
+bir değer olarak döner.
+
+Bunun `.tsx` dosyalarına DEĞİL slice'lara yazılmasının iki nedeni var:
+
+1. **Test edilebilirlik.** `mobile/README.md`'nin "Test koşucusu ve sınırı"
+   bölümünde anlatıldığı gibi `tsx --test` düz Node üzerinde çalışır, React
+   Native'i çözemez. Bir ekran hangi paneli göstereceğine kendi içinde karar
+   verseydi o karar hiçbir zaman `tsx --test` altında sınanamazdı — saf bir
+   fonksiyon olarak slice'ta yaşadığı için `no-local-race.test.ts`'in 4.
+   testi gibi bir test onu doğrudan çağırıp her sunucu evresi için doğru
+   paneli seçtiğini kanıtlayabiliyor.
+2. **Tek karar noktası.** Ekran kendi `if (weekend.phase === ...)`ini
+   yazabilseydi, bir ekranın yerel bir yedeğe düşmesi (ör. sunucu evresi
+   yokken eski `WeekendPhase`e bakması) fark edilmeden geri gelebilirdi.
+   Karar tek bir saf fonksiyondaysa hem ekran onu ÇAĞIRMAK zorunda kalır
+   hem de o fonksiyonun İÇİNDE bir yerel yedek olup olmadığı tek bir yerden
+   taranabilir (`no-local-race.test.ts`'in 4b testi `RaceWeekScreen`'in
+   `weekend.phase`/`WeekendPhase`/`localPhase`e hiç dokunmadığını tarar).
+
+## Lobisiz/solo oyun kalktı
+
+Sunucu artık yarışın TEK otoritesi olduğu için istemcinin lobi dışında
+koşturabileceği bir hafta sonu simülasyonu yok. `RaceWeekScreen`, koltuğu
+olmayan bir oyuncuya (`displayPhase`in `no-lobby` yanıtı) yerel bir hafta
+sonu ÇİZMEK yerine "bir lige katıl" mesajı gösterir — bkz.
+`docs/FEATURES.md`'nin "İstemci — sunucunun görünümü" bölümündeki "Kapsam
+dışı bırakılan altı özellik" notu. **Bilinen bir tutarsızlık**: sezon öncesi
+test paneli (`TestingPanel.tsx`) hâlâ bir lobi dışında da çalışıyor —
+sunucuya hiç bağlı değil, tamamen yerel — bu bilerek bırakılmış bir karar
+değil, henüz karara bağlanmamış bir uç.

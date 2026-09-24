@@ -141,6 +141,21 @@ sayaç istemcinin kendi `Date.now()`'ını okuyordu — cihaz saatini ileri alma
 her yazma sunucuda; `shared/` ise iki tarafın (mobil + sunucu) AYNI formülü
 okumasını sağlıyor — bkz. aşağıdaki "Paylaşılan paket".
 
+### `GET /economy/state` ve `GET /economy/settlement`
+
+`GET /economy/state?lobbyId=` `/economy/action`in döndürdüğü tam anlık
+görüntünün (rp/gold/car/factory/jobs/teamValue/caps/`serverNow`) SOĞUK BAŞLANGIÇ
+karşılığı — oyuncu hiçbir eylem yapmadan uygulamayı açtığında ekranın
+göstereceği ilk kare buradan gelir.
+
+`GET /economy/settlement?lobbyId=&round=&season=` (season opsiyonel, verilmezse
+lobinin güncel sezonu) bir yarışın ödeme DÖKÜMÜNÜ okur: `position`, `prize`,
+`sponsorIncome`, `briefBonus`, `bonusesEarned`, `streaksBroken`, `expired`
+(bu turda kapanan sponsorluk pozisyonları). Henüz ödenmemiş bir round bir hata
+değil — `{ settlement: null }` ile 200 döner, tıpkı henüz kazanılmamış bir
+başarım gibi. Ayrıntı için aşağıdaki "Yarış" bölümünün "Muhasebe" alt
+başlığına bakın.
+
 ### `POST /economy/action`
 
 Tek uç nokta, tek gövde şekli — `Authorization: Bearer <token>` ister.
@@ -220,7 +235,7 @@ sessizce olur — `server/test/shared-purity.test.ts` bunu kaynak ağacı
 `src/identity/ip-region-v4.bin` hâlâ üretilmiş dosyalar; yukarıdaki
 "Üretici script'ler" bölümüne bakın.
 
-### Dört sözleşme — bu fazda ortaya çıktı, koda göçmeden önce buraya yazıldı
+### Altı sözleşme — bu fazda ortaya çıktı, koda göçmeden önce buraya yazıldı
 
 1. **`now` sadece route'ta `new Date()` ile örneklenir, istekten asla
    okunmaz.** `src/economy/jobs.ts` kasıtlı olarak saati kendisi hiç okumaz
@@ -247,6 +262,33 @@ sessizce olur — `server/test/shared-purity.test.ts` bunu kaynak ağacı
    COMMIT eder. Bu fazda üç ayrı ajan buna çarptı; ikisi geri almayı
    zorlamak için bir sentinel hata fırlatmak zorunda kaldı. Yeni bir
    transactional yol yazan biri bunu yazmadan ÖNCE bilmeli, sonra değil.
+5. **Bir denge kapısı, oyunun koşmadığı kodu doğrulayabilir.** Faz 3a-3'te
+   bir denetim, sunucunun araç geliştirme maliyeti/süresi/stat-kazancı
+   formüllerini `shared/`'ı içe aktarmak yerine ÖZEL OLARAK yeniden
+   türettiğini buldu — ve ikisi ciddi şekilde ayrışmıştı: 5. geliştirmede
+   3797 RP'ye karşı 1831; ilk geliştirme sunucuda 22 saat sürerken
+   `shared/` 6 saat diyordu; tamamlanan her geliştirme 6 yerine 1-3 stat
+   puanı veriyordu. `npm run econ` (mobil tarafın 68 iddialık denge kapısı)
+   bütün bu süre boyunca YEŞİL kaldı, çünkü `shared/`'ın fonksiyonlarını
+   test ediyordu — sunucunun artık kullanmadığı fonksiyonları. GENEL DERS:
+   bir denge/regresyon kapısı yalnızca test ettiği KODUN gerçekten
+   ÇALIŞTIRILAN kod olduğu sürece bir şey kanıtlar; iki taraf aynı formülü
+   AYRI AYRI tanımlıyorsa kapı sessizce yanlış tarafı doğrular. Düzeltme:
+   `src/economy/jobs.ts`'i `@pitwall/shared/carCustomisation`'ı içe
+   aktarmaya zorlamak, ikinci bir tanım belirirse kırılan bir tarama
+   testiyle (`server/test/upgrade-formula.test.ts` #5) kalıcı olarak
+   korumak altına almak.
+6. **Bir tarama testi, taradığı şeye karşı kör olabilir.** "Hiçbir
+   zamanlayıcı yarışı ilerletmiyor" kontrolü modül İÇE AKTARILDIĞI ANDA
+   çalışırsa, bir store *action*'ının İÇİNDE (çağrıldığında) oluşturulan bir
+   zamanlayıcı ona hiç görünmez — kontrol hiç yürütülmeyen bir kod yolunu
+   test eder. GENEL DERS: dinamik bir davranışı (bir yan etkinin hiç
+   olmaması) statik bir taramayla kanıtlamak, taramanın çalıştığı ANI da
+   düşünmeyi gerektirir; import-zamanı bir gözlem, çalışma-zamanında
+   oluşan bir şeyi görmez. Bu yüzden mobil tarafta ikinci, TAMAMLAYICI bir
+   tarama var: dosyanın METNİ hiçbir `setInterval` çağrısı içermemeli
+   (`mobile/test/no-local-race.test.ts`, testler 1a/1b). Kırılma/geri-koyma
+   kanıtı sırasında ilk tarama geçti, yalnızca metin taraması yakaladı.
 
 Bilinen bir sınır: `grantGold` kendi transaction'ını açar ve çağıranınkine
 katılamaz. Bugün bu sorun değil çünkü satın alma yolunun günlük tavanı yok
@@ -391,6 +433,87 @@ motor `setup.compound`'a düşer ve oyuncu telafisiz ceza yer. Orta satırın
 YAZILDI mı, iyileşme GERÇEKTEN uygulandı mı — biri kırılıp diğeri
 kırılmayabilir, aynı testte ikisi de kanıtlanmalı.
 
+### Evre çerçevesi (`src/lobby/phase.ts`)
+
+Hafta sonunun evre İLERLEMESİ (`open → checkin → live → result → open`)
+kirasız ve veritabanı-otoriter bir ayrı modül: `advanceDuePhases(now)` vakti
+gelmiş lobileri tarar ve YALNIZCA gerçekten taşınanları döner. Geçiş koşulu
+(`next_race_at <= now`) UPDATE'in kendi `where`'inde — bir `select` sonra
+`update` olsaydı iki süreç aynı `open` lobiyi görüp ikisi de ilerletirdi.
+
+**Yetişme davranışı**: saatlerdir yarışması gereken bir lobi tek bir
+uyanışta `checkin`in İÇİNDEN GEÇEREK `live`e varır, bunu atlamaz — hafta
+sonunun her turu aynı evre dizisini yaşasın diye (aksi halde sunucu kapalı
+kaldığı için hiç sınanmamış farklı bir kod yolu doğardı). İki UPDATE tek
+işlemde çalışır, bir gözlemci asla geçici `checkin` durumunu görmez.
+
+Bu modülün kapsadığı TEK şey evre sütunu — yarış başlatmak, tur işlemek
+`runner.ts`nin işi (yukarıdaki "Tarifi sakla, yarışı değil" bölümüne bakın);
+ayrı tutmak evre geçişinin doğruluğunu motor hiç çalıştırmadan sınamayı
+sağlıyor.
+
+### Sponsorlar (`src/economy/sponsorRoutes.ts`, `sponsorOffers.ts`)
+
+Üç uç: `GET /sponsors/offers?lobbyId=` (bu haftanın teklif sayfası VE
+takımın hâlâ imzalı sponsorlukları — okuma amaçlı, hiçbir şey yazmaz),
+`POST /sponsors/sign` (`{lobbyId, offerId}`), `POST /sponsors/release`
+(`{lobbyId, slot}`).
+
+**İstemcinin şartları hiçbir zaman güvenilmez — bu dosyanın var oluş
+nedeni.** `generateOffers` (`shared/src/sponsors.ts`) SAF bir fonksiyon:
+tohumunu `round * 7919 + position * 104729`den çeker, kendi argümanlarından
+başka hiçbir şey okumaz — yani aynı (round, position, güç, açık
+sözleşmeler, dolu slotlar, toplam tur) her zaman TAMAMEN AYNI teklif
+sayfasını üretir. Bu belirlenimlilik imzalamayı GÜVENLE uygulanabilir kılan
+şey: `offerSheetFor` sayfayı lobinin kendi durumundan yeniden üretir,
+`sign` istemcinin gönderdiği `offerId`yi O YENİDEN ÜRETİLMİŞ sayfada arar.
+`perRace`, `bonus`, `targetPosition`, `streakTarget`, imza bonusu — hepsi
+sunucunun BULDUĞU teklife ait; istek gövdesindeki bir `perRace`/`bonus` bu
+dosyanın hiçbir yerinde okunmaz. "Payload'ı sadeleştir, şartları doğrudan
+postala" gibi masum görünen bir refactor, herhangi bir istemcinin kendine
+keyfi gelir yazmasına izin verirdi — `sponsor-routes.test.ts`'in "ignores
+client-supplied terms" ve "an offer not on the table cannot be signed"
+testleri tam bu regresyonu yakalamak için var.
+
+`slot_taken` ile `offer_not_found` bilerek İKİ AYRI hata kodu: biri "masana
+az önce başkası oturdu", diğeri "öyle bir teklif senin masanda hiç yok" —
+istemci tarafında farklı hatalar, düşman bir istemci tarafında farklı
+saldırılar. Eşzamanlı iki imzanın aynı slota inmesi asıl `sponsorships_pk`
+kısıtıyla (`007_sponsorships.sql`) engellenir; route'taki ön-kontrol yalnızca
+pencereyi daraltır, imkânsız kılan kısıttır.
+
+### Muhasebe (`src/economy/settle.ts`, `settlementRepo.ts`)
+
+Yarış bittiğinde `settleRace` LOBİDEKİ HER KOLTUĞA (AI dahil) yarış ödülünü
+(`racePrize`), sponsor gelirini ve brifing bonusunu TEK transaction'da yazar;
+şampiyona tablosu aynı işlemde üretilir. AI koltukları da ödenir — ödenmeyen
+bir AI hiç geliştirme yapamaz, bir sezonda geriler ve insan oyuncu rakipsiz
+kalır; ödeme koltuğun kime ait olduğuna değil, lobide bir ekonomi satırı
+olup olmadığına bakar.
+
+Sonuç yalnızca TOPLAM bir `rp` değil, onu oluşturan DÖKÜM olarak yazılır
+(`race_settlement_payouts`, `008_race_settlement_payouts.sql`): `prize`,
+`sponsorIncome`, `briefBonus`, `bonusesEarned`, `streaksBroken`,
+`expiredSlots`. `rp === prize + sponsorIncome + briefBonus` HER ZAMAN
+doğru — ayrı bir yeniden hesaplama yok, istemcinin okuduğu döküm
+(`GET /economy/settlement`) yazılanın BİREBİR aynısı.
+
+Brifing bonusu tarifin DONDURULMUŞ katılımından (`RaceSnapshot.entries`,
+`ışıklar sönerken` bir kere okunan `weekendChoices`) gelir, asla yeniden
+hesaplanmaz. AI'nın koltuğu `entries`e hiç girmediği için (yarışı hiç
+"seçmedi") o takım brifing bonusuna giremez.
+
+Claim YOK: yarış kazancı, oyuncunun uygulamayı açıp açmamasından bağımsız
+kazanılır ve ödenir — fabrika/antrenman işlerindeki claim adımı burada
+mekaniğin sınırını sessizce silerdi.
+
+### `GET /lobby/standings`
+
+Lobinin GÜNCEL şampiyona tablosu. Ayrı saklanmaz; yarışın kendisi gibi
+tariften türetilir (`standingsBeforeRound`, sezonun son turunun BİR
+FAZLASINI isteyerek "şu ana kadarki her şey"i okur). İstemcinin
+`displayStandings`i bunu okur, dondurulmuş yerel bir tohumu değil.
+
 ### Beş sözleşme — bu fazda ölçülerek bulundu
 
 1. **Havuzu ISITMAYAN bir eşzamanlılık testi hiçbir şey KANITLAMAZ.**
@@ -444,9 +567,19 @@ bir istemciye kendi lobisininkinden BAŞKA bir yarış verirlerdi
 (`test/legacy-gone.test.ts` bunların 404 döndüğünü, yeni ailenin ayakta
 olduğunu doğrular). Yerlerini aşağıdaki lobi başına yarış uçları aldı.
 Kimlik (`/auth/*`, `/onboarding/bootstrap`, `/me`), ekonomi
-(`/economy/action`) ve Altın (`/gold/*`) uçları yukarıdaki kendi
-bölümlerinde, lobi/slot uçları (`/slots`, `/lobby/*`, `/invites`) aşağıda
-ayrı bir tabloda.
+(`/economy/action`, `/economy/state`, `/economy/settlement`) ve Altın
+(`/gold/*`) uçları yukarıdaki kendi bölümlerinde, lobi/slot uçları
+(`/slots`, `/lobby/*`, `/invites`) aşağıda ayrı bir tabloda.
+
+### Sponsorlar (`src/economy/sponsorRoutes.ts` — hepsi `Authorization: Bearer <token>` ister)
+
+| Yöntem | Yol | Gövde | Açıklama |
+|---|---|---|---|
+| GET | `/sponsors/offers` | `?lobbyId=` | Bu haftanın teklif sayfası VE takımın hâlâ imzalı sponsorlukları — salt okuma |
+| POST | `/sponsors/sign` | `lobbyId, offerId` | Teklifi imzalar; şartlar HER ZAMAN sunucunun kendi yeniden ürettiği sayfasından gelir. `404 offer_not_found`, `409 slot_taken` |
+| POST | `/sponsors/release` | `lobbyId, slot` | Sözleşmeyi bozar, kalan tura göre kırılma ücreti keser. `404 not_signed` |
+
+Ayrıntı ve güven sınırı için yukarıdaki "Sponsorlar" bölümüne bakın.
 
 ### Yarış (`src/lobby/checkin.ts`, `weekendChoices.ts`, `live.ts` — hepsi `Authorization: Bearer <token>` ister, WS hariç)
 
@@ -473,6 +606,7 @@ sayılır.
 | GET | `/lobby?id=` | — | Lobinin koltuk listesi; özel lobiyi yalnızca içindekiler görür |
 | POST | `/lobby/invite` | `lobbyId, nickname` | Tam `Takma#1234` etiketiyle davet; kısmi arama yok |
 | GET | `/invites` | — | Bekleyen davetler ve o an boş takımlar |
+| GET | `/lobby/standings` | `?id=` | Lobinin güncel şampiyona tablosu — tariften türetilir, ayrı saklanmaz |
 
 Kurucusu takım seçmemiş lobi hiçbir havuzda görünmez (§3.2). Bir önizleme
 kartının gösterdiği insan/AI sayıları ve boş takım listesi **gerçek koltuk
