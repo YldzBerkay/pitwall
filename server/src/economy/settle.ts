@@ -86,6 +86,14 @@ export interface SeatPayout {
   bonusesEarned: string[];
   /** Serisi bu yarışta sıfırlanan sponsorların marka anahtarları. */
   streaksBroken: string[];
+  /**
+   * Bu turun sonunda süresi dolan sponsorluk POZİSYONLARI (`SlotKey`) —
+   * aşağıda gerçekten silinenlerin ta kendisi, ayrı bir yeniden hesaplama
+   * DEĞİL. Silme kalıcı olduğu için, yazılmazsa oyuncunun kapanan
+   * sözleşmeyi öğrenmesinin hiçbir yolu kalmazdı (bkz.
+   * `009_settlement_expired_slots.sql`).
+   */
+  expiredSlots: string[];
 }
 
 export interface RaceSettlement {
@@ -231,6 +239,7 @@ export async function settleRace(
       let sponsorIncome = 0;
       let bonusesEarned: string[] = [];
       let streaksBroken: string[] = [];
+      const expiredSlots: string[] = [];
 
       // Sponsorluk geliri: HER aktif sözleşme perRace'ini öder, hedefi
       // tutturan da bonus+seri kazanır — formül `shared/src/sponsors.ts`
@@ -254,6 +263,10 @@ export async function settleRace(
         for (const s of sponsorResult.sponsorships) {
           if (s.expiresRound <= nextRound) {
             expiring.add(s.dealId);
+            // Döküme giren liste BU liste: silinen pozisyonların kendisi.
+            // Ayrı bir "hangileri dolmuştu" sorgusu, silmeden sonra artık
+            // cevaplanamaz bir soru olurdu.
+            expiredSlots.push(s.slot);
           } else {
             await setStreak(c, lobbyId, econ.teamKey, s.slot, s.streak);
           }
@@ -288,9 +301,11 @@ export async function settleRace(
       // parasız bir kayıt ya da kayıtsız bir ödeme çıkmaz.
       await insertSettlementPayout(c, lobbyId, seasonNo, roundNo, {
         teamKey: econ.teamKey, position, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
+        expiredSlots,
       });
       payouts.push({
         teamKey: econ.teamKey, position, rp, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
+        expiredSlots,
       });
     }
 

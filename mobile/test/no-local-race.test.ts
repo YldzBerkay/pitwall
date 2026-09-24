@@ -115,3 +115,38 @@ test('a pit call while disconnected is refused, and nothing is sent', async () =
   // target lap would have run and the player would have believed it landed.
   assert.equal(store.getState().race.lastPitOutcome.ok, false);
 });
+
+/**
+ * ── THE LOCAL PAYOUT IS UNREACHABLE FROM A LOBBY SEAT ─────────────────────
+ *
+ * The full "no local race engine" scans named in the module doc above still
+ * cannot be written (see this task's report: `weekend.phase` has no
+ * server-driven source, so deleting the local engine would make the server's
+ * own live race unreachable in the UI). This scan guards the one part that
+ * CAN be closed today, and it closes a real money bug rather than a
+ * stylistic one.
+ *
+ * `LiveRacePanel`'s flag button runs `settleRaceWeekend()` — the local
+ * payout. The server settles a lobby race on its own clock whether or not
+ * this device is connected (`server/src/economy/settle.ts`), so the button
+ * must be hidden for anyone holding a LOBBY SEAT, not merely for anyone
+ * whose socket happens to be up. It used to be gated on `leagueLive`
+ * (`race.status === 'connected'`): a lobby-seated player who lost the socket
+ * before the flag got the button back and could pay themselves local RP for
+ * a race the server had already paid. The gate is `online`
+ * (`Boolean(race.lobbyId)`) — the same signal `displayRace` and `queuePit`
+ * key off.
+ */
+test('the local settlement button is gated on a lobby SEAT, not on socket liveness', () => {
+  const panel = codeOnly(
+    readFileSync(path.join(here, '..', 'src/features/raceweek/LiveRacePanel.tsx'), 'utf8'),
+  );
+  const flagBranch = /race\.finished\s*&&\s*(\w+)\s*\?/.exec(panel);
+  assert.notEqual(flagBranch, null, 'LiveRacePanel must still branch on the finished race');
+  assert.equal(
+    flagBranch![1],
+    'online',
+    'the "server wrote it" branch must key off the lobby seat (`online`), not the socket status ' +
+      '(`leagueLive`) — a dropped socket does not un-pay a race the server already settled',
+  );
+});

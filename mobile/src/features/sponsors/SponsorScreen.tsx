@@ -16,6 +16,7 @@ import {
 } from '@pitwall/shared/sponsors';
 import { useGameStore } from '@/store/gameStore';
 import { displaySponsors } from '@/store/slices/sponsorsDisplay';
+import { displaySettlement, settlementRoundFor } from '@/store/slices/settlementDisplay';
 import { haptic } from '@/lib/haptics';
 import { sfx } from '@/lib/sfx';
 import { useShellLayout } from '@/lib/useShellLayout';
@@ -68,9 +69,17 @@ export function SponsorScreen() {
   // `sponsorsApi.lobbyId` (only set after the first successful call).
   const lobbyId = useGameStore((s) => s.race.lobbyId);
   const sponsorsApi = useGameStore((s) => s.sponsorsApi);
+  const settlementApi = useGameStore((s) => s.settlementApi);
+  // Which race "son yarış" means is the SERVER's question: `lobbies.round_no`
+  // plus the lobby phase (see `settlementRoundFor`). The local `round` below
+  // is still advanced by `gameStore.ts`'s local `settleRaceWeekend` and can
+  // sit on a completely different number from the lobby's own.
+  const activeLobby = useGameStore((s) =>
+    s.lobby.slots.find((slot) => slot.lobbyId === s.race.lobbyId)?.lobby ?? undefined,
+  );
+  const settlementRound = settlementRoundFor(activeLobby ?? undefined);
   const {
     championshipPosition,
-    lastSettlement,
     livery,
     compound,
     rim,
@@ -91,6 +100,15 @@ export function SponsorScreen() {
   useEffect(() => {
     if (lobbyId) void useGameStore.getState().sponsorsApi.hydrateOffers(lobbyId);
   }, [lobbyId]);
+
+  // The settlement is READ, never computed: the server already paid this
+  // player (`server/src/economy/settle.ts`) and persisted the breakdown in
+  // the same transaction. See `settlementDisplay.ts`.
+  useEffect(() => {
+    if (lobbyId && settlementRound !== undefined) {
+      void useGameStore.getState().settlementApi.hydrate(lobbyId, settlementRound);
+    }
+  }, [lobbyId, settlementRound]);
 
   const display = displaySponsors(lobbyId, sponsorsApi);
 
@@ -133,17 +151,29 @@ export function SponsorScreen() {
     if (!outcome.ok) setMessage(sponsorErrorText[outcome.error] ?? outcome.error);
   };
 
-  // Paid out by the race weekend (RaceWeekScreen); this screen only shows it.
-  const settlement = lastSettlement
-    ? `Son yarış (${lastSettlement.round}.): +${lastSettlement.income} RP, ${lastSettlement.prize} RP'si yarış ödülü` +
-      (lastSettlement.bonusesEarned.length
-        ? ` · hedef bonusu: ${lastSettlement.bonusesEarned.map((k) => brandByKey(k)?.short).filter(Boolean).join(', ')}`
+  // Paid by the SERVER, read here. Every number below is the server's own
+  // row (`GET /economy/settlement`), never a local re-derivation — the local
+  // `lastSettlement` is deliberately not consulted, even as a fallback, for
+  // the reason spelled out in `settlementDisplay.ts`: a lobby-seated player
+  // has already been paid a different amount from a different race.
+  const paid = displaySettlement(lobbyId, settlementApi, settlementRound);
+  const settlement = paid.kind === 'ready'
+    ? `Son yarış (${paid.round}.): +${paid.total} RP, ${paid.prize} RP'si yarış ödülü` +
+      (paid.sponsorIncome ? ` · sponsor geliri: ${paid.sponsorIncome} RP` : '') +
+      (paid.briefBonus ? ` · brifing: +${paid.briefBonus} RP` : '') +
+      (paid.bonusesEarned.length
+        ? ` · hedef bonusu: ${paid.bonusesEarned.map((k) => brandByKey(k)?.short).filter(Boolean).join(', ')}`
         : '') +
-      (lastSettlement.streaksBroken.length
-        ? ` · seri bozuldu: ${lastSettlement.streaksBroken.map((k) => brandByKey(k)?.short).filter(Boolean).join(', ')}`
+      (paid.streaksBroken.length
+        ? ` · seri bozuldu: ${paid.streaksBroken.map((k) => brandByKey(k)?.short).filter(Boolean).join(', ')}`
         : '') +
-      (lastSettlement.expired.length ? ` · ${lastSettlement.expired.length} sözleşme bitti` : '')
-    : null;
+      (paid.expired.length ? ` · ${paid.expired.length} sözleşme bitti` : '')
+    : paid.kind === 'none'
+      // A real answer, not a blank: the race has not been paid out yet.
+      ? 'Son yarışın ödemesi henüz yapılmadı.'
+      : paid.kind === 'loading'
+        ? 'Son yarışın dökümü sunucudan alınıyor…'
+        : null;
 
   // NO LOCAL FALLBACK: outside a lobby there is no server sheet to ask for,
   // and this screen must say so rather than render the old local

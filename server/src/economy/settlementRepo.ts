@@ -21,6 +21,14 @@ export interface SeatSettlementBreakdown {
   briefBonus: number;
   bonusesEarned: string[];
   streaksBroken: string[];
+  /**
+   * Slot keys whose contract lapsed at the end of this round — the positions
+   * `settle.ts` freed in this very transaction by deleting the deal. Kept
+   * here because the deletion itself leaves no trace a player could read:
+   * without this the only way to learn a sponsorship ended is to notice the
+   * panel is empty. See `009_settlement_expired_slots.sql`.
+   */
+  expiredSlots: string[];
 }
 
 interface PayoutRow {
@@ -31,6 +39,7 @@ interface PayoutRow {
   brief_bonus: number;
   bonuses_earned: string[];
   streaks_broken: string[];
+  expired_slots: string[];
 }
 
 function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
@@ -42,6 +51,7 @@ function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
     briefBonus: row.brief_bonus,
     bonusesEarned: row.bonuses_earned,
     streaksBroken: row.streaks_broken,
+    expiredSlots: row.expired_slots,
   };
 }
 
@@ -60,11 +70,12 @@ export async function insertSettlementPayout(
   await client.query(
     `insert into race_settlement_payouts
        (lobby_id, season_no, round_no, team_key, position, prize, sponsor_income, brief_bonus,
-        bonuses_earned, streaks_broken)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        bonuses_earned, streaks_broken, expired_slots)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       lobbyId, seasonNo, roundNo, payout.teamKey, payout.position, payout.prize,
       payout.sponsorIncome, payout.briefBonus, payout.bonusesEarned, payout.streaksBroken,
+      payout.expiredSlots,
     ],
   );
 }
@@ -81,7 +92,7 @@ export async function loadSettlementPayout(
   teamKey: string,
 ): Promise<SeatSettlementBreakdown | null> {
   const res = await query<PayoutRow>(
-    `select team_key, position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken
+    `select team_key, position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken, expired_slots
      from race_settlement_payouts
      where lobby_id = $1 and season_no = $2 and round_no = $3 and team_key = $4`,
     [lobbyId, seasonNo, roundNo, teamKey],

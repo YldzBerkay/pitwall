@@ -194,7 +194,16 @@ export function LiveRacePanel() {
             )}
           </View>
           <View className="flex-row items-center px-3 pb-3">
-            {race.finished && leagueLive ? (
+            {race.finished && online ? (
+              // A LOBBY SEAT, NOT A LIVE SOCKET, IS WHAT DECIDES THIS.
+              // The server settles the race on its own clock whether or not
+              // this device is connected (`server/src/economy/settle.ts`), so
+              // gating on `leagueLive` (`race.status === 'connected'`) used
+              // to leave the local "Sonuçlar ve kazanç" button on screen for
+              // a lobby-seated player whose socket had merely dropped —
+              // pressing it ran `settleRaceWeekend()` and paid LOCAL RP for a
+              // race the server had already paid. `online` is the same signal
+              // `displayRace`/`queuePit` key off, and is the right one here.
               <AppText variant="labelSmall" color={colors.accentLime} uppercase>
                 Lig yarışı bitti · sonuç sunucuda yazıldı
               </AppText>

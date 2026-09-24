@@ -149,6 +149,42 @@ describe('GET /economy/settlement', () => {
     assert.equal(body.settlement.briefBonus, expected.briefBonus);
     assert.deepEqual(body.settlement.bonusesEarned, expected.bonusesEarned);
     assert.deepEqual(body.settlement.streaksBroken, expected.streaksBroken);
+    // A deal running to round 99 has NOT lapsed at the end of round 1.
+    assert.deepEqual(body.settlement.expired, []);
+  });
+
+  it('reports the slots whose contract lapsed this round — the same ones it deleted', async () => {
+    // The player learns a sponsorship ended ONLY from this field: settlement
+    // deletes the lapsed deal outright, so after the fact there is nothing
+    // left to ask. A deal expiring at round 2 is gone at the end of round 1
+    // (the client's own `expiresRound <= nextRound` rule, mirrored in
+    // `settle.ts`), so it must be named here — and its slot must really be
+    // empty afterwards, or this field would be describing a deletion that
+    // did not happen.
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await withTransaction(async (client) => {
+      await insertSponsorship(client, lobbyId, HUMAN, {
+        dealId: 'lapsing-deal', brandKey: 'axion', slot: 'sidepod', perRace: 70, bonus: 200,
+        signedRound: 1, expiresRound: 2, streakTarget: 5, streak: 0, targetPosition: TEAM_COUNT,
+      });
+      await insertSponsorship(client, lobbyId, HUMAN, {
+        dealId: 'running-deal', brandKey: 'velox', slot: 'noseFront', perRace: 40, bonus: 100,
+        signedRound: 1, expiresRound: 99, streakTarget: 5, streak: 0, targetPosition: TEAM_COUNT,
+      });
+    });
+    await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const { status, body } = await get(`/economy/settlement?lobbyId=${lobbyId}&round=1`, owner.token);
+    assert.equal(status, 200);
+    assert.deepEqual(body.settlement.expired, ['sidepod']);
+
+    const left = await query<{ slot: string }>(
+      `select slot from sponsorships where lobby_id = $1 and team_key = $2 order by slot`,
+      [lobbyId, HUMAN],
+    );
+    assert.deepEqual(left.rows.map((r) => r.slot), ['noseFront'], 'the reported slot must be the one actually freed');
   });
 
   it('never uses a teamKey the caller supplies — the seat decides', async () => {

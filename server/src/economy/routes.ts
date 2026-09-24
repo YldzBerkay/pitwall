@@ -168,6 +168,10 @@ export function registerEconomyRoutes(router: Router): void {
           briefBonus: payout.briefBonus,
           bonusesEarned: payout.bonusesEarned,
           streaksBroken: payout.streaksBroken,
+          // Bu turda kapanan pozisyonlar. Silme kalıcı olduğu için tek
+          // kaynağı ödeme anında yazılan bu satır — bkz.
+          // `009_settlement_expired_slots.sql`.
+          expired: payout.expiredSlots,
         },
       },
     };

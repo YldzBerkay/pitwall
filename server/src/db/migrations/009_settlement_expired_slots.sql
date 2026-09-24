@@ -1,0 +1,36 @@
+-- 009_settlement_expired_slots.sql — bu yarışta süresi dolan sponsorluk
+-- pozisyonları, ödemenin dökümüne eklenir.
+--
+-- 008 dökümü "ne kazandın"ı eksiksiz anlatıyordu ama "ne KAYBETTİN"i hiç
+-- anlatmıyordu. `economy/settle.ts` bir turun sonunda süresi dolan
+-- sözleşmeleri siliyor (`deleteDeal`) ve bu silme kalıcı; ama hangi
+-- pozisyonların boşaldığı hiçbir yere yazılmıyordu. İstemcinin sponsor
+-- ekranı (mobile SponsorScreen/RaceResultSheet, `lastSettlement.expired`)
+-- bunu bugün yerel muhasebesinden okuyup oyuncuya söylüyor — sunucu
+-- muhasebesine geçişte o satır sessizce boşalırdı, yani oyuncu kapısı
+-- kapanmış bir sponsorluğu ancak slot'u boş bulunca fark ederdi.
+--
+-- NEDEN SLOT, DEAL ID DEĞİL: oyuncuya gösterilen şey aracın üzerindeki
+-- POZİSYON ("yan panel boşaldı"), sözleşmenin iç kimliği değil; ekran zaten
+-- `SlotKey` ile çalışıyor (`shared/src/sponsors.ts` `sponsorSlots`). Çok
+-- pozisyonlu bir anlaşma birden çok satır bırakır, ki doğrusu da budur —
+-- üçünü birden kaybetmekle birini kaybetmek aynı cümle değildir.
+--
+-- BU GÖÇTE KASITLI OLARAK YOK OLAN: süresi dolan sözleşmenin markası. Ekran
+-- bugün de sadece SAYIYI gösteriyor ("2 sözleşme bitti"), marka adını değil;
+-- ihtiyaç duyulmayan bir alanı şimdiden yazmak, doğruluğunu hiçbir ekranın
+-- kontrol etmediği bir veri üretmek olurdu.
+--
+-- NEDEN AYNI TAAHHÜT: 008'in kuralı aynen geçerli — bu sütun `settle.ts`
+-- içinde, `markSettled` kapısından SONRA, RP'yi yazan AYNI bağlantı ve AYNI
+-- transaction'da doldurulur. Sözleşmeyi silen `deleteDeal` de aynı işlemde
+-- olduğu için, "silinmiş ama kaydı yok" ya da "kaydı var ama silinmemiş" bir
+-- ara hâl oluşamaz.
+--
+-- NEDEN `default '{}'` VE `not null`: 008 satırları zaten var ve onlar için
+-- doğru cevap "bilmiyoruz" değil, "bu bilgi tutulmuyordu"dur; boş dizi
+-- istemciye "hiçbir sözleşme bitmedi" der. Geriye dönük bir yarışın gerçek
+-- expiry'sini uydurmak, tam da bu tablonun engellemek için var olduğu şey
+-- olurdu. `bonuses_earned`/`streaks_broken` ile birebir aynı biçim.
+alter table race_settlement_payouts
+  add column if not exists expired_slots text[] not null default '{}';
