@@ -163,6 +163,26 @@ export async function addRp(client: PoolClient, lobbyId: string, teamKey: string
   );
 }
 
+/**
+ * Charges a penalty, floored at zero rather than refused below the balance.
+ *
+ * Unlike `spendRp`, this is never a player-chosen spend that should fail
+ * outright when the team can't afford it — it's a break fee on a contract
+ * the player is walking away from (see `sponsorRoutes.ts` `releaseSponsor`),
+ * and the team must still get the slot back even if the penalty exceeds
+ * their balance. The floor lives in the `greatest()` of the write itself,
+ * not in a read-then-clamp the caller does first.
+ */
+export async function chargeRpFloor(client: PoolClient, lobbyId: string, teamKey: string, amount: number): Promise<void> {
+  assertNonNegativeInteger(amount, 'chargeRpFloor');
+  await client.query(
+    `update lobby_economy
+     set rp = greatest(0, rp - $3), updated_at = now()
+     where lobby_id = $1 and team_key = $2`,
+    [lobbyId, teamKey, amount],
+  );
+}
+
 /** Records a factory building's level. */
 export async function setFactoryLevel(
   client: PoolClient, lobbyId: string, teamKey: string, code: string, level: number,

@@ -175,7 +175,7 @@ export function pitLaneCompound(weather: WeatherPlan): CompoundKey {
  * Koşusu olmayan bir tur (lobi sezon ortasında kuruldu, ya da o tur hiç
  * koşulmadı) sessizce atlanır: olmayan yarış puan da vermez.
  */
-async function standingsBeforeRound(
+export async function standingsBeforeRound(
   lobbyId: string, seasonNo: number, roundNo: number,
 ): Promise<TeamStanding[]> {
   let standings = freshStandings();
