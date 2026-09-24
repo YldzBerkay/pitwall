@@ -102,7 +102,11 @@ describe('parc fermé', () => {
     assert.ok(team, 'takım için karar yok');
 
     // (a) TELAFİ: iş fiziken araçta — iyileşme gerçekten orada olmalı.
-    assert.equal(team.car.motor, before.motor + 1,
+    // Kazanç artık `@pitwall/shared/carCustomisation`'ın `UPGRADE_GAIN`'i
+    // (6) — sunucunun eski özel taban kazancı (1) değil. Bu denge
+    // düzeltmesinin bir parçası: `econ` denge kapısının doğruladığı sayı
+    // budur, sunucunun kendi türetmesi değil.
+    assert.equal(team.car.motor, before.motor + 6,
       'biten geliştirme etkin araca uygulanmamış (oyuncu emeğini kaybetti)');
     assert.equal(team.car.aero, before.aero, 'ilgisiz stat değişti');
     assert.equal(team.car.grip, before.grip, 'ilgisiz stat değişti');

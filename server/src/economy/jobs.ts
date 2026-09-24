@@ -28,6 +28,7 @@ import { loadTeamEconomy, spendRp, bumpCarStat, bumpUpgradesDone, type CarStats 
 import { spendGold } from '../gold/repo.ts';
 import { skipCostGold } from '@pitwall/shared/economy';
 import { factoryEffects } from '@pitwall/shared/factory';
+import { upgradeCostFor, upgradeDurationMs as sharedUpgradeDurationMs, UPGRADE_GAIN } from '@pitwall/shared/carCustomisation';
 
 export type JobKind = 'upgrade' | 'training' | 'spy';
 
@@ -41,23 +42,12 @@ const JOB_DURATIONS_MS: Record<JobKind, number> = {
   spy: 24 * HOUR_MS,
 };
 
-const UPGRADE_BASE_RP = 750;
-
 /** Stat label -> which `car` field it raises. Unknown labels are `bad_payload`. */
 const UPGRADE_STAT_FIELD: Record<string, keyof CarStats> = {
   motor: 'motor',
   aero: 'aero',
   grip: 'grip',
 };
-
-/**
- * Base stat gain a claimed upgrade grants, before `factoryEffects().upgradeGainBonus`.
- *
- * Exported because `lobby/parcFerme.ts` computes the car a finished-but-unclaimed
- * upgrade would produce. If the two ever drifted, an unclaimed-finished car would
- * race as a different car from the one the player gets on claim.
- */
-export const UPGRADE_BASE_GAIN = 1;
 
 function assertKnownKind(kind: JobKind): void {
   if (kind !== 'upgrade' && kind !== 'training' && kind !== 'spy') {
@@ -70,13 +60,21 @@ function assertKnownKind(kind: JobKind): void {
  * repeat costs and takes more, so a player cannot farm one stat cheaply
  * forever. `timesDone` is how many upgrades of this label are already
  * recorded (`lobby_economy.upgrades_done`).
+ *
+ * The base formulas (`upgradeCostFor`/`upgradeDurationMs`) come from
+ * `@pitwall/shared/carCustomisation` — the single definition `mobile`'s
+ * `npm run econ` gate validates — so the server can never again quietly
+ * diverge from the numbers the client shows. Factory department effects
+ * (`upgradeCostScale`/`upgradeTimeScale`) still apply on top, exactly as
+ * `mobile/src/store/gameStore.ts`'s `buildCostFor`/`buildTimeFor` compose
+ * them: `Math.round(shared(...) * scale)`.
  */
 function upgradeRpCost(timesDone: number, costScale: number): number {
-  return Math.round(UPGRADE_BASE_RP * 1.25 ** timesDone * costScale);
+  return Math.round(upgradeCostFor(timesDone) * costScale);
 }
 
 function upgradeDurationMs(timesDone: number, timeScale: number): number {
-  return Math.round(JOB_DURATIONS_MS.upgrade * (1 + timesDone * 0.15) * timeScale);
+  return Math.round(sharedUpgradeDurationMs(timesDone) * timeScale);
 }
 
 export interface StartJobInput {
@@ -252,7 +250,7 @@ async function applyJobEffect(
     }
     const economy = await loadTeamEconomy(lobbyId, teamKey);
     const effects = factoryEffects(economy?.factoryLevels ?? {});
-    const gain = UPGRADE_BASE_GAIN + effects.upgradeGainBonus;
+    const gain = UPGRADE_GAIN + effects.upgradeGainBonus;
     await bumpCarStat(client, lobbyId, teamKey, field, gain);
     await bumpUpgradesDone(client, lobbyId, teamKey, stat as string);
     return { stat, gain };

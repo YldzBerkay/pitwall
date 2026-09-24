@@ -36,8 +36,9 @@
  */
 import { carId, type PitLaneStart } from '@pitwall/shared/raceEngine';
 import { factoryEffects } from '@pitwall/shared/factory';
+import { UPGRADE_GAIN } from '@pitwall/shared/carCustomisation';
 import { loadLobbyEconomy, type CarStats } from '../economy/repo.ts';
-import { openJobs, UPGRADE_BASE_GAIN, type OpenJob } from '../economy/jobs.ts';
+import { openJobs, type OpenJob } from '../economy/jobs.ts';
 
 /**
  * İş etiketi (`payload.stat`, küçük harf) → `crippleSetup`'ın beklediği
@@ -125,7 +126,7 @@ function verdictForTeam(
       if (!mapping) continue; // tanınmayan payload: araca da grid'e de dokunma
       // TELAFİ: claim edilseydi ne kazanacaksa onu şimdi uygula. Aynı formül
       // `jobs.ts`'in `applyJobEffect`'i ile birebir aynı olmalı.
-      const gain = UPGRADE_BASE_GAIN + factoryEffects(factoryLevels).upgradeGainBonus;
+      const gain = UPGRADE_GAIN + factoryEffects(factoryLevels).upgradeGainBonus;
       effective[mapping.field] = effective[mapping.field] + gain;
       // CEZA: araç geliştirmesi takımın İKİ aracını da vurur — parça
       // şasiye değil, takımın paketine girer.

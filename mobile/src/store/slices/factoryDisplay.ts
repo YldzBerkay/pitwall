@@ -24,19 +24,21 @@
  * The local screen today previews an upgrade's RP cost and build time
  * BEFORE it is started (`buildCostFor`/`buildTimeFor` in `gameStore.ts`,
  * built on `@pitwall/shared/carCustomisation`'s `upgradeCostFor`/
- * `upgradeDurationMs`). The server does not expose a preview endpoint, and
- * — this was checked, not assumed — its own formula
- * (`server/src/economy/jobs.ts`'s `upgradeRpCost`/`upgradeDurationMs`) uses
- * different constants and a different growth curve from the shared client
- * formula (750 RP × 1.25^done over 22h × (1 + 0.15·done) server-side, vs
- * 750 RP × 1.5^done over 6h × 1.5^done capped at 22h client-side). Reusing
- * the client formula here would print a plausible-looking but WRONG number
- * — worse than showing nothing. So this module exposes no `nextUpgradeCost`
- * / `nextUpgradeDurationMs` field at all; the true cost/duration only
- * becomes known once the server actually returns the started job. A
- * `skipCostGold` for a job ALREADY running is fine and included below,
- * because that number comes straight from `SlotStateJob.skipCostGold` —
- * the server's own figure, not a client re-derivation.
+ * `upgradeDurationMs`). The server's own formula
+ * (`server/src/economy/jobs.ts`'s `upgradeRpCost`/`upgradeDurationMs`) now
+ * imports that exact same `upgradeCostFor`/`upgradeDurationMs` and only
+ * layers factory scales on top — the base numbers can no longer drift.
+ * (They used to: server-side was once its own 750 RP × 1.25^done over
+ * 22h × (1 + 0.15·done), privately reimplemented instead of imported. That
+ * has been fixed.) Even so, this module still exposes no
+ * `nextUpgradeCost` / `nextUpgradeDurationMs` field, because the server
+ * does not expose a preview endpoint and factory scale composition
+ * (`upgradeCostScale`/`upgradeTimeScale`) is server round-trip state this
+ * module doesn't have — the true cost/duration only becomes known once the
+ * server actually returns the started job. A `skipCostGold` for a job
+ * ALREADY running is fine and included below, because that number comes
+ * straight from `SlotStateJob.skipCostGold` — the server's own figure, not
+ * a client re-derivation.
  *
  * Factory-department upgrade cost is different: `departmentCost` lives in
  * `@pitwall/shared/factory` and BOTH `server/src/economy/actions.ts` and
