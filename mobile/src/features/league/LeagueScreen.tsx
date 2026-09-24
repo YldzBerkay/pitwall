@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, spacing } from '@/theme';
@@ -7,6 +7,7 @@ import { POINTS_FOR_PLACE, playerTeam, teamByKey, teams } from '@pitwall/shared/
 import { trackForRound } from '@pitwall/shared/tracks';
 import { useGameStore } from '@/store/gameStore';
 import { displayRace } from '@/store/slices/raceSlice';
+import { displayStandings } from '@/store/slices/standingsDisplay';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { Pos, fmtGap } from '@/features/raceweek/shared';
 
@@ -19,7 +20,6 @@ type Tab = 'teams' | 'drivers';
  */
 export function LeagueScreen() {
   const shell = useShellLayout();
-  const standings = useGameStore((s) => s.standings);
   // The last race is the SERVER's last race image, frozen at the flag — the
   // local `lastResult`/`lastSettlement` went with the local settlement, which
   // paid a different amount for a different race.
@@ -32,6 +32,18 @@ export function LeagueScreen() {
   const rosters = useGameStore((s) => s.rosters);
   const career = useGameStore((s) => s.career);
   const [tab, setTab] = useState<Tab>('teams');
+
+  // The constructors' table is READ from the server, never locally seeded
+  // or advanced — `gameStore.ts`'s old `standings` field froze the moment
+  // the local settlement that used to move it was removed (`823ddd4`). See
+  // `standingsDisplay.ts` for why there is deliberately no local fallback.
+  const lobbyId = raceSlice.lobbyId;
+  const standingsApi = useGameStore((s) => s.standingsApi);
+  useEffect(() => {
+    if (lobbyId) void useGameStore.getState().standingsApi.hydrate(lobbyId);
+  }, [lobbyId]);
+  const standingsDisplay = displayStandings(lobbyId, standingsApi);
+  const standings = standingsDisplay.kind === 'ready' ? standingsDisplay.standings : [];
 
   const leaderPoints = standings[0]?.points ?? 0;
   const mine = standings.find((s) => s.teamKey === playerTeam.key);
@@ -99,6 +111,13 @@ export function LeagueScreen() {
                 Sıra, sürücüler ve toplam puan
               </AppText>
             </View>
+            {standingsDisplay.kind !== 'ready' && (
+              <AppText variant="bodySmall" color={colors.textTertiary} className="px-4 pb-4">
+                {standingsDisplay.kind === 'no-lobby'
+                  ? 'Bir lige katılınca tablo burada görünür.'
+                  : 'Tablo sunucudan yükleniyor…'}
+              </AppText>
+            )}
             {standings.map((s, i) => {
               const team = teamByKey(s.teamKey);
               const pct = leaderPoints ? (s.points / leaderPoints) * 100 : 0;

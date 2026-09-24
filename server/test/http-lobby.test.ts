@@ -10,6 +10,8 @@ import { useIsolatedDatabase } from './helpers/isolatedDatabase.ts';
 import { query, closePool } from '../src/db/pool.ts';
 import { SEAT_LADDER, TEAM_COUNT } from '../src/lobby/grid.ts';
 import { SLOT_PRICE_GOLD } from '../src/lobby/slotRepo.ts';
+import { startRaceFor } from '../src/lobby/runner.ts';
+import { settleRace } from '../src/economy/settle.ts';
 
 let server: Server;
 let base: string;
@@ -362,6 +364,74 @@ describe('lobby http', () => {
       const { status, body } = await post('/lobby/invite', { lobbyId, nickname: friend.nickname }, stranger.token);
       assert.equal(status, 403);
       assert.equal(body.error, 'not_in_lobby');
+    });
+  });
+
+  describe('GET /lobby/standings', () => {
+    /** Every economy and sponsorship row for a lobby — what a read must never touch. */
+    async function snapshotLobby(lobbyId: string) {
+      const economy = (await query(
+        `select team_key, rp, factory_levels, car, spy_state, upgrades_done, updated_at
+           from lobby_economy where lobby_id = $1 order by team_key`,
+        [lobbyId],
+      )).rows;
+      const sponsorships = (await query(
+        `select team_key, deal_id, brand_key, slot, per_race, target_position, bonus, streak
+           from sponsorships where lobby_id = $1 order by team_key, slot`,
+        [lobbyId],
+      )).rows;
+      return { economy, sponsorships };
+    }
+
+    it('a seated player reads the lobby\'s championship table', async () => {
+      const { owner, lobbyId } = await openLobby();
+      const { status, body } = await json(`/lobby/standings?id=${lobbyId}`, { token: owner.token });
+      assert.equal(status, 200);
+      assert.equal(body.standings.length, TEAM_COUNT);
+      // No race has run yet: a fresh table, everybody on zero.
+      assert.ok(body.standings.every((s: any) => s.points === 0));
+      assert.deepEqual(
+        body.standings.map((s: any) => s.position),
+        Array.from({ length: TEAM_COUNT }, (_, i) => i + 1),
+      );
+    });
+
+    it('reflects races actually run — the table moves after a race is settled', async () => {
+      const { owner, lobbyId } = await openLobby();
+      await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+      const settlement = await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+      const { status, body } = await json(`/lobby/standings?id=${lobbyId}`, { token: owner.token });
+      assert.equal(status, 200);
+      // Same replay `settle.ts` itself produced for this exact race — the
+      // route must not invent a second answer.
+      assert.deepEqual(body.standings, settlement.standings);
+      assert.ok(body.standings.some((s: any) => s.points > 0), 'a settled race must move the table off zero');
+    });
+
+    it('mutates nothing: economy and sponsorship rows are identical before and after the read', async () => {
+      const { owner, lobbyId } = await openLobby();
+      await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+      await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+      const before = await snapshotLobby(lobbyId);
+      const { status } = await json(`/lobby/standings?id=${lobbyId}`, { token: owner.token });
+      assert.equal(status, 200);
+      const after = await snapshotLobby(lobbyId);
+      assert.deepEqual(after, before, 'GET /lobby/standings must not write anything, anywhere');
+    });
+
+    it('requires a session: 401 without a bearer', async () => {
+      const { lobbyId } = await openLobby();
+      const { status } = await json(`/lobby/standings?id=${lobbyId}`);
+      assert.equal(status, 401);
+    });
+
+    it('a valid session with no seat in that lobby gets 403', async () => {
+      const { lobbyId } = await openLobby();
+      const outsider = await signUp();
+      const { status } = await json(`/lobby/standings?id=${lobbyId}`, { token: outsider.token });
+      assert.equal(status, 403);
     });
   });
 });

@@ -9,6 +9,7 @@
  *   GET  /lobby                 ?id=… full seat list for a lobby
  *   POST /lobby/invite          invite a player by their Nickname#tag
  *   GET  /invites               invites waiting for me
+ *   GET  /lobby/standings       ?id=… the lobby's current championship table
  *
  * Every route here needs a session; there is no anonymous lobby anymore.
  */
@@ -39,6 +40,7 @@ import {
   type Visibility,
 } from './lobbyRepo.ts';
 import { ensureSlots, listSlots, unlockSlot, SLOT_PRICE_GOLD } from './slotRepo.ts';
+import { standingsBeforeRound } from './runner.ts';
 import { query } from '../db/pool.ts';
 
 /**
@@ -50,6 +52,10 @@ const shaper = new CandidateShaper();
 
 function unauthorized(): RouteResult {
   return { status: 401, body: { error: 'unauthorized' } };
+}
+
+function forbidden(): RouteResult {
+  return { status: 403, body: { error: 'forbidden' } };
 }
 
 async function requireSession(ctx: RequestContext): Promise<User | null> {
@@ -356,6 +362,46 @@ async function handleGetInvites(ctx: RequestContext): Promise<RouteResult> {
   };
 }
 
+// ── Standings ──────────────────────────────────────────────────────────────
+
+/**
+ * The lobby's current constructors' table.
+ *
+ * There is deliberately no stored table to read (`runner.ts`'s
+ * `standingsBeforeRound` docblock): it is re-derived here by replaying
+ * every round of the CURRENT season that has actually been run. Asking one
+ * past the last possible round of the season (`SEASON_ROUNDS + 1`) rather
+ * than `lobby.roundNo` sidesteps a subtler question this route has no
+ * business answering — whether `round_no` has already rolled over past a
+ * just-settled race (`rollover.ts` only advances it once `sweep.ts` pushes
+ * a `result` lobby forward, which can lag a settled race by a beat). A
+ * round with no recorded run is silently skipped by `standingsBeforeRound`
+ * itself, so replaying "through the end of the season" and replaying
+ * "through whatever has really been raced so far" are the same call.
+ *
+ * No `teamKey` is read or returned: the table belongs to the whole lobby,
+ * not to one seat, so unlike `/economy/state` there is nothing here for a
+ * `findOwnTeamKey` lookup to narrow — only membership (403 below) is
+ * checked. Read-only: nothing below writes anything.
+ */
+async function handleGetStandings(ctx: RequestContext): Promise<RouteResult> {
+  const user = await requireSession(ctx);
+  if (!user) return unauthorized();
+
+  const lobbyId = ctx.url.searchParams.get('id') ?? '';
+  if (!lobbyId) return { status: 400, body: { error: 'invalid_request' } };
+
+  const lobby = await loadLobby(lobbyId);
+  if (!lobby) return { status: 404, body: { error: 'lobby_not_found' } };
+
+  const seats = await loadSeats(lobby.id);
+  const seated = seats.some((s) => s.userId === user.id);
+  if (!seated) return forbidden();
+
+  const standings = await standingsBeforeRound(lobby.id, lobby.seasonNo, SEASON_ROUNDS + 1);
+  return { status: 200, body: { standings } };
+}
+
 export function registerLobbyRoutes(router: Router): void {
   router.get('/slots', handleGetSlots);
   router.post('/slots/unlock', handleUnlockSlot);
@@ -365,4 +411,5 @@ export function registerLobbyRoutes(router: Router): void {
   router.get('/lobby', handleGetLobby);
   router.post('/lobby/invite', handleInvite);
   router.get('/invites', handleGetInvites);
+  router.get('/lobby/standings', handleGetStandings);
 }
