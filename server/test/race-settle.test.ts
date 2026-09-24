@@ -473,6 +473,98 @@ describe('race settlement — the earning loop', () => {
     assert.equal(payout, racePrize(position, TEAM_COUNT));
   });
 
+  it('stores a per-seat breakdown whose parts sum to what was actually credited', async () => {
+    const { lobbyId, seed, snapshot } = await raceReady('Breakdown');
+    const race = predictRace(seed, snapshot);
+    const winnerTeam = race.order[0].teamKey;
+
+    // Give the winner a sponsorship that is GUARANTEED to hit (target 1) so
+    // both `sponsorIncome` and `bonusesEarned` are non-zero, alongside the
+    // prize and (for the human seat) the briefing bonus — three live income
+    // columns at once, so a dropped one would show up in the sum.
+    await withTransaction((client) => insertSponsorship(
+      client, lobbyId, winnerTeam,
+      baseSponsorship({ targetPosition: 1, perRace: 80, bonus: 250, streakTarget: 5, streak: 1, dealId: 'breakdown-deal' }),
+    ));
+
+    const before = await balances(lobbyId);
+    const settlement = await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const after = await balances(lobbyId);
+
+    for (const p of settlement.payouts) {
+      const credited = after.get(p.teamKey)! - before.get(p.teamKey)!;
+      // ASIL İDDİA: dökümün parçaları, o koltuğa GERÇEKTEN yazılan RP ile
+      // birebir toplanmalı — ekran toplamı değil dökümü gösterdiği için bir
+      // fark burada oyuncuya doğrudan yalan söyler.
+      assert.equal(
+        p.prize + p.sponsorIncome + p.briefBonus, credited,
+        `${p.teamKey}: döküm parçaları alacaklandırılan RP ile toplanmıyor`,
+      );
+      assert.equal(p.rp, credited, `${p.teamKey}: rp alacaklandırılan tutardan farklı`);
+
+      const row = await query(
+        `select position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken
+         from race_settlement_payouts where lobby_id = $1 and season_no = 1 and round_no = 1 and team_key = $2`,
+        [lobbyId, p.teamKey],
+      );
+      assert.equal(row.rowCount, 1, `${p.teamKey}: döküm satırı hiç yazılmamış`);
+      const stored = row.rows[0];
+      assert.equal(stored.position, p.position);
+      assert.equal(stored.prize, p.prize);
+      assert.equal(stored.sponsor_income, p.sponsorIncome);
+      assert.equal(stored.brief_bonus, p.briefBonus);
+      assert.deepEqual(stored.bonuses_earned, p.bonusesEarned);
+      assert.deepEqual(stored.streaks_broken, p.streaksBroken);
+      // Yazılan satırın parçaları da kendi içinde toplamalı.
+      assert.equal(stored.prize + stored.sponsor_income + stored.brief_bonus, credited);
+    }
+
+    const winnerPayout = settlement.payouts.find((p) => p.teamKey === winnerTeam)!;
+    assert.ok(winnerPayout.sponsorIncome > 0, 'kazanan takımın sponsor geliri sıfır — sabit kurulmamış');
+    assert.ok(winnerPayout.bonusesEarned.includes('axion'), 'hedef bonusu dökümde görünmüyor');
+  });
+
+  it('settling the same race twice stores one breakdown row per seat, not two', async () => {
+    const { lobbyId } = await raceReady('BreakdownTwice');
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    await assert.rejects(
+      () => settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() }),
+      AlreadySettledError,
+    );
+
+    const rows = await query<{ n: number }>(
+      `select count(*)::int as n from race_settlement_payouts where lobby_id = $1 and season_no = 1 and round_no = 1`,
+      [lobbyId],
+    );
+    assert.equal(rows.rows[0].n, TEAM_COUNT, 'ikinci muhasebe döküm satırı eklemiş/çoğaltmış olmalı değil');
+  });
+
+  it('writes no breakdown row at all when settlement fails mid-way', async () => {
+    const { lobbyId } = await raceReady('BreakdownFail');
+
+    let credits = 0;
+    await assert.rejects(
+      () => settleRace(
+        { lobbyId, seasonNo: 1, roundNo: 1, now: new Date() },
+        {
+          addRp: async (client, l, t, amount) => {
+            credits += 1;
+            if (credits > 1) throw new Error('boom');
+            await addRp(client, l, t, amount);
+          },
+        },
+      ),
+      /boom/,
+    );
+
+    const rows = await query<{ n: number }>(
+      `select count(*)::int as n from race_settlement_payouts where lobby_id = $1`,
+      [lobbyId],
+    );
+    assert.equal(rows.rows[0].n, 0, 'yarım muhasebe döküm satırı bırakmış');
+  });
+
   it('writes no sponsor income or streak change when settlement fails mid-way', async () => {
     const { lobbyId } = await raceReady('SponsorFail');
 

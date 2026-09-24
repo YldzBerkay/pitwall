@@ -29,6 +29,7 @@ import { verifySession } from '../auth/jwt.ts';
 import { query } from '../db/pool.ts';
 import { runAction, type ActionFailureCode } from './actions.ts';
 import { buildSlotState, SlotStateError } from './state.ts';
+import { loadSettlementPayout } from './settlementRepo.ts';
 
 const STATUS_BY_CODE: Record<ActionFailureCode, number> = {
   unknown_action: 400,
@@ -110,6 +111,66 @@ export function registerEconomyRoutes(router: Router): void {
       }
       throw err;
     }
+  });
+
+  // Salt okuma: hiçbir şey yazmaz, `buildSlotState` gibi. Oyuncu bağlı
+  // DEĞİLKEN koşulmuş bir yarışın ödemesini (hangi kısmının ne kadar
+  // olduğunu) okumanın tek yolu — ışıklar söndüğünde uygulamayı açık
+  // tutmayan oyuncu, ne kazandığını bir daha asla öğrenemezdi (bkz.
+  // `settle.ts`/`settlementRepo.ts`). Hedef yine `?lobbyId=` ve `?round=`
+  // ile tanımlanır — `teamKey` burada da YALNIZCA `lobby_seats`ten gelir.
+  // `season` opsiyoneldir ve verilmezse lobinin GÜNCEL sezonuna düşer; bu,
+  // "son yarışımı ne kazandım" sorusunun en sık sorulduğu hâldir. Bir round
+  // hiç ödenmediyse (henüz koşulmadı ya da hâlâ sürüyor) bu bir HATA değil —
+  // `settlement: null` ile 200 döner, tıpkı henüz kazanılmamış bir başarım
+  // gibi.
+  router.get('/economy/settlement', async (ctx: RequestContext): Promise<RouteResult> => {
+    const userId = await verifySession(ctx.bearer);
+    if (!userId) return unauthorized();
+
+    const lobbyId = ctx.url.searchParams.get('lobbyId');
+    const roundParam = ctx.url.searchParams.get('round');
+    if (!lobbyId || !roundParam) {
+      return { status: 400, body: { error: 'invalid_request' } };
+    }
+    const roundNo = Number(roundParam);
+    if (!Number.isInteger(roundNo) || roundNo < 1) {
+      return { status: 400, body: { error: 'invalid_request' } };
+    }
+
+    const teamKey = await findOwnTeamKey(lobbyId, userId);
+    if (!teamKey) return forbidden();
+
+    const seasonParam = ctx.url.searchParams.get('season');
+    let seasonNo: number;
+    if (seasonParam !== null) {
+      seasonNo = Number(seasonParam);
+      if (!Number.isInteger(seasonNo) || seasonNo < 1) {
+        return { status: 400, body: { error: 'invalid_request' } };
+      }
+    } else {
+      const lobbyRow = await query<{ season_no: number }>('select season_no from lobbies where id = $1', [lobbyId]);
+      seasonNo = lobbyRow.rows[0]?.season_no ?? 1;
+    }
+
+    const payout = await loadSettlementPayout(lobbyId, seasonNo, roundNo, teamKey);
+    if (!payout) return { status: 200, body: { settlement: null } };
+
+    return {
+      status: 200,
+      body: {
+        settlement: {
+          season: seasonNo,
+          round: roundNo,
+          position: payout.position,
+          prize: payout.prize,
+          sponsorIncome: payout.sponsorIncome,
+          briefBonus: payout.briefBonus,
+          bonusesEarned: payout.bonusesEarned,
+          streaksBroken: payout.streaksBroken,
+        },
+      },
+    };
   });
 
   router.post('/economy/action', async (ctx: RequestContext): Promise<RouteResult> => {

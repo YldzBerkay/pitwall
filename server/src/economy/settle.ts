@@ -50,6 +50,7 @@ import { loadDecisions, loadRun, markSettled } from '../lobby/raceRepo.ts';
 import { replayRace } from '../lobby/replay.ts';
 import { addRp, loadLobbyEconomy } from './repo.ts';
 import { deleteDeal, loadTeamSponsorships, setStreak } from './sponsorshipRepo.ts';
+import { insertSettlementPayout } from './settlementRepo.ts';
 
 export interface SettleRaceInput {
   lobbyId: string;
@@ -58,12 +59,33 @@ export interface SettleRaceInput {
   now: Date;
 }
 
-/** Bir takımın bu yarıştan aldığı. */
+/**
+ * Bir takımın bu yarıştan aldığı — hem TOPLAM (`rp`, geçmişte olduğu gibi
+ * `addRp`'ye giden tek sayı) hem de o toplamı oluşturan PARÇALAR.
+ *
+ * Parçalar `race_settlement_payouts`e (bkz. `settlementRepo.ts`) BİREBİR
+ * aynı şekilde yazılır — istemcinin ekranı (SponsorScreen/LeagueScreen)
+ * toplamı değil dökümü gösterdiği için, `rp`yi tek bir sayıya sıkıştırıp
+ * geri kalanı atmak oyuncuya parasının nereden geldiğini asla anlatamazdı.
+ * `rp === prize + sponsorIncome + briefBonus` HER ZAMAN doğrudur — üçü de
+ * aynı döngüde, aynı toplamı biriktirerek hesaplanır (aşağıdaki
+ * `writePayouts`e bakın), ayrı bir yeniden hesaplama YOKTUR.
+ */
 export interface SeatPayout {
   teamKey: string;
   /** Yarıştan SONRAKİ şampiyona sırası — ödülün okunduğu yer. */
   position: number;
   rp: number;
+  /** `racePrize(position, ...)` — şampiyona sırasının garantili tabanı. */
+  prize: number;
+  /** Aktif sponsorlukların bu yarış için toplam katkısı (perRace + bonus). */
+  sponsorIncome: number;
+  /** Brifing uyumundan gelen kısım; hafta sonu seçimi yoksa (AI) sıfır. */
+  briefBonus: number;
+  /** Hedefini tutturan sponsorların marka anahtarları. */
+  bonusesEarned: string[];
+  /** Serisi bu yarışta sıfırlanan sponsorların marka anahtarları. */
+  streaksBroken: string[];
 }
 
 export interface RaceSettlement {
@@ -202,8 +224,13 @@ export async function settleRace(
       const position = positionOf.get(econ.teamKey) ?? standings.length;
       // Sayı UYDURULMAZ: yarış günü ödülü `shared/src/sponsors.ts` `racePrize`
       // merdiveninden okunur ve o da `ECONOMY_SCALE`e bağlıdır — ekonominin tek
-      // knob'u.
-      let rp = racePrize(position, standings.length);
+      // knob'u. `prize` ayrıca DÖKÜME de gider — `rp`nin içine gömülüp
+      // kaybolmaz, ekranın "yarış ödülü" satırı buradan okur.
+      const prize = racePrize(position, standings.length);
+      let rp = prize;
+      let sponsorIncome = 0;
+      let bonusesEarned: string[] = [];
+      let streaksBroken: string[] = [];
 
       // Sponsorluk geliri: HER aktif sözleşme perRace'ini öder, hedefi
       // tutturan da bonus+seri kazanır — formül `shared/src/sponsors.ts`
@@ -214,7 +241,10 @@ export async function settleRace(
       if (sponsorships.length > 0) {
         const finish = teamRaceFinish(result.order, econ.teamKey);
         const sponsorResult = settleSponsorships(sponsorships, finish);
-        rp += sponsorResult.income;
+        sponsorIncome = sponsorResult.income;
+        rp += sponsorIncome;
+        bonusesEarned = sponsorResult.bonusesEarned;
+        streaksBroken = sponsorResult.streaksBroken;
 
         // Seri KALICI olmalı, yoksa bir sonraki yarış küflü veriden öder
         // (bu görevin düzelttiği tam da bu). Süresi bu turun sonunda dolan
@@ -237,6 +267,7 @@ export async function settleRace(
       // varsa (AI'da yok). Doğruluk her zaman 1 — istemcinin ödeme anında
       // yaptığı gibi (gameStore.ts `settleRaceWeekend`), yani zayıf bir
       // stratejistin YANLIŞ çağrısını izlemek hiçbir şey kazandırmaz.
+      let briefBonus = 0;
       const entry = run.snapshot.entries[econ.teamKey];
       if (entry) {
         const items = briefFor(track, weather, entry.setup);
@@ -246,11 +277,21 @@ export async function settleRace(
           risk: run.snapshot.risks[econ.teamKey] ?? 'safe',
           bias: entry.setup.bias ?? 0,
         };
-        rp += briefCompliance(items, choices) * BRIEF_RP_EACH;
+        briefBonus = briefCompliance(items, choices) * BRIEF_RP_EACH;
+        rp += briefBonus;
       }
 
       await deps.addRp(c, lobbyId, econ.teamKey, rp);
-      payouts.push({ teamKey: econ.teamKey, position, rp });
+      // AYNI BAĞLANTI, AYNI İŞLEM: döküm `markSettled` kapısından SONRA ve
+      // `addRp`yle TAM OLARAK aynı taahhütte yazılır (bkz. `settlementRepo.ts`
+      // docblock'u) — ortada bir şey patlarsa ikisi birlikte geri alınır,
+      // parasız bir kayıt ya da kayıtsız bir ödeme çıkmaz.
+      await insertSettlementPayout(c, lobbyId, seasonNo, roundNo, {
+        teamKey: econ.teamKey, position, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
+      });
+      payouts.push({
+        teamKey: econ.teamKey, position, rp, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
+      });
     }
 
     return { standings, payouts };
