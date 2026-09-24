@@ -40,13 +40,16 @@
  * (server/README.md).
  */
 import type { PoolClient } from 'pg';
-import { finishRace } from '@pitwall/shared/raceEngine';
-import { racePrize } from '@pitwall/shared/sponsors';
+import { finishRace, weatherFor, type FinishEntry } from '@pitwall/shared/raceEngine';
+import { racePrize, settleRace as settleSponsorships } from '@pitwall/shared/sponsors';
+import { briefFor, briefCompliance, BRIEF_RP_EACH, type WeekendChoices } from '@pitwall/shared/brief';
+import { trackForRound } from '@pitwall/shared/tracks';
 import type { TeamStanding } from '@pitwall/shared/teams';
 import { withTransaction } from '../db/pool.ts';
 import { loadDecisions, loadRun, markSettled } from '../lobby/raceRepo.ts';
 import { replayRace } from '../lobby/replay.ts';
 import { addRp, loadLobbyEconomy } from './repo.ts';
+import { deleteDeal, loadTeamSponsorships, setStreak } from './sponsorshipRepo.ts';
 
 export interface SettleRaceInput {
   lobbyId: string;
@@ -146,6 +149,30 @@ export async function settleRace(
 
   const economies = await loadLobbyEconomy(lobbyId);
 
+  // Brifing, tarifin DONDURULMUŞ katılımından okunur — asla yeniden
+  // hesaplanmaz, asla oyuncudan istenmez. Pist ve hava tarifin kendisinden
+  // (tohum + tur), araç ayarı/taktik/sıralama riski `RaceSnapshot.entries` ve
+  // `.risks`ten gelir: ışıklar sönerken `runner.ts`in `startRaceFor`ı
+  // `loadWeekendChoices`i TEK SEFER okuyup oraya donduruyor. AI'nın koltuğu
+  // `entries`e hiç girmediği için (yarışı hiç "seçmedi") o takım brifing
+  // bonusuna giremez — sponsorluk ve yarış ödülü gibi ekonomiye değil,
+  // BİR KARARA bağlı bir gelir kolu bu.
+  const track = trackForRound(roundNo);
+  const weather = weatherFor(track, run.seed);
+
+  /**
+   * Bir takımın yarış GÜNÜ bitişi: sponsor hedefi ve seri BUNA göre yargılar,
+   * şampiyona tablosundaki (kümülatif puan) sırasına göre DEĞİL. İstemcinin
+   * kendi arabası için yaptığı kuralın (gameStore.ts `settleRaceWeekend`
+   * `judged`) her koltuğa genellemesi: iki sürücüden daha iyi sıradaki
+   * (bitirmeyen sayılmaz), ikisi de bitirmediyse sahanın tam iki katı — yani
+   * hiçbir geçerli hedef (en fazla P12) onu asla tutturamaz.
+   */
+  const teamRaceFinish = (order: FinishEntry[], teamKey: string): number => {
+    const classified = order.filter((e) => e.teamKey === teamKey && !e.dnf).map((e) => e.position);
+    return classified.length ? Math.min(...classified) : standings.length * 2;
+  };
+
   // Yazma gövdesi bir kapanışta: `client` ÇAĞIRANDAN geldiyse onun üzerinde
   // çalışır ve `withTransaction`ı hiç görmez (commit/rollback çağıranın
   // işidir — bkz. `runner.ts` `flag()`); verilmediyse eskisi gibi kendi
@@ -160,6 +187,13 @@ export async function settleRace(
       throw new AlreadySettledError(lobbyId, seasonNo, roundNo);
     }
 
+    // Bir sonraki turun BAŞINDA hangi sözleşmeler düşer: istemcinin kendi
+    // kuralı (gameStore.ts `settleRaceWeekend`, `sponsorships.filter((s) =>
+    // s.expiresRound > nextRound)`) burada da BİREBİR aynı — bir tur erken
+    // düşürmek oyuncuyu son ödemesinden mahrum bırakır, bir tur geç düşürmek
+    // slotu bir tur fazla kilitli tutar.
+    const nextRound = roundNo + 1;
+
     const payouts: SeatPayout[] = [];
     for (const econ of economies) {
       // Ekonomi satırı olan ama tabloda olmayan bir takım olamaz (tablo 11
@@ -168,10 +202,53 @@ export async function settleRace(
       const position = positionOf.get(econ.teamKey) ?? standings.length;
       // Sayı UYDURULMAZ: yarış günü ödülü `shared/src/sponsors.ts` `racePrize`
       // merdiveninden okunur ve o da `ECONOMY_SCALE`e bağlıdır — ekonominin tek
-      // knob'u. Sponsor ücreti ve brifing bonusu BİLEREK yok: sözleşmeler de
-      // hafta sonu seçimleri de henüz sunucuda saklanmıyor (Faz 3c), ve
-      // olmayan veriden ödeme uydurmak ekonomi kapısını sessizce kaydırırdı.
-      const rp = racePrize(position, standings.length);
+      // knob'u.
+      let rp = racePrize(position, standings.length);
+
+      // Sponsorluk geliri: HER aktif sözleşme perRace'ini öder, hedefi
+      // tutturan da bonus+seri kazanır — formül `shared/src/sponsors.ts`
+      // `settleRace`ten, burada TEKRARLANMAZ. Aynı bağlantı (`c`) kullanılır:
+      // aksi halde havuzdan ikinci bir bağlantı istemek, bu bağlantı zaten
+      // işlemin ortasındayken kilitlenebilirdi.
+      const sponsorships = await loadTeamSponsorships(lobbyId, econ.teamKey, c);
+      if (sponsorships.length > 0) {
+        const finish = teamRaceFinish(result.order, econ.teamKey);
+        const sponsorResult = settleSponsorships(sponsorships, finish);
+        rp += sponsorResult.income;
+
+        // Seri KALICI olmalı, yoksa bir sonraki yarış küflü veriden öder
+        // (bu görevin düzelttiği tam da bu). Süresi bu turun sonunda dolan
+        // sözleşme tamamen kaldırılır — istemcinin kuralıyla aynı; kalanların
+        // serisi yazılır.
+        const expiring = new Set<string>();
+        for (const s of sponsorResult.sponsorships) {
+          if (s.expiresRound <= nextRound) {
+            expiring.add(s.dealId);
+          } else {
+            await setStreak(c, lobbyId, econ.teamKey, s.slot, s.streak);
+          }
+        }
+        for (const dealId of expiring) {
+          await deleteDeal(c, lobbyId, econ.teamKey, dealId);
+        }
+      }
+
+      // Brifing bonusu: yalnız bu koltuk için gerçek bir "hafta sonu seçimi"
+      // varsa (AI'da yok). Doğruluk her zaman 1 — istemcinin ödeme anında
+      // yaptığı gibi (gameStore.ts `settleRaceWeekend`), yani zayıf bir
+      // stratejistin YANLIŞ çağrısını izlemek hiçbir şey kazandırmaz.
+      const entry = run.snapshot.entries[econ.teamKey];
+      if (entry) {
+        const items = briefFor(track, weather, entry.setup);
+        const choices: WeekendChoices = {
+          raceCompound: entry.setup.compound,
+          tactics: entry.tactics,
+          risk: run.snapshot.risks[econ.teamKey] ?? 'safe',
+          bias: entry.setup.bias ?? 0,
+        };
+        rp += briefCompliance(items, choices) * BRIEF_RP_EACH;
+      }
+
       await deps.addRp(c, lobbyId, econ.teamKey, rp);
       payouts.push({ teamKey: econ.teamKey, position, rp });
     }
