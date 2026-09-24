@@ -54,7 +54,6 @@ export function PaddockScreen() {
   const shell = useShellLayout();
   const [section, setSection] = useState<Section>('staff');
   const gold = useGameStore((s) => s.gold);
-  const news = useGameStore((s) => s.paddockNews);
   const staff = useGameStore((s) => s.staff);
   const squad = useGameStore((s) => s.squad);
   const eyebrowFor: Record<Section, string> = {
@@ -92,15 +91,11 @@ export function PaddockScreen() {
         }
       />
 
-      {news.length > 0 && (
-        <View className="rounded-md border border-border-default px-3 py-2" style={{ gap: 2 }}>
-          {news.slice(0, 3).map((n, i) => (
-            <AppText key={i} variant="labelSmall" color={i === 0 ? colors.textSecondary : colors.textTertiary}>
-              {n}
-            </AppText>
-          ))}
-        </View>
-      )}
+      {/* The paddock headline strip is gone with the local settlement that
+          wrote it: wages, injuries, espionage resolution and driver ageing
+          were all side effects of `gameStore.ts`'s `settleRaceWeekend`, and
+          none of them exists server-side yet. It comes back when they do —
+          rather than being filled from a race this device did not run. */}
 
       {section === 'staff' && <StaffSection />}
       {section === 'drivers' && <DriversSection />}

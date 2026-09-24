@@ -1,16 +1,13 @@
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import { AppText, GlassButton, GlassCard, Cols } from '@/components/atoms';
+import { AppText, GlassCard, Cols } from '@/components/atoms';
 import { playerTeam } from '@pitwall/shared/teams';
 import { tyreLifeLaps, type TacticPreset } from '@pitwall/shared/raceEngine';
-import { sprintLaps } from '@pitwall/shared/tracks';
 
 import { useGameStore } from '@/store/gameStore';
 import { displayQualifying } from '@/store/slices/raceSlice';
 import { useShellLayout } from '@/lib/useShellLayout';
-import { haptic } from '@/lib/haptics';
-import { sfx } from '@/lib/sfx';
 import { Chip, CompoundPicker, DriverCell, Pos, compoundLabel, fmtSec, weekendChoiceErrorText } from './shared';
 
 const TACTICS: { key: TacticPreset; label: string; hint: string }[] = [
@@ -20,38 +17,41 @@ const TACTICS: { key: TacticPreset; label: string; hint: string }[] = [
 ];
 
 /**
- * Qualifying, then the grid.
+ * The weekend's race choices — tyre, qualifying risk, assistant tactics —
+ * and, once the server has published one, the grid those choices produced.
  *
- * Before the session: tyre and risk. Aggressive buys about three points of
- * pace and throws roughly one lap in seven away. After it: the grid is shown,
- * the manager picks the starting compound, and lights go out.
+ * ── WHAT USED TO BE HERE, AND WHY IT IS GONE ──────────────────────────────
+ * This panel used to RUN qualifying (`runQualifying`/`runSprintQualifying`,
+ * `simulateQualifying`) and then START the race (`startRaceSession`,
+ * `startRace` plus a client-side lap clock). Neither is the client's to do:
+ * the server freezes one recipe at lights-out, runs qualifying from it and
+ * ticks the race, broadcasting both. There is no "çık" or "başlat" button
+ * because there is nothing for this device to start — the lobby's clock
+ * starts it for everyone at once.
+ *
+ * What remains is exactly the part that reaches the server: the choices,
+ * sent immediately (a `wrong_phase` rejection means the recipe is already
+ * frozen — the rule working, shown rather than swallowed), and the SERVER's
+ * own qualifying result, read through `displayQualifying` with no local
+ * fallback.
  */
-export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
+export function QualifyingPanel() {
   const weekend = useGameStore((s) => s.weekend);
   const setQualiCompound = useGameStore((s) => s.setQualiCompound);
   const setRisk = useGameStore((s) => s.setRisk);
-  const runQualifying = useGameStore((s) => (mode === 'sprint' ? s.runSprintQualifying : s.runQualifying));
   const setTactics = useGameStore((s) => s.setTactics);
-  const startRaceSession = useGameStore((s) => (mode === 'sprint' ? s.startSprintSession : s.startRaceSession));
   const track = useGameStore((s) => s.track());
   const shell = useShellLayout();
   const [fullGrid, setFullGrid] = useState(false);
 
-  // The lobby this device is currently seated in, if any — undefined in the
-  // no-lobby (legacy solo) flow, where there is nowhere on the server to
-  // send this choice.
   const lobbyId = useGameStore((s) => s.lobby.slots.find((sl) => sl.slotIndex === s.lobby.activeSlotIndex)?.lobbyId ?? undefined);
   const setWeekendChoices = useGameStore((s) => s.setWeekendChoices);
   const weekendChoiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
   // Server-truth qualifying: see `displayQualifying`'s doc comment for why
-  // there is no local fallback while seated in a lobby.
+  // there is no local fallback while seated in a lobby. The second argument
+  // is `undefined` because there is no locally-simulated grid left to pass.
   const raceSlice = useGameStore((s) => s.race);
 
-  // Every choice below is saved before lights-out: sent immediately, not
-  // batched, since the server freezes the race recipe once and reads
-  // whatever was last saved. A `wrong_phase` rejection means that already
-  // happened for this weekend — the rule working, not a bug — and is shown
-  // to the player rather than swallowed (see `weekendChoiceErrorText`).
   const chooseCompound = (key: (typeof weekend)['qualiCompound']) => {
     // One picker, one value: the same tyre starts the qualifying lap and
     // the race (parc fermé) — see `setQualiCompound`'s doc comment.
@@ -73,122 +73,100 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
     </AppText>
   ) : null;
 
-  const sprint = mode === 'sprint';
-  const q = displayQualifying(raceSlice, sprint ? weekend.sprintQualifying : weekend.qualifying);
+  const q = displayQualifying(raceSlice, undefined);
   const wetNow = weekend.weather.wetAtStart;
-  const raceLaps = sprint ? sprintLaps(track) : track.laps;
-  const title = sprint ? 'Sprint' : 'Yarış';
+  const raceLaps = track.laps;
+  const startLife = tyreLifeLaps(weekend.raceCompound, track);
+  const finishWithoutStop = startLife >= raceLaps;
 
-  if (weekend.phase === 'qualifying' || weekend.phase === 'sprintQualifying') {
-    return (
-      <Cols align="flex-start">
-        <GlassCard active className="flex-1" contentStyle={{ gap: spacing.md }}>
-          <AppText variant="cardTitle" color={colors.textPrimary}>
-            {sprint ? 'Sprint Sıralaması' : 'Sıralama Stratejisi'}
-          </AppText>
-          <View>
-            <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
-              Lastik · pist şu an {wetNow ? 'ıslak' : 'kuru'}
-            </AppText>
-            <AppText variant="labelSmall" color={colors.textTertiary} className="mb-2">
-              Bu lastikle hem sıralama turu atılır hem yarışa başlanır.
-            </AppText>
-            <CompoundPicker value={weekend.qualiCompound} onChange={chooseCompound} />
-          </View>
-          <View>
-            <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
-              Risk
-            </AppText>
-            <View className="flex-row gap-1.5">
-              <Chip label="Temkinli" selected={weekend.risk === 'safe'} onPress={() => chooseRisk('safe')} />
-              <Chip
-                label="Agresif"
-                selected={weekend.risk === 'aggressive'}
-                tint={colors.neonCoral}
-                onPress={() => chooseRisk('aggressive')}
-              />
-            </View>
-            <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
-              {weekend.risk === 'aggressive'
-                ? 'Daha hızlı tur, ama her yedi turdan biri duvarda biter — ve duvara giden araç seansı kırmızı bayrakla durdurabilir.'
-                : 'Temiz tur. Sürpriz yok, kayıp da yok.'}
-            </AppText>
-          </View>
-          {lobbyId && (
-            <AppText variant="labelSmall" color={colors.textTertiary}>
-              Işıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur.
-            </AppText>
-          )}
-          {weekendChoiceNotice}
-          <GlassButton
-            label={sprint ? 'Sprint sıralamasına çık' : 'Sıralamaya çık'}
-            onPress={() => {
-              haptic.medium();
-              runQualifying();
-            }}
+  const choicesCard = (
+    <GlassCard active className="flex-1" contentStyle={{ gap: spacing.md }}>
+      <AppText variant="cardTitle" color={colors.textPrimary}>
+        Yarış stratejisi
+      </AppText>
+      <View>
+        <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
+          Lastik · pist şu an {wetNow ? 'ıslak' : 'kuru'}
+        </AppText>
+        <AppText variant="labelSmall" color={colors.textTertiary} className="mb-2">
+          Bu lastikle hem sıralama turu atılır hem yarışa başlanır.
+        </AppText>
+        <CompoundPicker value={weekend.qualiCompound} onChange={chooseCompound} />
+        <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
+          {weekend.raceCompound === 'INTERMEDIATE' || weekend.raceCompound === 'WET'
+            ? wetNow
+              ? 'Islak pist için doğru aile. Kuruyunca pit gerekir.'
+              : 'Pist kuru: bu lastik tur başına ~3 sn kaybeder.'
+            : wetNow
+              ? 'Pist ıslak — slick tur başına ~6 sn kaybeder!'
+              : finishWithoutStop
+                ? `Kuruda ~${startLife} tur dayanır: ${raceLaps} turu pit yapmadan bitirir.`
+                : `Kuruda yaklaşık ${startLife} tur dayanır; sonrası uçurum.`}
+        </AppText>
+      </View>
+      <View>
+        <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
+          Sıralama riski
+        </AppText>
+        <View className="flex-row gap-1.5">
+          <Chip label="Temkinli" selected={weekend.risk === 'safe'} onPress={() => chooseRisk('safe')} />
+          <Chip
+            label="Agresif"
+            selected={weekend.risk === 'aggressive'}
+            tint={colors.neonCoral}
+            onPress={() => chooseRisk('aggressive')}
           />
-        </GlassCard>
-
-        <GlassCard className="flex-1" contentStyle={{ gap: spacing.sm }}>
-          <AppText variant="cardTitle" color={colors.textPrimary}>
-            {sprint || !weekend.sprintResult ? 'Antrenman özeti' : 'Sprint sonucu'}
-          </AppText>
-          {(sprint || !weekend.sprintResult) && (
-            <AppText variant="labelSmall" color={colors.textTertiary}>
-              Seans · en hızlı sürücü · bizim iki aracın sırası
-            </AppText>
-          )}
-          {!sprint && weekend.sprintResult && weekend.sprintResult.order.slice(0, 8).map((e) => (
-            <View key={`${e.teamKey}-${e.driverIdx}`} className="flex-row items-center gap-2 py-0.5">
-              <Pos n={e.position} lit={e.teamKey === playerTeam.key} />
-              <DriverCell entry={e} />
-              <AppText variant="labelSmall" color={colors.textTertiary} style={{ fontFamily: 'JetBrainsMono_700Bold' }}>
-                +{[8, 7, 6, 5, 4, 3, 2, 1][e.position - 1] ?? 0}p
-              </AppText>
-            </View>
+        </View>
+        <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
+          {weekend.risk === 'aggressive'
+            ? 'Daha hızlı tur, ama her yedi turdan biri duvarda biter — ve duvara giden araç seansı kırmızı bayrakla durdurabilir.'
+            : 'Temiz tur. Sürpriz yok, kayıp da yok.'}
+        </AppText>
+      </View>
+      <View>
+        <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
+          Yardımcı bot taktiği
+        </AppText>
+        <View className="flex-row gap-1.5">
+          {TACTICS.map((t) => (
+            <Chip key={t.key} label={t.label} selected={weekend.tactics === t.key} onPress={() => chooseTactics(t.key)} />
           ))}
-          {weekend.practiceSessions.map((session, i) => {
-            const player = session.map((e, idx) => ({ e, idx })).filter(({ e }) => e.teamKey === playerTeam.key);
-            const fpRed = weekend.practiceReds[i];
-            return (
-              <View key={i} className="flex-row items-center gap-2 py-1">
-                <Pos n={`A${i + 1}`} width={34} />
-                <DriverCell entry={session[0]} />
-                <AppText variant="labelSmall" color={colors.accentLime}>
-                  {player.map(({ idx }) => `${idx + 1}.`).join(' / ')}
-                </AppText>
-                {fpRed && (
-                  <AppText variant="labelSmall" color={colors.neonCoral}>
-                    Kırmızı bayrak
-                  </AppText>
-                )}
-              </View>
-            );
-          })}
-        </GlassCard>
-      </Cols>
-    );
-  }
+        </View>
+        <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
+          {TACTICS.find((t) => t.key === weekend.tactics)?.hint} Yarış sırasında duvarda değilsen aracı bu taktikle yardımcı yönetir, hata payıyla.
+        </AppText>
+      </View>
+      {lobbyId && (
+        <AppText variant="labelSmall" color={colors.textTertiary}>
+          Işıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur. Sıralama turu
+          ışıklarla birlikte sunucuda atılır; burada başlatılacak bir seans yok.
+        </AppText>
+      )}
+      {weekendChoiceNotice}
+    </GlassCard>
+  );
 
-  if (!q) return null;
+  if (!q) return <Cols align="flex-start">{choicesCard}</Cols>;
+
   const rows = q.grid.map((e, i) => ({ e, pos: i + 1 }));
   // Narrow screens: the top of the grid plus our two cars, unless expanded.
   const shown = shell.isWide || fullGrid ? rows : rows.filter(({ e, pos }) => pos <= 6 || e.teamKey === playerTeam.key);
   const half = shell.isWide ? Math.ceil(shown.length / 2) : shown.length;
   const columns = shell.isWide ? [shown.slice(0, half), shown.slice(half)] : [shown];
-  const startLife = tyreLifeLaps(weekend.raceCompound, track);
-  const finishWithoutStop = startLife >= raceLaps;
 
   const gridCard = (
     <GlassCard contentStyle={{ gap: spacing.sm }}>
       <View className="flex-row items-center justify-between">
         <AppText variant="cardTitle" color={colors.textPrimary}>
-          {sprint ? 'Sprint gridi' : 'Başlangıç gridi'}
+          Başlangıç gridi
         </AppText>
         <AppText variant="labelSmall" color={colors.accentLime}>
           {playerTeam.drivers.map((d, i) => `${d.name.split(' ').pop()} ${q.playerGrid[i]}.${q.mistakes[i] ? ' ⚠' : ''}`).join(' · ')}
         </AppText>
       </View>
+      <AppText variant="labelSmall" color={colors.textTertiary}>
+        {`${compoundLabel[weekend.raceCompound]} lastikle başlanır · ${raceLaps} tur`}
+      </AppText>
       <View className="flex-row" style={{ gap: spacing.lg }}>
         {columns.map((col, c) => (
           <View key={c} className="flex-1">
@@ -229,73 +207,10 @@ export function QualifyingPanel({ mode }: { mode: 'race' | 'sprint' }) {
     </GlassCard>
   );
 
-  const actionCard = (
-    <GlassCard active contentStyle={{ gap: spacing.md }}>
-      <View className="flex-row items-center justify-between">
-        <AppText variant="cardTitle" color={colors.textPrimary}>
-          {title} başlangıcı
-        </AppText>
-        {sprint && (
-          <AppText variant="labelSmall" color={colors.textTertiary}>
-            {`${raceLaps} tur · ilk 8'e 8-7-6-5-4-3-2-1 puan`}
-          </AppText>
-        )}
-      </View>
-      <Cols align="flex-start">
-        <View className="flex-1">
-          <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
-            Başlangıç lastiği
-          </AppText>
-          <AppText variant="bodySmall" color={colors.textSecondary} className="mb-2">
-            {`${compoundLabel[weekend.raceCompound]} — sıralamada seçilen lastikle başlanır, burada ayrıca seçilmez.`}
-          </AppText>
-          <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
-            {weekend.raceCompound === 'INTERMEDIATE' || weekend.raceCompound === 'WET'
-              ? wetNow
-                ? 'Islak pist için doğru aile. Kuruyunca pit gerekir.'
-                : 'Pist kuru: bu lastik tur başına ~3 sn kaybeder.'
-              : wetNow
-                ? 'Pist ıslak — slick tur başına ~6 sn kaybeder!'
-                : finishWithoutStop
-                ? `Kuruda ~${startLife} tur dayanır: ${raceLaps} turu pit yapmadan bitirir.`
-                : `Kuruda yaklaşık ${startLife} tur dayanır; sonrası uçurum.`}
-          </AppText>
-        </View>
-        <View className="flex-1">
-          <AppText variant="labelSmall" color={colors.textTertiary} uppercase className="mb-2">
-            Yardımcı bot taktiği
-          </AppText>
-          <View className="flex-row gap-1.5">
-            {TACTICS.map((t) => (
-              <Chip key={t.key} label={t.label} selected={weekend.tactics === t.key} onPress={() => chooseTactics(t.key)} />
-            ))}
-          </View>
-          <AppText variant="bodySmall" color={colors.textTertiary} className="mt-2">
-            {TACTICS.find((t) => t.key === weekend.tactics)?.hint} Yarıştan 5 dk önce duvarda değilsen aracı bu taktikle yardımcı yönetir, hata payıyla.
-          </AppText>
-        </View>
-      </Cols>
-      {lobbyId && (
-        <AppText variant="labelSmall" color={colors.textTertiary}>
-          Taktik ışıklar sönmeden önce kaydedilir — sunucu bunu yarış başlarken bir kez okur.
-        </AppText>
-      )}
-      {weekendChoiceNotice}
-      <GlassButton
-        label={sprint ? 'Sprinti başlat' : 'Yarışı başlat'}
-        onPress={() => {
-          haptic.heavy();
-          sfx.play('spark');
-          startRaceSession();
-        }}
-      />
-    </GlassCard>
-  );
-
   return (
     <View style={{ gap: spacing.lg }}>
       {shell.isWide && gridCard}
-      {actionCard}
+      <Cols align="flex-start">{choicesCard}</Cols>
       {!shell.isWide && gridCard}
     </View>
   );

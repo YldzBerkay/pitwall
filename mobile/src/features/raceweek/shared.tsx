@@ -5,6 +5,7 @@ import { compoundByKey, compounds, type CompoundKey } from '@pitwall/shared/carC
 import { teamByKey } from '@pitwall/shared/teams';
 import { haptic } from '@/lib/haptics';
 import type { GridEntry } from '@pitwall/shared/raceEngine';
+import type { WeekPanel } from '@/store/slices/raceSlice';
 
 /** One option in a segmented choice. */
 export function Chip({
@@ -195,4 +196,20 @@ export const pitErrorText = (code: string): string => {
     default:
       return `Pit çağrısı reddedildi: ${code}`;
   }
+};
+
+/**
+ * A short name for each panel the server's phase can select
+ * (`displayWeekPanel`). Shared by `RaceWeekScreen` (its empty-state cards)
+ * and `ManagerHomeScreen` (the "next race" widget and its to-do list), which
+ * both used to read `gameStore.ts`'s local `WeekendPhase` labels.
+ */
+export const weekPanelLabel: Record<WeekPanel, string> = {
+  'no-lobby': 'Aktif lig yok',
+  loading: 'Lobi durumu alınıyor',
+  choices: 'Hafta sonu kararları',
+  checkin: 'Check-in açık',
+  live: 'Yarış canlı',
+  'season-over': 'Sezon tamamlandı',
+  result: 'Yarış bitti',
 };

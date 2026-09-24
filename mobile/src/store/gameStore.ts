@@ -14,8 +14,6 @@ import { skipCostGold } from '@pitwall/shared/economy';
 import { UPGRADE_GAIN, tierOf, upgradeCostFor, upgradeDurationMs, type CompoundKey, type SpokeStyle } from '@pitwall/shared/carCustomisation';
 import {
   generateOffers,
-  racePrize,
-  settleRace,
   sponsorSlots,
   type SlotKey,
   type SponsorOffer,
@@ -23,66 +21,47 @@ import {
 } from '@pitwall/shared/sponsors';
 import {
   playerTeam,
-  teams,
   positionOf,
   seedStandings,
   type TeamStanding,
 } from '@pitwall/shared/teams';
 import { fitOf, trackForRound, type Track, type TrackDemand } from '@pitwall/shared/tracks';
+/**
+ * TYPES ONLY, PLUS THE TWO PURE HELPERS THAT RUN NO SESSION.
+ *
+ * `@pitwall/shared/raceEngine` is the ONE engine and the SERVER runs it
+ * (`server/src/lobby/runner.ts`). This module may not execute a lap, a
+ * start, a qualifying session or a classification of its own — see
+ * `mobile/test/no-local-race.test.ts`, which scans for exactly that.
+ * `weatherFor` is a deterministic forecast for the weekend card and
+ * `reliabilityOf` prices the factory's reliability for the testing report;
+ * neither simulates anything.
+ */
 import {
-  advanceLap,
-  autoDecisions,
-  finishRace,
-  playerDecisions,
   reliabilityOf,
-  crippleSetup,
-  CRIPPLED_DNF_SCALE,
-  simulatePractice,
-  simulateQualifying,
-  soloEntries,
-  startRace,
   weatherFor,
   type CarSetup,
-  type Entries,
   type PitDecision,
-  type PlayerDecisions,
   type QualiRisk,
-  type QualifyingResult,
-  type RaceEvent,
-  type RaceResult,
-  type RaceState,
   type TacticPreset,
-  type SessionStoppage,
-  type TimedEntry,
   type WeatherPlan,
 } from '@pitwall/shared/raceEngine';
-import {
-  emptyCareer,
-  recordWeekend,
-  scoreWeekend,
-  type Career,
-  type WeekendAchievements,
-} from '@pitwall/shared/achievements';
+import { emptyCareer, type Career } from '@pitwall/shared/achievements';
 import {
   SEASON_ROUNDS,
   TEST_DAYS,
   TEST_GAIN_CORRECT,
   TEST_GAIN_WRONG,
-  championshipPrize,
-  freshStandings,
-  summariseSeason,
-  regressCar,
   testReport,
-  type SeasonSummary,
   type TestFocus,
   type TestOutcome,
   type TestReport,
 } from '@pitwall/shared/season';
-import { BRIEF_RP_EACH, briefCompliance, briefFor, type BriefItem } from '@pitwall/shared/brief';
+import { briefFor, type BriefItem } from '@pitwall/shared/brief';
 import { createEconomySlice, type EconomySlice } from './slices/economySlice';
 import { createStaffSlice, type StaffSlice } from './slices/staffSlice';
 import { createEspionageSlice, type EspionageSlice } from './slices/espionageSlice';
-import { INJURY_ROUNDS, createDriverSlice, type DriverSlice } from './slices/driverSlice';
+import { createDriverSlice, type DriverSlice } from './slices/driverSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
 import { createLobbySlice, type LobbySlice } from './slices/lobbySlice';
@@ -127,90 +106,50 @@ export interface CarBuild {
 /** Why a build could not be started. */
 export type StartUpgradeResult = 'ok' | 'noRp' | 'busy' | 'missing';
 
-/** Outcome of settling a race weekend. */
-export interface RaceSettlement {
-  /** Sponsor fees + bonuses + prize money. */
-  income: number;
-  /** The championship payout inside `income` — the part results cannot take away. */
-  prize: number;
-  bonusesEarned: string[];
-  /** Deals whose streak just reset because the target was missed. */
-  streaksBroken: string[];
-  expired: SlotKey[];
-  /** The race that was paid for. */
-  result: RaceResult;
-  achievements: WeekendAchievements;
-  /** Engineer briefing items the manager followed, and the RP they paid. */
-  briefFollowed: number;
-  briefRp: number;
-  /** Present only when this weekend closed the season. */
-  season?: SeasonSummary;
-  /** Round that was settled. */
-  round: number;
-}
-
 // ── Weekend ────────────────────────────────────────────────────────────────
 
-export type WeekendPhase =
-  | 'practice'
-  | 'sprintQualifying'
-  | 'sprintGrid'
-  | 'sprint'
-  | 'qualifying'
-  | 'grid'
-  | 'race'
-  | 'result';
-
+/**
+ * WHAT THE PLAYER CHOOSES, AND NOTHING ELSE.
+ *
+ * This used to be the whole local weekend: a `phase` the local engine walked
+ * session by session, the practice timing sheets, the simulated qualifying
+ * and grid, a live `RaceState` ticked by a client-side clock, the
+ * classification and a locally-computed settlement.
+ *
+ * All of that is the server's now. The race is frozen at lights-out, ticked
+ * server-side and broadcast per lobby (`displayRace`); qualifying arrives in
+ * the `state` frame (`displayQualifying`); the phase arrives in the `phase`
+ * frame (`displayPhase`/`displayWeekPanel`); the money is settled and
+ * persisted server-side and merely read back (`displaySettlement`).
+ *
+ * What is left here is the set of choices the player SENDS before lights-out
+ * — setup bias, the (qualifying-and-start) tyre, qualifying risk and the
+ * assistant's tactics — kept locally so the pickers have something to draw
+ * while the request is in flight. `race`, `prevRace`, `pending`, `prompt`,
+ * `qualifying`, `result` and `settlement` are deliberately absent: a second
+ * race image on the client is a second, divergent race, which is the whole
+ * thing this migration exists to remove.
+ */
 export interface Weekend {
   round: number;
   seed: number;
-  phase: WeekendPhase;
   weather: WeatherPlan;
-  /** Practice setup bias, -1 aero … +1 mechanical, in fifths. */
+  /** Setup bias, -1 aero … +1 mechanical, in fifths. */
   bias: number;
-  /** Completed practice sessions, FP1 first. */
-  practice: TimedEntry[];
-  practiceSessions: TimedEntry[][];
-  /** Race control's stoppage in each practice session, aligned with `practiceSessions`. */
-  practiceReds: (SessionStoppage | undefined)[];
   qualiCompound: CompoundKey;
   risk: QualiRisk;
-  qualifying?: QualifyingResult;
   raceCompound: CompoundKey;
   /** What the assistant follows if the manager is not at the wall. */
   tactics: TacticPreset;
-  /** Sprint weekends: the Saturday-style short race and its own qualifying. */
-  sprintQualifying?: QualifyingResult;
-  sprintResult?: RaceResult;
-  /** How many practice sessions this weekend has (one on a sprint weekend). */
-  practiceCount: number;
-  race?: RaceState;
-  /** The lap before `race`, kept so the map can animate between the two. */
-  prevRace?: RaceState;
-  /** Pit calls queued for the next lap, lead driver first. */
-  pending: PlayerDecisions;
-  /** The latest moment that wants a decision; the pit wall highlights it for a few laps. */
-  prompt?: RaceEvent;
-  result?: RaceResult;
-  settlement?: RaceSettlement;
 }
 
 /**
- * Real time per lap. There is no fast-forward and no pause: the race runs at
- * the same clock for every manager in the league, as it will online. Sixty
- * laps is about two and a half minutes.
+ * Nominal real time per lap, used ONLY to size the map's between-laps
+ * interpolation and the "about N minutes left" line. It drives nothing: the
+ * one race clock belongs to the server (`server/src/lobby/runner.ts`), and
+ * no timer in this client advances a lap.
  */
 export const RACE_TICK_MS = 2500;
-
-/** Events the pit wall surfaces as a decision moment. */
-const PROMPT_ON: RaceEvent['kind'][] = ['rain', 'dry', 'cliff', 'sc', 'vsc', 'red'];
-
-/** The one race clock. Module-level so a re-render can never start a second one. */
-let raceClock: ReturnType<typeof setInterval> | undefined;
-const stopRaceClock = () => {
-  if (raceClock) clearInterval(raceClock);
-  raceClock = undefined;
-};
 
 const newWeekend = (round: number, season: number): Weekend => {
   const seed = season * 1000 + round;
@@ -218,12 +157,8 @@ const newWeekend = (round: number, season: number): Weekend => {
   return {
     round,
     seed,
-    phase: 'practice',
     weather,
     bias: 0,
-    practice: [],
-    practiceSessions: [],
-    practiceReds: [],
     // `qualiCompound` and `raceCompound` are always kept equal — the same
     // tyre is used for qualifying and the start (see `setQualiCompound`'s
     // doc comment and `CarSetup.compound` in `@pitwall/shared/raceEngine`).
@@ -231,8 +166,6 @@ const newWeekend = (round: number, season: number): Weekend => {
     risk: 'safe',
     raceCompound: weather.wetAtStart ? 'WET' : 'SOFT',
     tactics: 'balanced',
-    pending: [undefined, undefined],
-    practiceCount: trackForRound(round).sprint ? 1 : 3,
   };
 };
 
@@ -253,10 +186,14 @@ interface CoreState {
   departments: FactoryDepartment[];
   /** The circuit this round is run at. */
   track: () => Track;
-  /** The car as the race engine sees it: stats + starting compound + practice bias. */
+  /**
+   * The car as the race engine sees it: stats + starting compound + setup
+   * bias. Read by the engineer's briefing and the pre-season test report —
+   * NOT by any race: the server builds its own entries from the choices this
+   * client sends it (`setWeekendChoices`), which is why the old `entries()`
+   * (the local grid `soloEntries` built for the local engine) is gone.
+   */
   setup: () => CarSetup;
-  /** This team as a race entry; every other team is AI until the league goes online. */
-  entries: () => Entries;
 
   /** Car appearance — drives both the in-app car and the Blender renders. */
   livery: string;
@@ -299,15 +236,17 @@ interface CoreState {
   runTestDay: (focus: TestFocus) => TestOutcome | undefined;
 
   // ── Race weekend ──
+  //
+  // Choices only. Running the weekend — practice, qualifying, the race, the
+  // flag and the payout — is the server's job end to end; the actions that
+  // used to do it here (`runPractice`, `runQualifying`,
+  // `runSprintQualifying`, `startRaceSession`, `startSprintSession`,
+  // `advanceRaceLap`, `skipToFlag`, `finishSprint`, `settleRaceWeekend`,
+  // `nextWeekend`) are gone with the local engine.
   weekend: Weekend;
   /** The engineer's briefing for this weekend. */
   brief: () => BriefItem[];
   setBias: (bias: number) => void;
-  /** Sprint weekends: sprint qualifying, then the sprint itself on the race clock. */
-  runSprintQualifying: () => void;
-  startSprintSession: () => void;
-  /** Run the next practice session (FP1 → FP3). After FP3 the weekend moves to qualifying. */
-  runPractice: () => void;
   /** Sets both `weekend.qualiCompound` and `weekend.raceCompound` together
    * — the same tyre starts the qualifying lap and the race (parc fermé:
    * see `CarSetup.compound`'s doc comment in `@pitwall/shared/raceEngine`).
@@ -315,39 +254,13 @@ interface CoreState {
    * once the grid is known. */
   setQualiCompound: (key: CompoundKey) => void;
   setRisk: (risk: QualiRisk) => void;
-  runQualifying: () => void;
-  /** @deprecated no screen calls this anymore — `setQualiCompound` sets
-   * `weekend.raceCompound` too. Left in place only so nothing else that
-   * references the action breaks. */
-  setRaceCompound: (key: CompoundKey) => void;
   setTactics: (tactics: TacticPreset) => void;
-  /** Lights out: build the race state from the grid and start the clock. */
-  startRaceSession: () => void;
-  /** Queue (or cancel) a pit call for one car; it is taken on the next lap. */
+  /** Send a live pit call to the server's decision log. There is no local
+   * queue and no local echo — see the implementation's comment. */
   queuePit: (driverIdx: 0 | 1, decision: PitDecision | undefined) => void;
-  /** One lap, on the clock. Takes the queued pit calls. */
-  advanceRaceLap: () => void;
-  /** Bank the sprint's points and move on to qualifying. */
-  finishSprint: () => void;
-  /** Dev/test only: run the remaining laps on the automatic pit wall. */
-  skipToFlag: () => void;
-  /**
-   * Pay out the weekend. Requires a finished race: sponsors are settled on the
-   * lead car's finish, prize money on the standing, the table takes the
-   * result, the career takes the achievements, and — after round 23 — the
-   * season closes.
-   */
-  settleRaceWeekend: () => RaceSettlement;
-  /** Leave the result screen and open the next round's weekend. */
-  nextWeekend: () => void;
-  /** The most recent settlement, for screens that only show it. */
-  lastSettlement?: RaceSettlement;
-  lastResult?: RaceResult;
 
   // ── Career ──
   career: Career;
-  seasonSummary?: SeasonSummary;
-  dismissSeasonSummary: () => void;
 
   // ── Sponsorship ──
   /** The constructors' table. The player's position is read off it. */
@@ -369,8 +282,6 @@ interface CoreState {
 
   /** Fractional upgrade points carried between upgrades (mechanic bonus). */
   upgradeCarry: Record<string, number>;
-  /** Headlines from the last settlement (wages, injuries, intelligence). */
-  paddockNews: string[];
 }
 
 export type GameState = CoreState &
@@ -412,7 +323,6 @@ export const useGameStore = create<GameState>()(
   upgradeCarry: {},
   build: undefined,
   upgradesDone: {},
-  paddockNews: [],
 
   teamName: teamState.teamName,
   round: teamState.round,
@@ -430,31 +340,11 @@ export const useGameStore = create<GameState>()(
       motor: value('MOTOR'),
       aero: value('AERO'),
       grip: value('GRIP'),
-      compound: weekend.phase === 'qualifying' ? weekend.qualiCompound : weekend.raceCompound,
+      // One tyre, one weekend: `setQualiCompound` writes both fields, so
+      // there is nothing to pick between (parc fermé — see its doc comment).
+      compound: weekend.raceCompound,
       bias: weekend.bias,
     };
-  },
-  entries: () => {
-    const state = get();
-    const levels = state.factoryLevels();
-    const fx = state.effects();
-    // Yarış günü kilidi: tezgahta parça varken araç sökük yarışır — pişen
-    // stat yarı değerinde, güvenilirlik yarıya bölünmüş (yani DNF riski
-    // katlanmış). `dnfChance` güvenilirliği 1 - r*0.5 ile okuduğu için ayrı
-    // bir alan açmaya gerek yok.
-    const building = state.build?.label;
-    const reliability = Math.min(1, reliabilityOf(levels) + fx.reliabilityBonus);
-    const entries = soloEntries(
-      crippleSetup(state.setup(), building),
-      building ? reliability / CRIPPLED_DNF_SCALE : reliability,
-      state.weekend.tactics,
-    );
-    const own = entries[playerTeam.key];
-    own.drivers = state.raceDrivers();
-    own.pitSecondsSaved = fx.pitSecondsSaved;
-    own.pitFailChance = fx.pitFailChance;
-    own.assistantErrorScale = fx.assistantErrorScale;
-    return entries;
   },
 
   livery: 'pitwall',
@@ -595,344 +485,37 @@ export const useGameStore = create<GameState>()(
   setBias: (bias) =>
     set((state) => ({ weekend: { ...state.weekend, bias: Math.max(-1, Math.min(1, bias)) } })),
 
-  runPractice: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'practice' || w.practiceSessions.length >= w.practiceCount) return;
-    const session = (w.practiceSessions.length + 1) as 1 | 2 | 3;
-    const entries = state.entries();
-    entries[playerTeam.key].setup.compound = w.weather.wetAtStart ? 'INTERMEDIATE' : 'MEDIUM';
-    const result = simulatePractice({
-      track: trackForRound(w.round),
-      entries,
-      aiBonus: state.aiBonus,
-      rosters: state.rosters,
-      wet: w.weather.wetAtStart,
-      session,
-      round: w.round,
-      seed: w.seed,
-    });
-    const practiceSessions = [...w.practiceSessions, result.order];
-    set({
-      weekend: {
-        ...w,
-        practice: result.order,
-        practiceSessions,
-        practiceReds: [...w.practiceReds, result.red],
-        phase: practiceSessions.length >= w.practiceCount
-          ? trackForRound(w.round).sprint ? 'sprintQualifying' : 'qualifying'
-          : 'practice',
-      },
-    });
-  },
-
-  runSprintQualifying: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'sprintQualifying') return;
-    const entries = state.entries();
-    entries[playerTeam.key].setup.compound = w.qualiCompound;
-    const sprintQualifying = simulateQualifying({
-      track: trackForRound(w.round),
-      entries,
-      aiBonus: state.aiBonus,
-      rosters: state.rosters,
-      wet: w.weather.wetAtStart,
-      risks: { [playerTeam.key]: w.risk },
-      round: w.round,
-      seed: w.seed + 1,
-    });
-    set({ weekend: { ...w, sprintQualifying, phase: 'sprintGrid' } });
-  },
-
-  startSprintSession: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'sprintGrid' || !w.sprintQualifying) return;
-    const entries = state.entries();
-    entries[playerTeam.key].setup.compound = w.raceCompound;
-    const race = startRace({
-      standings: state.standings,
-      track: trackForRound(w.round),
-      entries,
-      weather: w.weather,
-      grid: w.sprintQualifying.grid,
-      round: w.round,
-      seed: w.seed + 1,
-      session: 'sprint',
-      aiBonus: state.aiBonus,
-      rosters: state.rosters,
-    });
-    set({ weekend: { ...w, race, prevRace: undefined, pending: [undefined, undefined], prompt: undefined, phase: 'sprint' } });
-    stopRaceClock();
-    raceClock = setInterval(() => get().advanceRaceLap(), RACE_TICK_MS);
-  },
-
   setQualiCompound: (key) => set((state) => ({ weekend: { ...state.weekend, qualiCompound: key, raceCompound: key } })),
   setRisk: (risk) => set((state) => ({ weekend: { ...state.weekend, risk } })),
 
-  runQualifying: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'qualifying') return;
-    const entries = state.entries();
-    entries[playerTeam.key].setup.compound = w.qualiCompound;
-    const qualifying = simulateQualifying({
-      track: trackForRound(w.round),
-      entries,
-      aiBonus: state.aiBonus,
-      rosters: state.rosters,
-      wet: w.weather.wetAtStart,
-      risks: { [playerTeam.key]: w.risk },
-      round: w.round,
-      seed: w.seed,
-    });
-    set({ weekend: { ...w, qualifying, phase: 'grid' } });
-  },
-
-  setRaceCompound: (key) => set((state) => ({ weekend: { ...state.weekend, raceCompound: key } })),
   setTactics: (tactics) => set((state) => ({ weekend: { ...state.weekend, tactics } })),
-
-  startRaceSession: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'grid' || !w.qualifying) return;
-    const entries = state.entries();
-    entries[playerTeam.key].setup.compound = w.raceCompound;
-    const race = startRace({
-      standings: state.standings,
-      track: trackForRound(w.round),
-      entries,
-      weather: w.weather,
-      grid: w.qualifying.grid,
-      round: w.round,
-      seed: w.seed,
-      aiBonus: state.aiBonus,
-      rosters: state.rosters,
-    });
-    set({ weekend: { ...w, race, prevRace: undefined, pending: [undefined, undefined], prompt: undefined, phase: 'race' } });
-    stopRaceClock();
-    raceClock = setInterval(() => get().advanceRaceLap(), RACE_TICK_MS);
-  },
 
   queuePit: (driverIdx, decision) => {
     const state = get();
-    // ── ONLINE: THE CALL GOES TO THE SERVER, AND NOWHERE ELSE ────────────
-    // A lobby seat exists, so this weekend's race is the server's
-    // (`server/src/lobby/runner.ts`) and its pit-decision log is the only
-    // place a call means anything. `raceSlice.callPit` refuses it outright —
-    // no request sent — when the socket is not `connected`, and there is
-    // deliberately NO queue: a call held on the device would be delivered
-    // after the lap it targeted had already run, the server would reject it
-    // with `lap_already_run`, and in the meantime the player would have
-    // believed it landed. The refusal is surfaced through
-    // `race.lastPitOutcome` (see `LiveRacePanel`), never swallowed.
+    // THE CALL GOES TO THE SERVER, AND NOWHERE ELSE.
+    // This weekend's race is the server's (`server/src/lobby/runner.ts`) and
+    // its pit-decision log is the only place a call means anything.
+    // `raceSlice.callPit` refuses it outright — no request sent — when the
+    // socket is not `connected`, and there is deliberately NO queue: a call
+    // held on the device would be delivered after the lap it targeted had
+    // already run, the server would reject it with `lap_already_run`, and in
+    // the meantime the player would have believed it landed. The refusal is
+    // surfaced through `race.lastPitOutcome` (see `LiveRacePanel`), never
+    // swallowed.
     //
-    // Nothing is written to `weekend.pending` here: a local echo would be a
-    // second, unauthoritative answer to "did my call land?".
-    if (state.race.lobbyId) {
-      // The decision log is append-only and the API has no withdrawal
-      // (`lib/api/race.ts`'s `PitInput.lap` doc comment), so cancelling a
-      // live call is not a request that can be made.
-      if (decision) void state.callPit(driverIdx, decision.compound);
-      return;
-    }
-    // ── OFFLINE/solo weekend ─────────────────────────────────────────────
-    // Still driven by the local engine below. It cannot be removed until the
-    // settlement path stops needing a full local `RaceState` — see this
-    // file's `settleRaceWeekend` and `docs`/the Stage 2 plan.
-    set((state) => {
-      const pending: PlayerDecisions = [state.weekend.pending[0], state.weekend.pending[1]];
-      pending[driverIdx] = decision;
-      return { weekend: { ...state.weekend, pending } };
-    });
-  },
-
-  advanceRaceLap: () => {
-    const w = get().weekend;
-    if ((w.phase !== 'race' && w.phase !== 'sprint') || !w.race || w.race.finished) {
-      stopRaceClock();
-      return;
-    }
-    const race = advanceLap(w.race, trackForRound(w.round), playerDecisions(w.pending));
-    const fresh = race.events.filter((e) => e.lap === race.lap);
-    const prompt = fresh.find((e) => PROMPT_ON.includes(e.kind)) ?? w.prompt;
-    set({ weekend: { ...w, race, prevRace: w.race, pending: [undefined, undefined], prompt } });
-    if (race.finished) stopRaceClock();
-  },
-
-  finishSprint: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.phase !== 'sprint' || !w.race || !w.race.finished) return;
-    const sprintResult = finishRace(w.race);
-    set({
-      standings: sprintResult.standings,
-      championshipPosition: positionOf(sprintResult.standings, playerTeam.key),
-      weekend: { ...w, sprintResult, race: undefined, prevRace: undefined, prompt: undefined, phase: 'qualifying' },
-    });
-  },
-
-  skipToFlag: () => {
-    const w = get().weekend;
-    if ((w.phase !== 'race' && w.phase !== 'sprint') || !w.race) return;
-    stopRaceClock();
-    const track = trackForRound(w.round);
-    let race = w.race;
-    while (!race.finished) race = advanceLap(race, track, autoDecisions(race, track));
-    set({ weekend: { ...w, race, prevRace: undefined, pending: [undefined, undefined] } });
-  },
-
-  settleRaceWeekend: () => {
-    const state = get();
-    const w = state.weekend;
-    if (w.settlement) return w.settlement;
-    if (!w.race || !w.race.finished || !w.qualifying) {
-      throw new Error('settleRaceWeekend: the race has not been run');
-    }
-    const result = finishRace(w.race);
-
-    // Sponsors judge the LEAD car. A double retirement counts as last: the fee
-    // is still paid whatever happens (sponsors.ts rule), only the target is missed.
-    const judged = result.playerFinish > 0 ? result.playerFinish : teams.length * 2;
-    const settled = settleRace(state.sponsorships, judged);
-    // Prize money is the guaranteed floor; sponsors are what reward climbing.
-    const prize = racePrize(state.championshipPosition, teams.length);
-    let income = settled.income + prize;
-    const nextRound = state.round + 1;
-    const expired = settled.sponsorships
-      .filter((s) => s.expiresRound <= nextRound)
-      .map((s) => s.slot);
-
-    // Paid against the TRUE briefing: following a weak strategist's wrong call earns nothing.
-    const briefFollowed = briefCompliance(briefFor(trackForRound(w.round), w.weather, state.setup()), {
-      raceCompound: w.raceCompound,
-      tactics: w.tactics,
-      risk: w.risk,
-      bias: w.bias,
-    });
-    const briefRp = briefFollowed * BRIEF_RP_EACH;
-    income += briefRp;
-    // Wages come out of the weekend's income; the paddock is not free.
-    const wages = state.staffWages() + state.driverWages();
-    income -= wages;
-    const paddockNews: string[] = [`Maaşlar: ${wages} RP (personel ${state.staffWages()}, sürücüler ${state.driverWages()}).`];
-
-    // Injuries: a heavy crash keeps the regular out for a race or two; the reserve steps in.
-    const injuries: [number, number] = [Math.max(0, state.injuries[0] - 1), Math.max(0, state.injuries[1] - 1)];
-    for (const idx of [0, 1] as const) {
-      const car = result.order.find((e) => e.teamKey === playerTeam.key && e.driverIdx === idx);
-      if (car?.injured && state.injuries[idx] === 0) {
-        const out = INJURY_ROUNDS[0] + (w.seed % 2 === 0 ? INJURY_ROUNDS[1] - INJURY_ROUNDS[0] : 0);
-        injuries[idx] = out;
-        paddockNews.push(`${state.drivers[idx].name} ağır kazadan sonra ${out} yarış dışında; ${state.squad[0] ? `${state.squad[0].driver.name} koltuğa geçiyor` : 'yedek yok, geçici sürücü koşacak'}.`);
-      }
-    }
-    const achievements = scoreWeekend({
-      race: result,
-      playerGrid: w.qualifying.playerGrid,
-      practice: [w.practiceSessions[0] ?? [], w.practiceSessions[1] ?? [], w.practiceSessions[2] ?? []],
-      sprint: w.sprintResult,
-      sprintGrid: w.sprintQualifying?.playerGrid,
-      briefFollowed,
-    });
-    const careerBefore = state.career;
-    let career = recordWeekend(careerBefore, achievements, result);
-
-    // Season close: the table pays out and resets; car, factory, money and sponsors carry over.
-    let standings = result.standings;
-    let season: SeasonSummary | undefined;
-    let round = nextRound;
-    let seasonNo = state.season;
-    if (nextRound > SEASON_ROUNDS) {
-      const finalPosition = positionOf(standings, playerTeam.key);
-      season = summariseSeason({ season: state.season, standings, careerBefore, careerAfter: career });
-      income += championshipPrize(finalPosition);
-      career = {
-        ...career,
-        seasonsCompleted: career.seasonsCompleted + 1,
-        bestChampionship: career.bestChampionship === 0 ? finalPosition : Math.min(career.bestChampionship, finalPosition),
-      };
-      standings = freshStandings();
-      round = 1;
-      seasonNo = state.season + 1;
-    }
-    const testing = nextRound > SEASON_ROUNDS ? { day: 1, outcomes: [] } : state.testing;
-
-    const settlement: RaceSettlement = {
-      income,
-      prize,
-      bonusesEarned: settled.bonusesEarned,
-      streaksBroken: settled.streaksBroken,
-      expired,
-      result,
-      achievements,
-      briefFollowed,
-      briefRp,
-      season,
-      round: state.round,
-    };
-
-    set({
-      rp: Math.max(0, state.rp + income),
-      weekEarned: income,
-      injuries,
-      paddockNews,
-      round,
-      season: seasonNo,
-      carStats: withTrackFit(state.carStats, trackForRound(round)),
-      standings,
-      championshipPosition: positionOf(standings, playerTeam.key),
-      sponsorships: settled.sponsorships.filter((s) => s.expiresRound > nextRound),
-      declinedOffers: [],
-      career,
-      testing,
-      seasonSummary: season ?? state.seasonSummary,
-      lastSettlement: settlement,
-      lastResult: result,
-      weekend: { ...w, result, settlement, phase: 'result' },
-    });
-    // Intelligence reports back with the new day; rivals try their luck.
-    get().resolveIntel();
-    // The winter: ageing, contract expiries and the grid's transfer window.
-    // Whatever it did leads the paddock news the manager opens next.
-    if (season) {
-      get().ageDrivers();
-      // Kış reseti: sezon sonunda araç tavana yaklaştığı için herkes geriler;
-      // taşınan tek şey fabrika. Merdiven sayaçları sıfırlanır, yoksa ikinci
-      // sezon 12.814 RP'lik yükseltmelerle başlardı.
-      const floor = get().factory().winterFloorBonus;
-      const winterNews: string[] = [];
-      set((st) => {
-        const regressed = st.carStats.map((cs) => ({ ...cs, value: regressCar(cs.value, floor) }));
-        winterNews.push(
-          `Yeni teknik kurallar: araç ${st.carStats.map((c) => c.value).join('/')} → ${regressed.map((c) => c.value).join('/')} (fabrika +${floor}).`,
-        );
-        return {
-          carStats: withTrackFit(regressed, trackForRound(1)),
-          upgradesDone: {},
-          upgradeCarry: {},
-          // Sezon sınırı, "iptal yok, iade yok" kuralının tek istisnası:
-          // parçanın statını zaten reset silecek, para boşa gitmesin.
-          build: undefined,
-          rp: st.build ? st.rp + st.buildCostFor(st.build.label) : st.rp,
-        };
-      });
-      const winter = [...winterNews, ...get().transferNews];
-      set({ paddockNews: [...winter, ...paddockNews] });
-    }
-    return settlement;
-  },
-
-  nextWeekend: () => {
-    const state = get();
-    if (state.weekend.phase !== 'result') return;
-    set({ weekend: newWeekend(state.round, state.season) });
+    // Nothing is echoed locally: there is no local race to echo it onto, and
+    // a local echo would be a second, unauthoritative answer to "did my call
+    // land?". Off a lobby seat there is no race at all, so the call is simply
+    // dropped — the app is a view of the server or it is nothing.
+    if (!state.race.lobbyId) return;
+    // The decision log is append-only and the API has no withdrawal
+    // (`lib/api/race.ts`'s `PitInput.lap` doc comment), so cancelling a live
+    // call is not a request that can be made.
+    if (decision) void state.callPit(driverIdx, decision.compound);
   },
 
   // ── Career ──
   career: emptyCareer(),
-  dismissSeasonSummary: () => set({ seasonSummary: undefined }),
 
   // ── Sponsorship ──
   standings: initialStandings,

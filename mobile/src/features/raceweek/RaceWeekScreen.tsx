@@ -1,10 +1,13 @@
+import { useEffect } from 'react';
 import { ScrollView, View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import { AppText, GlassCard, PulseDot, Cols, ScreenHeader } from '@/components/atoms';
+import { AppText, GlassButton, GlassCard, PulseDot, Cols, ScreenHeader } from '@/components/atoms';
 import { demandPct, localClock, trackForRound, weekendSchedule, type SessionKey } from '@pitwall/shared/tracks';
 import { TEST_DAYS } from '@pitwall/shared/season';
-import { useGameStore, type WeekendPhase } from '@/store/gameStore';
+import { useGameStore } from '@/store/gameStore';
+import { displayPhase, displayWeekPanel, type WeekPanel } from '@/store/slices/raceSlice';
 import { useShellLayout } from '@/lib/useShellLayout';
+import { haptic } from '@/lib/haptics';
 import { statName } from '@/components/molecules/CarStatCard';
 import { PracticePanel } from './PracticePanel';
 import { QualifyingPanel } from './QualifyingPanel';
@@ -13,6 +16,7 @@ import { RaceResultSheet } from './RaceResultSheet';
 import { TestingPanel } from './TestingPanel';
 import { BriefCard } from './BriefCard';
 import { LeagueCard } from './LeagueCard';
+import { weekPanelLabel, weekendChoiceErrorText } from './shared';
 
 type SessionStatus = 'completed' | 'active' | 'upcoming';
 
@@ -32,50 +36,70 @@ const sessionName: Record<SessionKey, string> = {
   RACE: 'Yarış',
 };
 
-/** What the manager should do in each phase, in one sentence. */
-const phaseHint: Record<WeekendPhase, string> = {
-  practice: 'Araç ayarını seç, antrenmanları yap, brifinge bak.',
-  sprintQualifying: 'Sprint sıralaması: lastik ve risk seç, tek tur at.',
-  sprintGrid: 'Sprint gridi belli. Başlangıç lastiğini seç, sprinti başlat.',
-  sprint: 'Sprint canlı: pit çağrıları bir sonraki turda uygulanır.',
-  qualifying: 'Sıralama: lastik ve risk seç. Agresif tur hızlı ama riskli.',
-  grid: 'Grid belli. Başlangıç lastiğini ve bot taktiğini seç, yarışı başlat.',
-  race: 'Yarış canlı: lastik aşınmasını izle, doğru anda pite çağır.',
-  result: 'Yarış bitti. Kazanç, başarımlar ve tablo aşağıda.',
+/** What the manager should do in each panel, in one sentence. */
+const panelHint: Record<WeekPanel, string> = {
+  'no-lobby': 'Bir lige katıl — hafta sonu orada, sunucunun saatinde koşulur.',
+  loading: 'Lobi durumu sunucudan alınıyor…',
+  choices: 'Araç ayarını, lastiği, sıralama riskini ve bot taktiğini seç. Işıklar sönmeden kaydedilir.',
+  checkin: 'Duvara geç: yarışı kendin süreceğini bildir. Seçimler hâlâ değiştirilebilir.',
+  live: 'Yarış canlı: lastik aşınmasını izle, doğru anda pite çağır.',
+  result: 'Yarış bitti. Sunucunun yazdığı sonuç ve ödeme aşağıda.',
+  'season-over': 'Sezon tamamlandı. Yeni sezon lobide açılacak.',
 };
 
 const fitColour = { green: colors.electricCyan, yellow: colors.solarAmber, red: colors.neonCoral } as const;
 
 /**
- * The race weekend, phase by phase: practice → qualifying → grid → race →
- * result. Everything here reads the store's `weekend`; nothing about the
- * outcome lives in component state, so leaving and returning changes nothing.
+ * The race weekend, as the SERVER runs it.
+ *
+ * Which panel shows is decided by `displayWeekPanel(displayPhase(race))` and
+ * by nothing else. This screen used to branch on `gameStore.ts`'s local
+ * `weekend.phase` — eight values walked by the local engine's own session
+ * functions. That engine is gone: the lobby's phase arrives on `/race/live`
+ * and is the only thing that moves the weekend on. There is deliberately no
+ * fallback to a local phase when the frame has not landed yet (`'loading'`)
+ * or when there is no lobby at all (`'no-lobby'`) — a local weekend would be
+ * a weekend the server is not running.
  */
 export function RaceWeekScreen() {
   const shell = useShellLayout();
-  // On the result screen the store already points at the next round; show the race we just ran.
-  const currentTrack = useGameStore((s) => s.track());
   const weekend = useGameStore((s) => s.weekend);
-  const track = weekend.phase === 'result' ? trackForRound(weekend.round) : currentTrack;
   const carStats = useGameStore((s) => s.carStats);
   const round = useGameStore((s) => s.round);
   const totalRounds = useGameStore((s) => s.totalRounds);
-  const season = useGameStore((s) => s.season);
   const testing = useGameStore((s) => s.testing);
 
+  const raceSlice = useGameStore((s) => s.race);
+  const phase = displayPhase(raceSlice);
+  const panel = displayWeekPanel(phase);
+  // Season and round are the SERVER's while seated — the local counters no
+  // longer advance at all, since nothing local settles a weekend.
+  const localSeason = useGameStore((s) => s.season);
+  const season = phase.kind === 'ready' ? phase.seasonNo : localSeason;
+  const shownRound = phase.kind === 'ready' ? phase.roundNo : round;
+
+  const checkinRace = useGameStore((s) => s.checkinRace);
+  const lobbyId = raceSlice.lobbyId;
+  const choiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
+
+  // The result sheet reads the server's own persisted breakdown; ask for it
+  // as soon as the lobby says this round has been settled.
+  const hydrateSettlement = useGameStore((s) => s.settlementApi.hydrate);
+  const settled = panel === 'result' || panel === 'season-over';
+  useEffect(() => {
+    if (lobbyId && settled) void hydrateSettlement(lobbyId, shownRound, season);
+  }, [lobbyId, settled, shownRound, season, hydrateSettlement]);
+
+  const track = trackForRound(shownRound);
   const schedule = weekendSchedule(track);
   const inTesting = testing.day <= TEST_DAYS;
-  const sessions = schedule.map((sess) => ({
-    ...sess,
-    status: sessionStatus(sess.key, weekend.phase, weekend.practiceSessions.length),
-  }));
+  const sessions = schedule.map((sess) => ({ ...sess, status: sessionStatus(sess.key, panel) }));
   const demand = demandPct(track);
   const nextKey = sessions.find((s) => s.status === 'upcoming')?.key;
   const forecastPct = Math.round(weekend.weather.forecast * 100);
 
   // Live race and result: the action goes first, the weekend overview after it.
-  const liveFirst = weekend.phase === 'race' || weekend.phase === 'sprint' || weekend.phase === 'result';
-  const raceFinished = (weekend.phase === 'race' || weekend.phase === 'sprint') && Boolean(weekend.race?.finished);
+  const liveFirst = panel === 'live' || panel === 'result';
   const overview = (
       <Cols weights={[1.4, 1]}>
         <GlassCard style={{ flex: 1 }}>
@@ -181,10 +205,10 @@ export function RaceWeekScreen() {
       showsVerticalScrollIndicator={false}
     >
       <ScreenHeader
-        eyebrow={`Sezon ${season} · ${weekend.phase === 'result' ? weekend.round : round}/${totalRounds} yarış · ${track.circuit}`}
+        eyebrow={`Sezon ${season} · ${shownRound}/${totalRounds} yarış · ${track.circuit}`}
         icon="race-week"
         title={track.gp}
-        subtitle={raceFinished ? 'Yarış bitti. Sonuçlar ve kazanç hazır.' : phaseHint[weekend.phase]}
+        subtitle={panelHint[panel]}
       />
 
       {!liveFirst && overview}
@@ -193,45 +217,66 @@ export function RaceWeekScreen() {
         <TestingPanel />
       ) : (
         <>
-          {weekend.phase === 'practice' && (
+          {(panel === 'no-lobby' || panel === 'loading' || panel === 'season-over') && (
+            <GlassCard contentStyle={{ gap: spacing.sm }}>
+              <AppText variant="cardTitle" color={colors.textPrimary}>
+                {weekPanelLabel[panel]}
+              </AppText>
+              <AppText variant="bodySmall" color={colors.textSecondary}>
+                {panelHint[panel]}
+              </AppText>
+            </GlassCard>
+          )}
+          {(panel === 'choices' || panel === 'checkin') && (
             <>
               <PracticePanel />
+              <QualifyingPanel />
               <BriefCard />
             </>
           )}
-          {(weekend.phase === 'sprintQualifying' || weekend.phase === 'sprintGrid') && <QualifyingPanel mode="sprint" />}
-          {(weekend.phase === 'qualifying' || weekend.phase === 'grid') && <QualifyingPanel mode="race" />}
-          {(weekend.phase === 'race' || weekend.phase === 'sprint') && <LiveRacePanel />}
-          {weekend.phase === 'result' && <RaceResultSheet />}
+          {panel === 'checkin' && lobbyId && (
+            <GlassCard active contentStyle={{ gap: spacing.sm }}>
+              <AppText variant="cardTitle" color={colors.textPrimary}>
+                Duvara geç
+              </AppText>
+              <AppText variant="bodySmall" color={colors.textSecondary}>
+                Yarışı kendin süreceğini bildir. Bildirmezsen aracı seçtiğin taktikle yardımcı bot yönetir.
+              </AppText>
+              {choiceOutcome?.ok === false && (
+                <AppText variant="labelSmall" color={colors.neonCoral}>
+                  {weekendChoiceErrorText(choiceOutcome.error)}
+                </AppText>
+              )}
+              <GlassButton
+                label="Yarışa hazırım"
+                onPress={() => {
+                  haptic.medium();
+                  void checkinRace(lobbyId);
+                }}
+              />
+            </GlassCard>
+          )}
+          {panel === 'live' && <LiveRacePanel />}
+          {panel === 'result' && <RaceResultSheet />}
         </>
       )}
       {liveFirst && overview}
-      {!inTesting && weekend.phase !== 'race' && weekend.phase !== 'sprint' && <LeagueCard />}
+      {!inTesting && panel !== 'live' && <LeagueCard />}
     </ScrollView>
   );
 }
 
-/** Where one scheduled session stands given the weekend's phase. */
-function sessionStatus(key: SessionKey, phase: WeekendPhase, practiceDone: number): SessionStatus {
-  const order: WeekendPhase[] = ['practice', 'sprintQualifying', 'sprintGrid', 'sprint', 'qualifying', 'grid', 'race', 'result'];
-  const at = order.indexOf(phase);
-  const after = (p: WeekendPhase) => at > order.indexOf(p);
-  const is = (...ps: WeekendPhase[]) => ps.includes(phase);
-  switch (key) {
-    case 'FP1':
-    case 'FP2':
-    case 'FP3': {
-      const n = Number(key.slice(2));
-      if (practiceDone >= n || after('practice')) return 'completed';
-      return phase === 'practice' && practiceDone === n - 1 ? 'active' : 'upcoming';
-    }
-    case 'SQ':
-      return is('sprintQualifying') ? 'active' : after('sprintQualifying') ? 'completed' : 'upcoming';
-    case 'SPRINT':
-      return is('sprintGrid', 'sprint') ? 'active' : after('sprint') ? 'completed' : 'upcoming';
-    case 'Q':
-      return is('qualifying') ? 'active' : after('qualifying') ? 'completed' : 'upcoming';
-    case 'RACE':
-      return is('grid', 'race') ? 'active' : phase === 'result' ? 'completed' : 'upcoming';
+/**
+ * Where one scheduled session stands, given the panel the server's phase
+ * chose. The schedule strip is a rough shape of the weekend, not a state
+ * machine: the server has no practice/qualifying sessions of its own, so
+ * everything before the race is `completed` once the lobby is live.
+ */
+function sessionStatus(key: SessionKey, panel: WeekPanel): SessionStatus {
+  const raceDone = panel === 'result' || panel === 'season-over';
+  if (key === 'RACE' || key === 'SPRINT') {
+    return raceDone ? 'completed' : panel === 'live' ? 'active' : 'upcoming';
   }
+  // FP1-3 / SQ / Q: the server folds these into lights-out.
+  return panel === 'live' || raceDone ? 'completed' : panel === 'checkin' ? 'active' : 'upcoming';
 }

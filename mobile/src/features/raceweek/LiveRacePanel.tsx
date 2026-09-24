@@ -3,7 +3,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import { colors, spacing } from '@/theme';
 import { semanticColors } from '@/theme/colors';
-import { AppText, GlassButton, GlassCard, PulseDot, Cols } from '@/components/atoms';
+import { AppText, GlassCard, PulseDot, Cols } from '@/components/atoms';
 import { GridIntro } from '@/components/organisms';
 import { compoundByKey, type CompoundKey } from '@pitwall/shared/carCustomisation';
 import { playerTeam } from '@pitwall/shared/teams';
@@ -35,6 +35,26 @@ const MAP_HEIGHT_MAX = 236;
 /** A decision moment stays highlighted for this many laps. */
 const PROMPT_LAPS = 3;
 
+/** Events the pit wall surfaces as a decision moment. */
+const PROMPT_ON: RaceState['events'][number]['kind'][] = ['rain', 'dry', 'cliff', 'sc', 'vsc', 'red'];
+
+/**
+ * The moment the pit wall should be shouting about, derived from the
+ * server's own event log rather than remembered locally. The store used to
+ * carry a `weekend.prompt` that the local lap reducer wrote as it advanced;
+ * with the reducer gone, the feed is the only source — and it is the better
+ * one anyway, since a reconnecting device rebuilds the prompt from the
+ * frames it just received instead of from whatever it happened to see live.
+ */
+function promptFor(race: Pick<RaceState, 'lap' | 'events'>): RaceState['events'][number] | undefined {
+  for (let i = race.events.length - 1; i >= 0; i -= 1) {
+    const e = race.events[i];
+    if (race.lap - e.lap >= PROMPT_LAPS) break;
+    if (PROMPT_ON.includes(e.kind)) return e;
+  }
+  return undefined;
+}
+
 /**
  * The race, live: map, leaderboard, pit wall.
  *
@@ -44,10 +64,7 @@ const PROMPT_LAPS = 3;
  * on the UI thread so the dots keep moving between ticks.
  */
 export function LiveRacePanel() {
-  const weekend = useGameStore((s) => s.weekend);
   const queuePit = useGameStore((s) => s.queuePit);
-  const settleRaceWeekend = useGameStore((s) => s.settleRaceWeekend);
-  const finishSprint = useGameStore((s) => s.finishSprint);
   const leagueLive = useGameStore((s) => s.race.status === 'connected');
   // A lobby seat exists: this weekend's pit calls go to the server's decision
   // log, so the button must NOT pretend a call is "queued" locally — what it
@@ -62,31 +79,29 @@ export function LiveRacePanel() {
   const shell = useShellLayout();
   const MAP_HEIGHT = Math.min(MAP_HEIGHT_MAX, Math.round(shell.height * 0.5));
 
-  // The single source-of-truth decision: server race while seated in a
-  // lobby (never a local fallback — see `displayRace`'s doc comment), the
-  // local solo engine's race otherwise. `weekend.race` is read here ONLY as
-  // the fallback `displayRace` uses when there is no lobby at all; once
-  // `raceSlice`'s `lobbyId` is set, this screen never looks at it again.
+  // The one race there is: the server's. `displayRace`'s local-fallback arm
+  // is fed `undefined` because there IS no local race any more — the engine
+  // that produced one is gone, and off a lobby seat this panel has nothing
+  // to draw (see `RaceWeekScreen`'s no-lobby branch, which is what a player
+  // actually sees in that case).
   const raceSlice = useGameStore((s) => s.race);
-  const display = displayRace<RaceState | undefined>(raceSlice, weekend.race);
+  const display = displayRace<RaceState | undefined>(raceSlice, undefined);
   const race: LiveRace | undefined = display.kind === 'not-started' ? undefined : display.race;
   // True only for the server-sourced, disconnected/reconnecting case: the
   // screen keeps drawing the last real lap it has, but must say plainly
   // that it is frozen, not live.
   const stale = display.kind === 'server' && display.stale;
 
-  // `prev` feeds the map's between-laps interpolation. The local engine
-  // already snapshots this itself (`weekend.prevRace`, set by the reducer
-  // the instant it advances); the server-sourced race has no such snapshot
-  // handed to it, so this screen keeps its own one-lap-behind copy — a
-  // standard "previous render's value" ref, updated only when the server
-  // image itself changes.
+  // `prev` feeds the map's between-laps interpolation. The server-sourced
+  // race carries no previous-lap snapshot, so this screen keeps its own
+  // one-lap-behind copy — a standard "previous render's value" ref, updated
+  // only when the server image itself changes.
   const prevServerRace = useRef<LiveRace | undefined>(undefined);
   const serverRace = display.kind === 'server' ? display.race : undefined;
   useEffect(() => {
     prevServerRace.current = serverRace;
   }, [serverRace]);
-  const prev = display.kind === 'local' ? weekend.prevRace : prevServerRace.current;
+  const prev = prevServerRace.current;
 
   const [pitCompound, setPitCompound] = useState<[CompoundKey, CompoundKey]>(['MEDIUM', 'MEDIUM']);
   const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
@@ -146,7 +161,7 @@ export function LiveRacePanel() {
 
   const playerCars = race.cars.filter((c) => c.isPlayer).sort((a, b) => a.driverIdx - b.driverIdx);
   const wetNow = race.wet;
-  const prompt = weekend.prompt && race.lap - weekend.prompt.lap < PROMPT_LAPS ? weekend.prompt : undefined;
+  const prompt = promptFor(race);
   const latest = race.events[race.events.length - 1];
   const isSprint = race.session === 'sprint';
   const under = race.neutralised && race.lap < race.neutralised.untilLap ? race.neutralised.kind : undefined;
@@ -194,29 +209,17 @@ export function LiveRacePanel() {
             )}
           </View>
           <View className="flex-row items-center px-3 pb-3">
-            {race.finished && online ? (
-              // A LOBBY SEAT, NOT A LIVE SOCKET, IS WHAT DECIDES THIS.
-              // The server settles the race on its own clock whether or not
-              // this device is connected (`server/src/economy/settle.ts`), so
-              // gating on `leagueLive` (`race.status === 'connected'`) used
-              // to leave the local "Sonuçlar ve kazanç" button on screen for
-              // a lobby-seated player whose socket had merely dropped —
-              // pressing it ran `settleRaceWeekend()` and paid LOCAL RP for a
-              // race the server had already paid. `online` is the same signal
-              // `displayRace`/`queuePit` key off, and is the right one here.
+            {race.finished ? (
+              // THERE IS NO LOCAL PAYOUT BUTTON ANY MORE, FOR ANYONE.
+              // This used to be a "Sonuçlar ve kazanç" button that ran the
+              // local `settleRaceWeekend()` — a second, divergent payout for
+              // a race the server had already settled on its own clock
+              // (`server/src/economy/settle.ts`). The settlement is read,
+              // never computed: `RaceResultSheet` shows the server's own
+              // persisted breakdown once the lobby reaches `result`.
               <AppText variant="labelSmall" color={colors.accentLime} uppercase>
-                Lig yarışı bitti · sonuç sunucuda yazıldı
+                Yarış bitti · sonuç ve ödeme sunucuda yazıldı
               </AppText>
-            ) : race.finished ? (
-              <GlassButton
-                label={isSprint ? 'Sprint puanlarını kaydet ve sıralamaya geç' : 'Sonuçlar ve kazanç'}
-                className="flex-1"
-                onPress={() => {
-                  haptic.success();
-                  if (isSprint) finishSprint();
-                  else settleRaceWeekend();
-                }}
-              />
             ) : (
               <AppText variant="labelSmall" color={colors.textTertiary} numberOfLines={2} style={{ flex: 1 }}>
                 Canlı · yaklaşık {Math.max(1, Math.round(((race.laps - race.lap) * RACE_TICK_MS) / 60000))} dk kaldı
@@ -287,9 +290,8 @@ export function LiveRacePanel() {
         <Cols gap={spacing.md}>
           {playerCars.map((car) => {
             const idx = car.driverIdx;
-            // Online there is no local queue to read: the call either reached
-            // the server's log or it did not, and `pitOutcome` says which.
-            const queued = online ? undefined : weekend.pending[idx];
+            // There is no local queue to read: the call either reached the
+            // server's log or it did not, and `pitOutcome` says which.
             const outcome = online && pitOutcome?.ok === false ? pitOutcome : undefined;
             const landed = online && pitOutcome?.ok === true && pitOutcome.driverIdx === idx ? pitOutcome : undefined;
             const wearPct = Math.min(100, Math.round(car.wear * 100));
@@ -327,16 +329,16 @@ export function LiveRacePanel() {
                     <Pressable
                       onPress={() => {
                         haptic.select();
-                        queuePit(idx, queued ? undefined : { compound: pitCompound[idx] });
+                        queuePit(idx, { compound: pitCompound[idx] });
                       }}
                       className="items-center justify-center rounded-md border py-2"
                       style={{
-                        borderColor: queued ? colors.accentLime : colors.borderActive,
-                        backgroundColor: queued ? colors.accentLime : colors.accentSoft,
+                        borderColor: colors.borderActive,
+                        backgroundColor: colors.accentSoft,
                       }}
                     >
-                      <AppText variant="labelSmall" color={queued ? colors.onAccent : colors.accentLime} uppercase style={{ fontFamily: 'Inter_600SemiBold' }}>
-                        {queued ? `Pit sırada: ${compoundByKey(queued.compound).label} · iptal et` : 'Pite çağır (box box)'}
+                      <AppText variant="labelSmall" color={colors.accentLime} uppercase style={{ fontFamily: 'Inter_600SemiBold' }}>
+                        {'Pite çağır (box box)'}
                       </AppText>
                     </Pressable>
                     {landed && (

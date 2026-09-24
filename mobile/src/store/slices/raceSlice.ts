@@ -460,3 +460,65 @@ export function displayPhase(
   }
   return { kind: 'ready', phase: race.phase, seasonNo: race.seasonNo, roundNo: race.roundNo };
 }
+
+/**
+ * Which panel the race-week screen should show, straight off the server's
+ * phase. This is the decision `RaceWeekScreen.tsx` used to make by branching
+ * on `gameStore.ts`'s local `WeekendPhase` — eight values, one per session
+ * the LOCAL engine simulated (practice, sprint qualifying, sprint grid,
+ * sprint, qualifying, grid, race, result).
+ *
+ * That engine is gone and those sessions went with it. In the server's model
+ * qualifying is not something the player runs: it happens once at lights-out
+ * and arrives in the `state` frame (`displayQualifying`). There is no
+ * faithful 1:1 mapping from five server phases onto eight local ones, and
+ * inventing one would misreport the weekend the moment a caller needed a
+ * distinction the server does not make — so nothing is mapped. The server's
+ * phase picks a panel directly:
+ *
+ *   open      -> 'choices'     the weekend-choice UI: bias, tyre, qualifying
+ *                              risk, pit-wall tactics
+ *   checkin   -> 'checkin'     the check-in call; the choices stay editable,
+ *                              because the server still accepts them
+ *                              (`setWeekendChoices` is valid in `checkin`)
+ *   live      -> 'live'        the live race panel, including the server's
+ *                              published qualifying result
+ *   result    -> 'result'      the race result, as the server settled it
+ *   finished  -> 'season-over' the season is over
+ *
+ * plus the two non-phases `displayPhase` already tells apart:
+ *
+ *   'loading' — seated, no `phase` frame yet. A brief startup window, and a
+ *               real answer rather than a guess at `'open'`.
+ *   'no-lobby'— not seated anywhere. There is no weekend to show: the local
+ *               engine that used to run one solo no longer exists, so the
+ *               screen says so instead of pretending.
+ *
+ * NO LOCAL FALLBACK, exactly as in `displayRace`/`displayQualifying`: this
+ * takes a `PhaseDisplay` and nothing else, so there is no local phase in
+ * scope for a caller to fall back to when the frame has not arrived.
+ */
+export type WeekPanel =
+  | 'no-lobby'
+  | 'loading'
+  | 'choices'
+  | 'checkin'
+  | 'live'
+  | 'result'
+  | 'season-over';
+
+export function displayWeekPanel(phase: PhaseDisplay): WeekPanel {
+  if (phase.kind !== 'ready') return phase.kind;
+  switch (phase.phase) {
+    case 'open':
+      return 'choices';
+    case 'checkin':
+      return 'checkin';
+    case 'live':
+      return 'live';
+    case 'result':
+      return 'result';
+    case 'finished':
+      return 'season-over';
+  }
+}

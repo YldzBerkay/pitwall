@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { colors, spacing } from '@/theme';
 import { teamState } from '@/data/mock';
 import { overallOf, playerTeam } from '@pitwall/shared/teams';
-import { useGameStore, type WeekendPhase } from '@/store/gameStore';
+import { useGameStore } from '@/store/gameStore';
 import { trackForRound } from '@pitwall/shared/tracks';
 import { AppText, Avatar, Cols, GlassCard, Icon, LiquidProgressBar, ScreenHeader, type IconName } from '@/components/atoms';
 import { statName } from '@/components/molecules/CarStatCard';
@@ -15,20 +15,13 @@ import { explainPace } from '@pitwall/shared/raceEngine';
 import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { displayFactory } from '@/store/slices/factoryDisplay';
+import { displayPhase, displayWeekPanel } from '@/store/slices/raceSlice';
+import { weekPanelLabel } from '../raceweek/shared';
 
 /** Height of the 3D car panel: generous but bounded so a landscape phone keeps room below it. */
 const CAR_VIEW_HEIGHT = 200;
 
-const phaseLabel: Record<WeekendPhase, string> = {
-  practice: 'Antrenman günü',
-  sprintQualifying: 'Sprint sıralaması',
-  sprintGrid: 'Sprint gridi hazır',
-  sprint: 'Sprint canlı',
-  qualifying: 'Sıralama',
-  grid: 'Grid hazır',
-  race: 'Yarış canlı',
-  result: 'Önceki yarış bitti',
-};
+
 
 interface Todo {
   icon: IconName;
@@ -69,7 +62,8 @@ export function ManagerHomeScreen() {
   const round = useGameStore((s) => s.round);
   const totalRounds = useGameStore((s) => s.totalRounds);
   const season = useGameStore((s) => s.season);
-  const weekend = useGameStore((s) => s.weekend);
+  const raceSlice = useGameStore((s) => s.race);
+  const panel = displayWeekPanel(displayPhase(raceSlice));
   const drivers = useGameStore((s) => s.drivers);
   const injuries = useGameStore((s) => s.injuries);
   const training = useGameStore((s) => s.training);
@@ -106,14 +100,19 @@ export function ManagerHomeScreen() {
 
   // What deserves attention right now, derived from state — not a mock inbox.
   const todos: Todo[] = [];
-  if (weekend.phase === 'practice') {
-    todos.push({ icon: 'race-week', title: `Antrenman seansı ${weekend.practiceSessions.length}/${weekend.practiceCount} yapıldı`, detail: 'Araç ayarını seç, antrenmanları yap, sıralamaya geç.', route: '/(tabs)/race-week', urgent: true });
-  } else if (weekend.phase === 'race' || weekend.phase === 'sprint') {
+  // The weekend's state is the SERVER's, read through the same selector
+  // `RaceWeekScreen` branches on — there is no local weekend phase left to
+  // consult (the local engine that advanced one is gone).
+  if (panel === 'live') {
     todos.push({ icon: 'live', title: 'Yarış canlı', detail: 'Pit duvarına dön; çağrılar bir sonraki turda uygulanır.', route: '/(tabs)/race-week', urgent: true });
-  } else if (weekend.phase === 'result') {
-    todos.push({ icon: 'check', title: 'Sonuçlar hazır', detail: 'Ödemeyi gör ve sonraki hafta sonuna geç.', route: '/(tabs)/race-week', urgent: true });
+  } else if (panel === 'result') {
+    todos.push({ icon: 'check', title: 'Sonuçlar hazır', detail: 'Sunucunun yazdığı sonucu ve ödemeyi gör.', route: '/(tabs)/race-week', urgent: true });
+  } else if (panel === 'checkin') {
+    todos.push({ icon: 'race-week', title: 'Check-in açık', detail: 'Yarışı kendin süreceğini bildir; bildirmezsen yardımcı bot yönetir.', route: '/(tabs)/race-week', urgent: true });
+  } else if (panel === 'choices') {
+    todos.push({ icon: 'race-week', title: 'Hafta sonu kararları', detail: 'Araç ayarını, lastiği, riski ve taktiği seç — ışıklar sönmeden kaydedilir.', route: '/(tabs)/race-week', urgent: true });
   } else {
-    todos.push({ icon: 'race-week', title: phaseLabel[weekend.phase], detail: 'Hafta sonu bekliyor; kararını ver ve devam et.', route: '/(tabs)/race-week', urgent: true });
+    todos.push({ icon: 'race-week', title: weekPanelLabel[panel], detail: 'Yarış haftası ekranı ligin durumunu gösterir.', route: '/(tabs)/race-week' });
   }
   if (!training) todos.push({ icon: 'driver', title: 'Sürücü antrenmanı planlanmadı', detail: '6 saatlik bir antrenman başlat; genç sürücüler hızlı gelişir.', route: '/(tabs)/paddock' });
   const emptySeats = (['mechanic', 'strategist', 'pitCrew'] as const).filter((r) => !staff[r]).length;
@@ -155,7 +154,7 @@ export function ManagerHomeScreen() {
             round={round}
             totalRounds={totalRounds}
             startsInMs={teamState.raceStartsInMs}
-            phaseLabel={phaseLabel[weekend.phase]}
+            phaseLabel={weekPanelLabel[panel]}
             onPress={() => {
               haptic.select();
               router.push('/(tabs)/race-week');

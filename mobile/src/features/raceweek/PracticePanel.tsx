@@ -1,11 +1,9 @@
 import { View } from 'react-native';
 import { colors, spacing } from '@/theme';
-import { AppText, GlassButton, GlassCard, Cols } from '@/components/atoms';
-import { playerTeam } from '@pitwall/shared/teams';
-import { carId, effectiveStats, setupRiskFactor } from '@pitwall/shared/raceEngine';
+import { AppText, GlassCard, Cols } from '@/components/atoms';
+import { effectiveStats, setupRiskFactor } from '@pitwall/shared/raceEngine';
 import { useGameStore } from '@/store/gameStore';
-import { haptic } from '@/lib/haptics';
-import { Chip, DriverCell, Pos, fmtSec, weekendChoiceErrorText } from './shared';
+import { Chip, weekendChoiceErrorText } from './shared';
 
 const BIAS_OPTIONS: { label: string; value: number }[] = [
   { label: 'Aero+', value: -1 },
@@ -16,20 +14,24 @@ const BIAS_OPTIONS: { label: string; value: number }[] = [
 ];
 
 /**
- * Practice: the manager leans the setup toward aero or mechanical grip and
- * runs three sessions to see where that lands the car. The sessions are
- * noisy on purpose — a hint, not a verdict — and leading all three is a leg
- * of the Clean Sweep.
+ * Setup: the manager leans the car toward aero or mechanical grip, and the
+ * choice is sent to the server before lights-out.
+ *
+ * ── WHAT USED TO BE HERE, AND WHY IT IS GONE ──────────────────────────────
+ * This panel used to RUN three practice sessions locally (`runPractice`,
+ * `simulatePractice`) and show their timing sheets. The server's weekend has
+ * no practice sessions: a lobby goes `open` -> `checkin` -> `live`, and
+ * qualifying happens once at lights-out. Simulating sessions here would
+ * produce lap times from a car the server never ran — a second reality — so
+ * the sessions went with the local engine and only the CHOICE remains, which
+ * is the part that actually reaches the race.
  */
 export function PracticePanel() {
   const weekend = useGameStore((s) => s.weekend);
   const setBias = useGameStore((s) => s.setBias);
-  const runPractice = useGameStore((s) => s.runPractice);
   const setup = useGameStore((s) => s.setup);
   const track = useGameStore((s) => s.track());
-  // The lobby this device is currently seated in, if any — undefined in the
-  // no-lobby (legacy solo) flow, where there is nowhere on the server to
-  // send this choice.
+  // The lobby this device is currently seated in, if any.
   const lobbyId = useGameStore((s) => s.lobby.slots.find((sl) => sl.slotIndex === s.lobby.activeSlotIndex)?.lobbyId ?? undefined);
   const setWeekendChoices = useGameStore((s) => s.setWeekendChoices);
   const weekendChoiceOutcome = useGameStore((s) => s.race.lastWeekendChoiceOutcome);
@@ -45,17 +47,12 @@ export function PracticePanel() {
 
   const eff = effectiveStats(setup());
   const risk = setupRiskFactor(setup(), track);
-  const nextSession = weekend.practiceSessions.length + 1;
-  const last = weekend.practice;
-  const playerRows = last.map((e, i) => ({ e, i })).filter(({ e }) => e.teamKey === playerTeam.key);
-  const red = weekend.practiceReds[weekend.practiceReds.length - 1];
-  const redHitUs = red ? playerRows.filter(({ e }) => red.ruined.includes(carId(e))).map(({ e }) => e.driver) : [];
 
   return (
     <Cols align="flex-start">
       <GlassCard active className="flex-1" contentStyle={{ gap: spacing.md }}>
         <AppText variant="cardTitle" color={colors.textPrimary}>
-          Araç ayarı ve antrenman
+          Araç ayarı
         </AppText>
         <AppText variant="bodySmall" color={colors.textSecondary}>
           Kanat açısı, aerodinamik ile mekanik yol tutuş arasında değer kaydırır. Pistin istediği yöne yat.
@@ -85,56 +82,6 @@ export function PracticePanel() {
           <StatDelta label="Aerodinamik" value={eff.aero} base={setup().aero} />
           <StatDelta label="Yol tutuş" value={eff.grip} base={setup().grip} />
         </View>
-        <GlassButton
-          label={nextSession <= 3 ? `${nextSession}. antrenmanı yap` : 'Antrenman tamamlandı'}
-          disabled={nextSession > 3}
-          onPress={() => {
-            haptic.medium();
-            runPractice();
-          }}
-        />
-        {playerRows.length > 0 && (
-          <AppText variant="labelSmall" color={colors.textSecondary}>
-            {`Son seans: ${playerRows.map(({ e, i }) => `${e.driver.split(' ').pop()} ${i + 1}.`).join(' · ')}${redHitUs.length ? ' · kırmızı bayrak' : ''} · ${3 - weekend.practiceSessions.length} seans kaldı`}
-          </AppText>
-        )}
-      </GlassCard>
-
-      <GlassCard className="flex-1" contentStyle={{ gap: spacing.sm }}>
-        <View className="flex-row items-center justify-between">
-          <AppText variant="cardTitle" color={colors.textPrimary}>
-            {weekend.practiceSessions.length ? `${weekend.practiceSessions.length}. antrenman sonuçları` : 'Zaman tablosu'}
-          </AppText>
-        </View>
-        {red && (
-          <AppText variant="bodySmall" color={colors.neonCoral}>
-            {red.text}
-            {redHitUs.length > 0 && ` Bizden ${redHitUs.map((n) => n.split(' ').pop()).join(' ve ')} turunu kaybetti.`}
-          </AppText>
-        )}
-        {last.length === 0 && (
-          <AppText variant="bodySmall" color={colors.textTertiary}>
-            {'Henüz tur atılmadı. Araç ayarını seç, 1. antrenmanı yap.'}
-          </AppText>
-        )}
-        {last.slice(0, 8).map((e, i) => (
-          <View key={`${e.teamKey}-${e.driverIdx}`} className="flex-row items-center gap-2 py-0.5">
-            <Pos n={i + 1} lit={e.teamKey === playerTeam.key} />
-            <DriverCell entry={e} />
-            <AppText variant="labelSmall" color={colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 64, textAlign: 'right' }}>
-              {i === 0 ? fmtSec(e.sec) : `+${(e.sec - last[0].sec).toFixed(3)}`}
-            </AppText>
-          </View>
-        ))}
-        {playerRows.filter(({ i }) => i >= 8).map(({ e, i }) => (
-          <View key={`${e.teamKey}-${e.driverIdx}`} className="flex-row items-center gap-2 border-t border-border-default py-0.5 pt-1.5">
-            <Pos n={i + 1} lit />
-            <DriverCell entry={e} />
-            <AppText variant="labelSmall" color={colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 64, textAlign: 'right' }}>
-              +{(e.sec - last[0].sec).toFixed(3)}
-            </AppText>
-          </View>
-        ))}
       </GlassCard>
     </Cols>
   );

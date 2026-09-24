@@ -6,6 +6,7 @@ import { AppText, Avatar, Cols, GlassCard, ScreenHeader, SegmentTabs } from '@/c
 import { POINTS_FOR_PLACE, playerTeam, teamByKey, teams } from '@pitwall/shared/teams';
 import { trackForRound } from '@pitwall/shared/tracks';
 import { useGameStore } from '@/store/gameStore';
+import { displayRace } from '@/store/slices/raceSlice';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { Pos, fmtGap } from '@/features/raceweek/shared';
 
@@ -19,8 +20,12 @@ type Tab = 'teams' | 'drivers';
 export function LeagueScreen() {
   const shell = useShellLayout();
   const standings = useGameStore((s) => s.standings);
-  const lastResult = useGameStore((s) => s.lastResult);
-  const lastSettlement = useGameStore((s) => s.lastSettlement);
+  // The last race is the SERVER's last race image, frozen at the flag — the
+  // local `lastResult`/`lastSettlement` went with the local settlement, which
+  // paid a different amount for a different race.
+  const raceSlice = useGameStore((s) => s.race);
+  const lastRace = displayRace<undefined>(raceSlice, undefined);
+  const finished = lastRace.kind === 'server' && lastRace.race.finished ? lastRace.race : undefined;
   const round = useGameStore((s) => s.round);
   const totalRounds = useGameStore((s) => s.totalRounds);
   const season = useGameStore((s) => s.season);
@@ -34,8 +39,8 @@ export function LeagueScreen() {
   const racesLeft = totalRounds - (round - 1);
 
   // Drivers' view: the last race's points per driver, since the season table is by team.
-  const driverRows = lastResult
-    ? lastResult.order
+  const driverRows = finished
+    ? finished.cars
         .filter((e) => !e.dnf)
         .map((e) => ({ ...e, pts: POINTS_FOR_PLACE[e.position - 1] ?? 0 }))
     : [];
@@ -179,16 +184,16 @@ export function LeagueScreen() {
                 Son yarış
               </AppText>
               <AppText variant="labelSmall" color={colors.textTertiary}>
-                {lastSettlement ? `${trackForRound(lastSettlement.round).gp} · lidere fark saniye` : 'Bitiş sırası ve lidere farklar'}
+                {finished ? `${trackForRound(finished.round).gp} · lidere fark saniye` : 'Bitiş sırası ve lidere farklar'}
               </AppText>
             </View>
           </View>
-          {!lastResult && (
+          {!finished && (
             <AppText variant="bodySmall" color={colors.textTertiary} className="px-4 pb-4">
-              Bu sezon henüz yarış koşulmadı. Yarış sekmesinden hafta sonunu başlat.
+              Sunucudan bitmiş bir yarış görüntüsü gelmedi. Bir lige katılıp yarışı izleyince burada görünür.
             </AppText>
           )}
-          {lastResult?.order.map((e, i) => {
+          {finished?.cars.map((e, i) => {
             const team = teamByKey(e.teamKey);
             return (
               <View key={`${e.teamKey}-${e.driverIdx}`} className="flex-row items-center gap-3 px-4 py-1.5" style={{ opacity: e.dnf ? 0.5 : 1, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.borderDefault }}>
@@ -201,7 +206,7 @@ export function LeagueScreen() {
                   {team.short}
                 </AppText>
                 <AppText variant="labelSmall" color={e.dnf ? colors.neonCoral : colors.textSecondary} style={{ fontFamily: 'JetBrainsMono_700Bold', width: 56, textAlign: 'right' }}>
-                  {fmtGap(e.gapSec)}
+                  {fmtGap(e.position === 1 ? 0 : e.totalSec - (finished?.cars[0].totalSec ?? 0))}
                 </AppText>
               </View>
             );
