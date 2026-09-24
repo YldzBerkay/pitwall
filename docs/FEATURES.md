@@ -280,8 +280,13 @@ durdurdu. Kullanıcının açık onayıyla Faz 3b'ye ertelendi:
   "SAKAT" satırları hiç tetiklenemez
 - ⬜ **Maaş düşümü** — personel ve sürücü maaşları hiçbir yerden ödenmeden
   düşmüyor
-- ⬜ **Yarış günü casusluk sonuçlanması** — `resolveIntel` yeni bir görev
-  açılırken hâlâ çalışıyor, ama artık muhasebede değil
+- ⬜ **Casusluk raporları HİÇ çözülmüyor** (düzeltildi: bu, önce "yeni görev
+  açılınca hâlâ çalışıyor" diye yazılmıştı — yanlıştı). `resolveIntel`'in tek
+  çağıranı `espionageSlice.ts:83`, o da `skipMission` içinde: yani rapor almanın
+  tek yolu altın ödeyip görevi atlamak. Normal başlatılıp süresi dolan bir görev
+  sonsuza kadar `outcome`'suz kalıyor ve yeni görev açılmasını da engelliyor
+  (`startMission` bekleyen görev varsa `'pending'` dönüyor). Faz 3b'de
+  muhasebeye bağlanacak; o güne kadar casusluk fiilen kilitli.
 - ⬜ **Sürücü yaşlanması ve kış** — `ageDrivers`, araç regresyonu,
   geliştirme merdiveni sıfırlaması, `transferNews`, padok başlık şeridi
 
