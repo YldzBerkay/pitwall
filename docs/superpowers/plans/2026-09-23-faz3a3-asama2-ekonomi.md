@@ -336,3 +336,43 @@ cd ../shared && npm run typecheck
 
 **Aşama 3** — yerel sezon, başarım ve sponsor kalıntılarının silinmesi;
 `gameStore`'un sunucu görüntüsüne indirgenmesi.
+
+---
+
+## YÜRÜTME NOTU — yerel motoru sökmek iki kez daha durdu
+
+Görev 6 (yerel motorun sökülmesi) Aşama 1'de bir, Aşama 2'de bir daha denendi ve
+iki kez de haklı olarak durduruldu. Her seferinde tıkanma bir öncekinden daha
+derindi.
+
+**Birinci duruş (Aşama 1):** motoru silmek `weekend.race`'i siliyor, o da
+`finishRace(w.race)` çağıran `settleRaceWeekend`'i çökertiyordu. Çözüm: muhasebe
+önce sunucuya. *Yapıldı.*
+
+**İkinci duruş (Aşama 2):** paranın taşınması yetmedi. İki sebep:
+
+1. `settleRaceWeekend` aynı zamanda **başarımları, kariyeri, sakatlıkları, yerel
+   sıralamayı, maaşları, sezon dönüşünü, casusluğu ve sürücü yaşlanmasını**
+   tetikleyen tek yer. Hiçbiri sunucuda yok.
+2. **Asıl tıkanma: `weekend.phase`'in sunucu kaynağı yok.** Lobi fazı sunucuda
+   var ama hiçbir soket çerçevesi taşımıyor; istemciye yalnızca `GET /slots`
+   üzerinden ulaşıyor. `weekend.phase`'i yalnızca yerel motorun kendi
+   fonksiyonları ilerletiyor. Motoru silersen hafta sonu `'practice'`te donuyor,
+   `LiveRacePanel` hiç mount olmuyor ve sunucunun canlı yarışı **arayüzde
+   erişilemez** hâle geliyor.
+
+**Sıra bu yüzden:** önce faz sunucudan gelmeli, sonra motor sökülebilir.
+Sökme işinin kendisi ondan sonra mekanik.
+
+### Yolda bulunan gerçek para hatası
+
+Yerel ödeme düğmesi **soketin canlı olmasına** bağlıydı. Lobide oturan ve
+bayraktan önce soketi düşen bir oyuncu, sunucunun zaten ödediği yarış için
+kendine yerel RP yazabiliyordu. Artık lobi koltuğuna bağlı (`b830135`).
+
+### Hâlâ sunucuda karşılığı olmayanlar
+
+Başarımlar, kariyer, sakatlıklar, maaşlar, sezon dönüşü (istemci tarafı),
+casusluk, sürücü yaşlanması, sürücü pazarı, personel. Yerel motor sökülünce
+bunların da bir cevabı olmalı — Aşama 3'ün kapsamı budur ve sanıldığından
+büyüktür.
