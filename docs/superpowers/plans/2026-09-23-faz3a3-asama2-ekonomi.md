@@ -376,3 +376,47 @@ Başarımlar, kariyer, sakatlıklar, maaşlar, sezon dönüşü (istemci tarafı
 casusluk, sürücü yaşlanması, sürücü pazarı, personel. Yerel motor sökülünce
 bunların da bir cevabı olmalı — Aşama 3'ün kapsamı budur ve sanıldığından
 büyüktür.
+
+
+---
+
+## AŞAMA 2 KAPANDI (`823ddd4`)
+
+Sunucu **631/631**, mobil **155/155**, üç tip denetimi temiz, `npm run econ`
+geçiyor, ağaç temiz.
+
+**Yerel yarış motoru gitti.** İstemcide tur ilerleten hiçbir zamanlayıcı yok,
+hiçbir dosya `advanceLap`/`startRace`/`simulateQualifying`/`finishRace`
+çağırmıyor, ve lobide panel seçimi sunucunun faz çerçevesinden geliyor. Üç tarama
+testi bunları kalıcı olarak koruyor.
+
+Üçüncü denemede bitti; ilk ikisi haklı olarak durmuştu ve durdukları yerler
+planın göremediği iki gerçek bağımlılıktı (muhasebe, sonra faz kaynağı).
+
+### Tarama testleri hakkında öğrenilen
+
+İçe aktarma anında zamanlayıcı arayan test, bir **eylemin içinde** kurulan
+zamanlayıcıyı görmüyor. Bu yüzden ikinci bir tarama var: `gameStore.ts` metninde
+hiç `setInterval` bulunmamalı. Kanıt sırasında ilki geçip ikincisi düştü.
+
+### FAZ 3B'NİN KAPSAMI — durdurulan özellikler
+
+Kullanıcı bunları bilerek erteledi:
+
+1. **Başarımlar** — `scoreWeekend`; sonuç ekranındaki başarım kartı ve rütbe rozeti
+2. **Kariyer kaydı** — `recordWeekend`; profil rütbesi pratikte donuyor
+3. **Sürücü sakatlıkları** — hiçbir şey `injuries` yazmıyor
+4. **Maaş kesintisi** — personel ve sürücü maaşları hiçbir yerden düşmüyor
+5. **Casusluk çözümü (yarış günü)** — `resolveIntel` muhasebede çağrılmıyor;
+   yeni görev açılınca hâlâ çözülüyor (`espionageSlice.ts:83`)
+6. **Sürücü yaşlanması ve kış** — `ageDrivers`, araç gerilemesi, yükseltme
+   merdiveninin sıfırlanması, `transferNews`, `paddockNews`
+
+### Listede olmayan ama açık kalan
+
+- **Yapımcılar tablosu istemcide donmuş.** Yerel muhasebe onu ilerleten tek şeydi;
+  sunucuda sıralama var ama hiçbir istemci kodu okumuyor. `LeagueScreen` tohum
+  değerleri gösteriyor.
+- **Sezon öncesi test programı** hâlâ yerel ve lobi dışında çalışıyor — küçük bir
+  tutarsızlık, ayrı bir karar.
+- Lobi dışında yarış haftası ekranı "Bir lige katıl" diyor; tek oyunculu gitti.
