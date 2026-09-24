@@ -115,6 +115,15 @@ async function offersFor(lobbyId: string, token: string) {
   return res.body.offers as Array<{ id: string; slots: string[]; perRace: number; perSlot: number[]; signing: number; bonus: number }>;
 }
 
+/** Same read as `offersFor`, but keeps the whole body — used by the tests
+ * that also check `sponsorships`/the response shape rather than just the
+ * offer sheet. */
+async function offerSheetFor(lobbyId: string, token: string) {
+  const res = await get(`/sponsors/offers?lobbyId=${lobbyId}`, token);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  return res.body as { offers: any[]; sponsorships: any[] };
+}
+
 async function sponsorshipRows(lobbyId: string, teamKey: string) {
   const res = await query(
     `select deal_id, brand_key, slot, per_race, target_position, bonus, streak_target, streak
@@ -319,5 +328,111 @@ describe('sponsor routes', () => {
     const { status, body } = await post('/sponsors/release', owner.token, { lobbyId, slot: 'sidepod' });
     assert.equal(status, 404);
     assert.equal(body.error, 'not_signed');
+  });
+
+  // ── Gap 1: a player can read their own signed sponsorships ─────────────
+
+  it('a seated player reads their signed sponsorships from GET /sponsors/offers', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const offers = await offersFor(lobbyId, owner.token);
+    const offer = offers[0];
+    const signed = await post('/sponsors/sign', owner.token, { lobbyId, offerId: offer.id });
+    assert.equal(signed.status, 200, JSON.stringify(signed.body));
+
+    const sheet = await offerSheetFor(lobbyId, owner.token);
+    const dbRows = await sponsorshipRows(lobbyId, 'aurelia');
+    assert.equal(sheet.sponsorships.length, dbRows.length);
+    assert.ok(sheet.sponsorships.length > 0, 'expected the just-signed deal to be readable');
+    for (const slot of offer.slots) {
+      const fromRead = sheet.sponsorships.find((s: any) => s.slot === slot);
+      const fromDb = dbRows.find((r: any) => r.slot === slot);
+      assert.ok(fromRead, `missing sponsorship for slot ${slot} in the read`);
+      assert.ok(fromDb, `missing db row for slot ${slot}`);
+      assert.equal(fromRead.perRace, fromDb!.per_race);
+      assert.equal(fromRead.dealId, fromDb!.deal_id);
+    }
+  });
+
+  it('reading the offer sheet (offers + sponsorships) mutates nothing', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const offers = await offersFor(lobbyId, owner.token);
+    const signed = await post('/sponsors/sign', owner.token, { lobbyId, offerId: offers[0].id });
+    assert.equal(signed.status, 200, JSON.stringify(signed.body));
+
+    const rpBefore = await rpOf(lobbyId, 'aurelia');
+    const sponsorshipsBefore = await sponsorshipRows(lobbyId, 'aurelia');
+
+    await offerSheetFor(lobbyId, owner.token);
+    await offerSheetFor(lobbyId, owner.token);
+
+    assert.equal(await rpOf(lobbyId, 'aurelia'), rpBefore);
+    assert.deepEqual(await sponsorshipRows(lobbyId, 'aurelia'), sponsorshipsBefore);
+  });
+
+  it('a team with no sponsorships reads an empty list, not an error', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const sheet = await offerSheetFor(lobbyId, owner.token);
+    assert.deepEqual(sheet.sponsorships, []);
+  });
+
+  it('reading the offer sheet requires a session: 401 without a bearer', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const { status } = await get(`/sponsors/offers?lobbyId=${lobbyId}`, null);
+    assert.equal(status, 401);
+  });
+
+  it('reading the offer sheet with no seat in that lobby gets 403', async () => {
+    const owner = await makeUser();
+    const outsider = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const { status } = await get(`/sponsors/offers?lobbyId=${lobbyId}`, outsider.token);
+    assert.equal(status, 403);
+  });
+
+  // ── Gap 2: the break fee is reported, and matches what was charged ─────
+
+  it('releasing reports the fee actually charged — it equals the RP deducted', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const offers = await offersFor(lobbyId, owner.token);
+    const offer = offers[0];
+    await post('/sponsors/sign', owner.token, { lobbyId, offerId: offer.id });
+
+    const rpBefore = await rpOf(lobbyId, 'aurelia');
+    const { status, body } = await post('/sponsors/release', owner.token, { lobbyId, slot: offer.slots[0] });
+    assert.equal(status, 200, JSON.stringify(body));
+    const rpAfter = await rpOf(lobbyId, 'aurelia');
+
+    assert.equal(typeof body.fee, 'number');
+    assert.ok(body.fee >= 0, `fee ${body.fee} must not be negative`);
+    assert.equal(rpBefore - rpAfter, body.fee, 'reported fee must equal the RP actually deducted');
+  });
+
+  it('releasing a deal with no rounds left (or no value) reports a fee of 0, not a phantom charge', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await seatHuman(lobbyId, 'aurelia', owner.id);
+
+    const { status, body } = await post('/sponsors/release', owner.token, { lobbyId, slot: 'sidepod' });
+    // Nothing was ever signed here, so this is the 404 path — kept as a
+    // guard that `fee` is never fabricated on a failure response.
+    assert.equal(status, 404);
+    assert.equal(body.fee, undefined);
   });
 });

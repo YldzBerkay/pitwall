@@ -2,9 +2,11 @@
  * HTTP front for the sponsor system: read a team's current offer sheet,
  * sign one of its offers, release a signed deal.
  *
- *   GET  /sponsors/offers?lobbyId=   this weekend's offer sheet (read-only)
- *   POST /sponsors/sign              {lobbyId, offerId}
- *   POST /sponsors/release           {lobbyId, slot}
+ *   GET  /sponsors/offers?lobbyId=   this weekend's offer sheet AND the
+ *                                    team's currently-signed sponsorships
+ *                                    (read-only) — {offers, sponsorships}
+ *   POST /sponsors/sign              {lobbyId, offerId} -> {sponsorships}
+ *   POST /sponsors/release           {lobbyId, slot} -> {sponsorships, fee}
  *
  * ── THE TRUST BOUNDARY THIS FILE EXISTS TO ENFORCE ─────────────────────────
  * `generateOffers` (shared/src/sponsors.ts) is a PURE function: it seeds its
@@ -98,8 +100,25 @@ export function registerSponsorRoutes(router: Router): void {
       // fresh from the lobby's own round/standings every call — see its
       // docblock — so calling this twice is guaranteed to answer twice with
       // the same sheet, and to change nothing in between.
-      const { offers } = await offerSheetFor(lobbyId, teamKey);
-      return { status: 200, body: { offers } };
+      //
+      // `sponsorships` (the team's currently-signed deals) rides along on
+      // this same response rather than living behind a second endpoint.
+      // `offerSheetFor` already computes both `offers` and `running` from
+      // one snapshot of the lobby's round/standings/holdings — `offers`
+      // itself is generated FROM `running` (it needs `takenSlots` to avoid
+      // re-offering a slot the team already holds), so the two are already
+      // coupled at the source. Splitting them into two routes would mean
+      // two round trips that could observe two different rounds (a race
+      // tick landing between them) and would buy nothing: there is no case
+      // where a caller wants one without the other, since the sponsor
+      // screen renders offers and holdings together. Before this, a signed
+      // deal was only ever visible as the side effect of a `sign`/`release`
+      // response — a player opening the screen fresh saw nothing until
+      // they acted (see `mobile/src/store/slices/sponsorsDisplay.ts`'s "A
+      // REAL GAP" doc comment, and `GET /economy/state`'s own precedent in
+      // `economy/routes.ts` for the same cold-start problem).
+      const { offers, running } = await offerSheetFor(lobbyId, teamKey);
+      return { status: 200, body: { offers, sponsorships: running } };
     } catch (err) {
       if (err instanceof SponsorOffersError) return { status: 404, body: { error: err.reason } };
       throw err;
@@ -222,14 +241,27 @@ export function registerSponsorRoutes(router: Router): void {
     const inDeal = running.filter((s) => s.dealId === deal.dealId);
     const roundsLeft = Math.max(0, deal.expiresRound - lobby.round);
     const value = inDeal.reduce((sum, s) => sum + s.perRace, 0);
+    // This 0.35 rate is server-only: there is no `shared/` formula for a
+    // break fee to import (`shared/src/sponsors.ts` has `signingBonus`,
+    // which shares this file's shape — `perRace * rounds * 0.35` — for a
+    // DIFFERENT payment, the up-front bonus paid on signing, not a
+    // cancellation charge). Mirrors what the client's own now-retired
+    // local `releaseSponsor` computed (see `mobile/src/lib/api/sponsors.ts`'s
+    // module doc comment).
     const penalty = Math.round(value * roundsLeft * 0.35);
 
+    // The fee reported to the caller is whatever `chargeRpFloor` actually
+    // took off the balance — never the nominal `penalty` — so a team with
+    // less RP than the penalty is never told it paid more than it did. See
+    // `chargeRpFloor`'s own doc comment in `repo.ts` for why that return
+    // value, not a second read, is the source of truth here.
+    let fee = 0;
     await withTransaction(async (client) => {
       await deleteDeal(client, lobbyId, teamKey, deal.dealId);
-      if (penalty > 0) await chargeRpFloor(client, lobbyId, teamKey, penalty);
+      if (penalty > 0) fee = await chargeRpFloor(client, lobbyId, teamKey, penalty);
     });
 
     const sponsorships = await loadTeamSponsorships(lobbyId, teamKey);
-    return { status: 200, body: { sponsorships } };
+    return { status: 200, body: { sponsorships, fee } };
   });
 }

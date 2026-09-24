@@ -165,6 +165,8 @@ export async function addRp(client: PoolClient, lobbyId: string, teamKey: string
 
 /**
  * Charges a penalty, floored at zero rather than refused below the balance.
+ * Returns the amount actually deducted, which is `amount` unless the
+ * balance was too low, in which case it's whatever was left.
  *
  * Unlike `spendRp`, this is never a player-chosen spend that should fail
  * outright when the team can't afford it — it's a break fee on a contract
@@ -172,15 +174,32 @@ export async function addRp(client: PoolClient, lobbyId: string, teamKey: string
  * and the team must still get the slot back even if the penalty exceeds
  * their balance. The floor lives in the `greatest()` of the write itself,
  * not in a read-then-clamp the caller does first.
+ *
+ * The caller (`releaseSponsor`) reports this return value to the player as
+ * the break fee — so it has to be the number that was actually taken off
+ * the balance, not the nominal `amount` requested, or a floored charge
+ * would show the player a bigger fee than they were really charged. That's
+ * why this is a single `WITH ... FOR UPDATE` statement rather than a
+ * separate "read the balance, then charge" — a read-then-write here would
+ * reopen the exact TOCTOU gap `spendRp`'s own doc comment warns about, and
+ * would report a number that might already be stale by the time the UPDATE
+ * runs. The CTE takes the row lock and computes the delta from the SAME
+ * snapshot the UPDATE writes from.
  */
-export async function chargeRpFloor(client: PoolClient, lobbyId: string, teamKey: string, amount: number): Promise<void> {
+export async function chargeRpFloor(client: PoolClient, lobbyId: string, teamKey: string, amount: number): Promise<number> {
   assertNonNegativeInteger(amount, 'chargeRpFloor');
-  await client.query(
-    `update lobby_economy
-     set rp = greatest(0, rp - $3), updated_at = now()
-     where lobby_id = $1 and team_key = $2`,
+  const res = await client.query<{ charged: number }>(
+    `with prev as (
+       select rp from lobby_economy where lobby_id = $1 and team_key = $2 for update
+     )
+     update lobby_economy le
+     set rp = greatest(0, prev.rp - $3), updated_at = now()
+     from prev
+     where le.lobby_id = $1 and le.team_key = $2
+     returning prev.rp - greatest(0, prev.rp - $3) as charged`,
     [lobbyId, teamKey, amount],
   );
+  return res.rows[0]?.charged ?? 0;
 }
 
 /** Records a factory building's level. */

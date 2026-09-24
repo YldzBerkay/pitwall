@@ -98,11 +98,16 @@ const sampleSponsorship: Sponsorship = {
 
 test('getSponsorOffers() hits GET /sponsors/offers?lobbyId= with a Bearer header and returns the server sheet', async () => {
   await withServer(
-    () => ({ status: 200, body: { offers: [sampleOffer] } }),
+    () => ({ status: 200, body: { offers: [sampleOffer], sponsorships: [sampleSponsorship] } }),
     async (baseUrl, requests) => {
       const result = await getSponsorOffers(baseUrl, TOKEN, { lobbyId: LOBBY_ID });
       assert.equal(result.ok, true);
-      if (result.ok) assert.deepEqual(result.data.offers, [sampleOffer]);
+      if (result.ok) {
+        assert.deepEqual(result.data.offers, [sampleOffer]);
+        // The route rides the team's currently-signed sponsorships on this
+        // same response — see `lib/api/sponsors.ts`'s module doc comment.
+        assert.deepEqual(result.data.sponsorships, [sampleSponsorship]);
+      }
       assert.equal(requests.length, 1);
       const req = requests[0];
       assert.equal(req.method, 'GET');
@@ -149,13 +154,18 @@ test('sponsorsApi.sign() sends the offer id from the store, not the offer object
 
 // ── 3. Releasing posts the slot and adopts what the server reports ───────
 
-test('releaseSponsorship() posts {lobbyId, slot} and adopts the returned sponsorships', async () => {
+test('releaseSponsorship() posts {lobbyId, slot} and adopts the returned sponsorships and fee', async () => {
   await withServer(
-    () => ({ status: 200, body: { sponsorships: [] } }),
+    () => ({ status: 200, body: { sponsorships: [], fee: 42 } }),
     async (baseUrl, requests) => {
       const result = await releaseSponsorship(baseUrl, TOKEN, { lobbyId: LOBBY_ID, slot: 'sidepod' });
       assert.equal(result.ok, true);
-      if (result.ok) assert.deepEqual(result.data.sponsorships, []);
+      if (result.ok) {
+        assert.deepEqual(result.data.sponsorships, []);
+        // The break fee actually charged now rides on this response too —
+        // see `lib/api/sponsors.ts`'s module doc comment.
+        assert.equal(result.data.fee, 42);
+      }
       assert.equal(requests.length, 1);
       assert.equal(requests[0].method, 'POST');
       assert.equal(requests[0].url, '/sponsors/release');
@@ -173,10 +183,12 @@ test('sponsorsApi.release() posts the slot and adopts the post-release sponsorsh
       assert.deepEqual(outcome, { ok: true });
       assert.deepEqual(slice.get().sponsorsApi.sponsorships, []);
       assert.deepEqual(requests[0].body, { lobbyId: LOBBY_ID, slot: 'sidepod' });
-      // NOTE: the real server response for /sponsors/release is only
-      // `{ sponsorships }` - it never carries the break fee it charged
-      // (see `sponsorRoutes.ts` and `lib/api/sponsors.ts`'s doc comment).
-      // There is therefore no separate fee field to assert on here.
+      // NOTE: the server's real release response now also carries `fee`
+      // (see `sponsorRoutes.ts` and `lib/api/sponsors.ts`'s doc comment),
+      // but `sponsorsApiSlice.ts`'s `release()` action only ever adopts
+      // `sponsorships` from the response — surfacing the fee through the
+      // store is out of scope here (see this task's write-up), so there is
+      // nothing on `sponsorsApi` state to assert on for it yet.
     },
   );
 });

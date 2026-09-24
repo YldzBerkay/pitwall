@@ -4,9 +4,11 @@
  * `ApiResult` shape as `./race.ts` and `./economy.ts` — one process serves
  * all of it (`server/src/index.ts`).
  *
- *   GET  /sponsors/offers?lobbyId=   this weekend's offer sheet (read-only)
- *   POST /sponsors/sign              {lobbyId, offerId}
- *   POST /sponsors/release           {lobbyId, slot}
+ *   GET  /sponsors/offers?lobbyId=   this weekend's offer sheet AND the
+ *                                    team's currently-signed sponsorships
+ *                                    (read-only) — {offers, sponsorships}
+ *   POST /sponsors/sign              {lobbyId, offerId} -> {sponsorships}
+ *   POST /sponsors/release           {lobbyId, slot} -> {sponsorships, fee}
  *
  * ── OFFERS ARE READ FROM THE SERVER, NEVER REGENERATED HERE ───────────────
  * `generateOffers` (`@pitwall/shared/sponsors`) is a pure, deterministic
@@ -40,14 +42,23 @@
  * directory. `no_lobby` is what a 404 from `offerSheetFor` becomes when the
  * given lobby doesn't exist.
  *
- * ── WHAT THE SERVER DOES NOT RETURN ────────────────────────────────────────
- * `POST /sponsors/release`'s handler computes a break fee and charges it,
- * but its response body is `{ sponsorships }` only — the fee itself is
- * never sent back (`sponsorRoutes.ts`, confirmed against
- * `server/test/sponsor-routes.test.ts`, which never asserts on one either).
- * `releaseSponsorship` below is typed to match that real contract: it
- * returns the post-release `sponsorships`, not a fee, because there is no
- * fee field to surface without inventing one.
+ * ── THE OFFER SHEET NOW CARRIES `sponsorships` TOO ────────────────────────
+ * `GET /sponsors/offers` used to return `{ offers }` only — a signed deal
+ * was visible only as the side effect of a `sign`/`release` response, so a
+ * player opening the screen fresh saw nothing until they acted. The route
+ * now also returns `sponsorships`, the team's currently-signed deals, from
+ * the same server-side snapshot `offers` itself was built from (see
+ * `sponsorRoutes.ts`'s doc comment on why this rides on the existing route
+ * rather than a second one). `getSponsorOffers` below is typed to match
+ * that real, current contract.
+ *
+ * ── THE RELEASE RESPONSE NOW REPORTS THE BREAK FEE ────────────────────────
+ * `POST /sponsors/release` computes a break fee and charges it; its
+ * response body now also carries `fee`, the RP actually deducted (never a
+ * nominal figure that could exceed what the team's balance allowed — see
+ * `chargeRpFloor`'s doc comment in `server/src/economy/repo.ts`).
+ * `releaseSponsorship` below is typed to match: `fee` is optional on
+ * `SponsorActionResponse` because `sign`'s response never carries one.
  */
 import type { SponsorOffer, Sponsorship, SlotKey } from '@pitwall/shared/sponsors';
 import { request, type ApiResult } from './identity';
@@ -57,12 +68,16 @@ const jsonAuth = (token: string) => ({ 'content-type': 'application/json', ...au
 
 export interface SponsorOffersResponse {
   offers: SponsorOffer[];
+  /** The team's currently-signed sponsorships, from the same server-side
+   * snapshot as `offers` — see the module doc comment. */
+  sponsorships: Sponsorship[];
 }
 
 /**
- * `GET /sponsors/offers?lobbyId=` — the team's current offer sheet, rebuilt
- * fresh server-side on every call. Read-only: calling this twice changes
- * nothing (`sponsorRoutes.ts`'s own doc comment on the route).
+ * `GET /sponsors/offers?lobbyId=` — the team's current offer sheet AND its
+ * currently-signed sponsorships, rebuilt fresh server-side on every call.
+ * Read-only: calling this twice changes nothing (`sponsorRoutes.ts`'s own
+ * doc comment on the route).
  */
 export function getSponsorOffers(
   baseUrl: string,
@@ -77,6 +92,9 @@ export function getSponsorOffers(
 
 export interface SponsorActionResponse {
   sponsorships: Sponsorship[];
+  /** The break fee actually charged — only ever present on the release
+   * response; `sign` never carries one. See the module doc comment. */
+  fee?: number;
 }
 
 /**
@@ -97,8 +115,8 @@ export function signSponsorOffer(
 
 /**
  * Releases the deal holding the given slot. The break fee is computed and
- * charged server-side; the response carries only the resulting
- * `sponsorships`, not the fee itself — see the module doc comment.
+ * charged server-side; the response carries the resulting `sponsorships`
+ * and the `fee` actually charged — see the module doc comment.
  */
 export function releaseSponsorship(
   baseUrl: string,
