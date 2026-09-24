@@ -66,6 +66,16 @@ import type { QualifyingResult, RaceState } from '@pitwall/shared/raceEngine';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'session-invalid';
 
+/** Mirrors `LobbyPhase` in `server/src/lobby/lobbyRepo.ts` (also mirrored,
+ * separately, by `mobile/src/lib/api/lobby.ts` and
+ * `mobile/src/store/slices/settlementDisplay.ts` — this codebase inlines
+ * this union at each boundary rather than sharing one import, same as
+ * `SerialisedRace` below is kept structural instead of importing from the
+ * server). Kept here, not imported from `@pitwall/shared`, because the
+ * server doesn't publish this type for client consumption and this module
+ * must stay Node/RN-neutral. */
+export type LobbyPhase = 'open' | 'checkin' | 'live' | 'result' | 'finished';
+
 /** Mirrors `SerialisedRace` in `server/src/lobby/live.ts`. Kept structural
  * (no import from the server) since this module must stay Node/RN-neutral
  * and the server doesn't publish this type for client consumption. */
@@ -122,6 +132,23 @@ export interface RaceSocketState {
    * sites/tests built against a `{status, race}` shape from before this
    * field existed keep typechecking unchanged. */
   qualifying?: QualifyingResult;
+  /** The lobby's current phase, as `server/src/lobby/live.ts`'s `phase`
+   * frame last reported it. Preserved across every subsequent `lap`/`state`
+   * frame (neither carries this field, so neither can clobber it even by
+   * accident — same structural guarantee `qualifying` gets) and across
+   * disconnects — same "never cleared, never fabricated" rule as `race` and
+   * `qualifying`. `undefined` until the first `phase` frame arrives (the
+   * server sends one immediately on subscribe, right after `state`, so this
+   * is a brief startup window, not a steady-state possibility). NEVER
+   * derived locally: this is the whole point of the frame existing. */
+  phase?: LobbyPhase;
+  /** Rides along with `phase` in the same frame, always assigned together —
+   * see `phase`'s doc comment for the preservation rules, which apply here
+   * identically. The client's own round/season counters are being retired;
+   * this is meant to replace them while a lobby seat exists. */
+  seasonNo?: number;
+  /** See `seasonNo`. */
+  roundNo?: number;
 }
 
 export interface RaceSocketOptions {
@@ -170,6 +197,7 @@ function defaultBackoff(attempt: number): number {
 type IncomingFrame =
   | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
+  | { type: 'phase'; lobbyId: string; phase: LobbyPhase; seasonNo: number; roundNo: number }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
 
@@ -196,6 +224,13 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
   // frame's payload is typed `SerialisedRace` (no `qualifying` key at all),
   // so it structurally cannot touch this variable.
   let qualifying: QualifyingResult | undefined;
+  // Separate from `race`/`qualifying` for the same reason: a 'phase' frame
+  // carries no `race` payload at all (see the module doc's four-transition
+  // list — two of them fire with no race ticking), so this cannot live
+  // inside `race` without inventing a fake race object just to hold it.
+  let phase: LobbyPhase | undefined;
+  let seasonNo: number | undefined;
+  let roundNo: number | undefined;
   let socket: MinimalWebSocket | null = null;
   let reconnectAttempt = 0;
   let reconnectTimer: number | null = null;
@@ -203,7 +238,7 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
   const listeners = new Set<(state: RaceSocketState) => void>();
 
   function snapshot(): RaceSocketState {
-    return { status, race, qualifying };
+    return { status, race, qualifying, phase, seasonNo, roundNo };
   }
 
   function notify(): void {
@@ -262,6 +297,18 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
         // `qualifying` is DELIBERATELY left untouched here: `frame.race` is
         // `SerialisedRace`, which has no `qualifying` field to begin with —
         // a 'lap' frame cannot clobber it even by accident.
+        frameArrived();
+        return;
+      }
+      case 'phase': {
+        if (frame.lobbyId !== options.lobbyId) return;
+        // All three assigned together, from the one frame that carries
+        // them — never partially, never derived. `race`/`qualifying` are
+        // deliberately untouched here: a 'phase' frame has no `race` key at
+        // all to clobber them with.
+        phase = frame.phase;
+        seasonNo = frame.seasonNo;
+        roundNo = frame.roundNo;
         frameArrived();
         return;
       }

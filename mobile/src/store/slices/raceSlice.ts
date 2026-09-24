@@ -13,6 +13,7 @@ import {
 import {
   createRaceSocket,
   type ConnectionStatus,
+  type LobbyPhase,
   type RaceSocket,
   type RaceSocketDeps,
   type RaceSocketOptions,
@@ -81,6 +82,16 @@ export interface RaceSliceState {
    * cleared by one, never fabricated locally" rules. See `displayQualifying`
    * below for how a screen is meant to read this. */
   qualifying?: QualifyingResult;
+  /** The lobby's current phase, mirroring `raceSocket.ts`'s own `phase`
+   * field 1:1 — same "never on a lap/state frame, never cleared by one,
+   * never fabricated locally" rules `qualifying` already follows. See
+   * `displayPhase` below for how a screen is meant to read this. */
+  phase?: LobbyPhase;
+  /** Rides with `phase`, always set together — see `raceSocket.ts`'s
+   * `seasonNo` doc comment. */
+  seasonNo?: number;
+  /** See `seasonNo`. */
+  roundNo?: number;
   /** The most recent pit call's result, kept distinct from `data` so a
    * rejection (e.g. `lap_already_run`) can be shown to the player without
    * being swallowed into the race state. */
@@ -206,20 +217,57 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
         // the wrong word for "you were never signed in" (see
         // `RaceSliceState.status`'s doc comment).
         set((s) => ({
-          race: { ...s.race, status: 'signed-out', lobbyId, data: null, qualifying: undefined, lastPitOutcome: undefined },
+          race: {
+            ...s.race,
+            status: 'signed-out',
+            lobbyId,
+            data: null,
+            qualifying: undefined,
+            phase: undefined,
+            seasonNo: undefined,
+            roundNo: undefined,
+            lastPitOutcome: undefined,
+          },
         }));
         return;
       }
 
       set((s) => ({
-        race: { ...s.race, status: 'connecting', lobbyId, data: null, qualifying: undefined, lastPitOutcome: undefined },
+        race: {
+          ...s.race,
+          status: 'connecting',
+          lobbyId,
+          data: null,
+          qualifying: undefined,
+          phase: undefined,
+          seasonNo: undefined,
+          roundNo: undefined,
+          lastPitOutcome: undefined,
+        },
       }));
 
       const newSocket = createSocket({ url: liveSocketUrl(auth.baseUrl), lobbyId, token: auth.token }, injected.socketDeps);
       socket = newSocket;
 
-      const adopt = (snapshot: { status: ConnectionStatus; race: SerialisedRace | null; qualifying?: QualifyingResult }) => {
-        set((s) => ({ race: { ...s.race, status: snapshot.status, data: snapshot.race, qualifying: snapshot.qualifying } }));
+      const adopt = (snapshot: {
+        status: ConnectionStatus;
+        race: SerialisedRace | null;
+        qualifying?: QualifyingResult;
+        phase?: LobbyPhase;
+        seasonNo?: number;
+        roundNo?: number;
+      }) => {
+        set((s) => ({
+          race: {
+            ...s.race,
+            status: snapshot.status,
+            data: snapshot.race,
+            qualifying: snapshot.qualifying,
+            phase: snapshot.phase,
+            seasonNo: snapshot.seasonNo,
+            roundNo: snapshot.roundNo,
+          },
+        }));
       };
 
       adopt(newSocket.getState());
@@ -359,4 +407,56 @@ export function displayRace<TLocal>(
   if (!race.lobbyId) return { kind: 'local', race: localRace };
   if (!race.data) return { kind: 'not-started' };
   return { kind: 'server', race: race.data, stale: race.status !== 'connected' };
+}
+
+/**
+ * What "where is this weekend right now" should answer for a lobby-seated
+ * player — the prerequisite the local race engine's removal is blocked on
+ * (see `no-local-race.test.ts`'s module doc and `settlement-from-server
+ * .test.ts`'s: `gameStore.ts`'s `weekend.phase` is today advanced ONLY by
+ * the local engine's own functions, so deleting that engine freezes the
+ * weekend and makes the server's live race unreachable — `LiveRacePanel`
+ * never mounts because nothing ever sets `phase` to `'race'`/`'sprint'`
+ * again).
+ *
+ * This selector does NOT attempt to translate the server's `LobbyPhase`
+ * (`'open' | 'checkin' | 'live' | 'result' | 'finished'`) into
+ * `gameStore.ts`'s `WeekendPhase` (`'practice' | 'sprintQualifying' |
+ * 'sprintGrid' | 'sprint' | 'qualifying' | 'grid' | 'race' | 'result'`) —
+ * the two are not the same shape of state machine and there is no faithful
+ * 1:1 mapping between them (the server has no notion of practice/qualifying/
+ * grid as separate phases at all; `'live'` alone covers what the local
+ * machine splits into `'race'` and `'sprint'`). Inventing a lossy mapping
+ * here would silently misreport the weekend the moment a caller needed a
+ * distinction the server doesn't make. Instead this hands back the server's
+ * OWN phase, verbatim, for whatever wires a screen up to it (the next task)
+ * to interpret against that screen's own needs — exactly how `displayRace`
+ * hands back the server's `SerialisedRace` rather than reshaping it into a
+ * local `RaceState`.
+ *
+ * Three answers, told apart on purpose (same shape as `displaySettlement`'s
+ * `'no-lobby' | 'loading' | 'ready'`):
+ *  - `'no-lobby'` — no `lobbyId`: the legacy solo weekend, where
+ *    `weekend.phase` keeps meaning exactly what it already means. Untouched.
+ *  - `'loading'`  — seated, but no `phase` frame has arrived yet. The server
+ *    sends one immediately on subscribe (right after `state`), so this is a
+ *    brief startup window, not a state a screen should sit in for long —
+ *    but it is a real, distinct answer, not a guess at `'open'`.
+ *  - `'ready'`    — the server's phase, season and round, exactly as the
+ *    last `phase` frame reported them (frozen across a disconnect, same
+ *    "never fabricated" rule `race`/`qualifying` already follow).
+ */
+export type PhaseDisplay =
+  | { kind: 'no-lobby' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; phase: LobbyPhase; seasonNo: number; roundNo: number };
+
+export function displayPhase(
+  race: Pick<RaceSliceState, 'lobbyId' | 'phase' | 'seasonNo' | 'roundNo'>,
+): PhaseDisplay {
+  if (!race.lobbyId) return { kind: 'no-lobby' };
+  if (race.phase === undefined || race.seasonNo === undefined || race.roundNo === undefined) {
+    return { kind: 'loading' };
+  }
+  return { kind: 'ready', phase: race.phase, seasonNo: race.seasonNo, roundNo: race.roundNo };
 }
