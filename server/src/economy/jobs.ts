@@ -58,6 +58,38 @@ const UPGRADE_STAT_FIELD: Record<string, keyof CarStats> = {
   grip: 'grip',
 };
 
+/**
+ * The `ends_at` of this team's last CLAIMED spy mission, if any — the same
+ * lookup `startJob`'s cooldown check uses, factored out so `buildSlotState`
+ * (`state.ts`) can expose the resulting cooldown END to the client without
+ * duplicating the query. `undefined` means no spy mission has ever been
+ * claimed for this team, the same "nothing to report" shape the rest of
+ * this module uses elsewhere.
+ */
+async function lastClaimedSpyEndsAt(lobbyId: string, teamKey: string): Promise<Date | undefined> {
+  const last = await query<{ ends_at: Date }>(
+    `select ends_at from pending_jobs
+     where lobby_id = $1 and team_key = $2 and kind = 'spy' and claimed_at is not null
+     order by ends_at desc limit 1`,
+    [lobbyId, teamKey],
+  );
+  return last.rows[0]?.ends_at;
+}
+
+/**
+ * The instant a new spy mission becomes startable again — the last claimed
+ * mission's `ends_at` plus `SPY_COOLDOWN_MS` — or `undefined` if no mission
+ * has ever been claimed. `state.ts`'s `buildSlotState` surfaces this
+ * directly as `SlotState.spyCooldownUntil` (an ISO instant); the client
+ * derives its own countdown from that against its monotonic anchor, never
+ * against `Date.now()` — see `economyClock.ts`'s doc comment for the
+ * device-clock exploit that guards against.
+ */
+export async function spyCooldownEnd(lobbyId: string, teamKey: string): Promise<Date | undefined> {
+  const lastEndsAt = await lastClaimedSpyEndsAt(lobbyId, teamKey);
+  return lastEndsAt ? new Date(lastEndsAt.getTime() + SPY_COOLDOWN_MS) : undefined;
+}
+
 function assertKnownKind(kind: JobKind): void {
   if (kind !== 'upgrade' && kind !== 'training' && kind !== 'spy') {
     throw new JobError(`startJob: unknown job kind ${JSON.stringify(kind)}`);
@@ -124,13 +156,7 @@ export async function startJob(input: StartJobInput): Promise<StartJobResult> {
     // claiming it, so a slow claim can never be used to shorten the wait.
     // `pending_jobs_open_idx` already stops a SECOND open spy job; this is
     // the separate temporal gap after a CLAIMED one.
-    const last = await query<{ ends_at: Date }>(
-      `select ends_at from pending_jobs
-       where lobby_id = $1 and team_key = $2 and kind = 'spy' and claimed_at is not null
-       order by ends_at desc limit 1`,
-      [lobbyId, teamKey],
-    );
-    const lastEndsAt = last.rows[0]?.ends_at;
+    const lastEndsAt = await lastClaimedSpyEndsAt(lobbyId, teamKey);
     if (lastEndsAt && now.getTime() < lastEndsAt.getTime() + SPY_COOLDOWN_MS) {
       return { ok: false, reason: 'cooldown' };
     }

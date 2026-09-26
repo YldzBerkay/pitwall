@@ -29,6 +29,15 @@ export interface SeatSettlementBreakdown {
    * panel is empty. See `009_settlement_expired_slots.sql`.
    */
   expiredSlots: string[];
+  /**
+   * A rival's espionage attempt against this seat this round — `undefined`
+   * when none was attempted (the seat wasn't front-of-table, or the roll
+   * simply didn't pick it; see `rivalAttempt`, shared/src/espionage.ts). Set
+   * ONLY together (both or neither) — `011_espionage_client_exposure.sql`'s
+   * own check constraint holds the same rule at the storage layer.
+   */
+  rivalSpyTeam?: string;
+  rivalSpySuccess?: boolean;
 }
 
 interface PayoutRow {
@@ -40,6 +49,8 @@ interface PayoutRow {
   bonuses_earned: string[];
   streaks_broken: string[];
   expired_slots: string[];
+  rival_spy_team: string | null;
+  rival_spy_success: boolean | null;
 }
 
 function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
@@ -52,6 +63,8 @@ function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
     bonusesEarned: row.bonuses_earned,
     streaksBroken: row.streaks_broken,
     expiredSlots: row.expired_slots,
+    rivalSpyTeam: row.rival_spy_team ?? undefined,
+    rivalSpySuccess: row.rival_spy_success ?? undefined,
   };
 }
 
@@ -70,12 +83,12 @@ export async function insertSettlementPayout(
   await client.query(
     `insert into race_settlement_payouts
        (lobby_id, season_no, round_no, team_key, position, prize, sponsor_income, brief_bonus,
-        bonuses_earned, streaks_broken, expired_slots)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        bonuses_earned, streaks_broken, expired_slots, rival_spy_team, rival_spy_success)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       lobbyId, seasonNo, roundNo, payout.teamKey, payout.position, payout.prize,
       payout.sponsorIncome, payout.briefBonus, payout.bonusesEarned, payout.streaksBroken,
-      payout.expiredSlots,
+      payout.expiredSlots, payout.rivalSpyTeam ?? null, payout.rivalSpySuccess ?? null,
     ],
   );
 }
@@ -92,7 +105,8 @@ export async function loadSettlementPayout(
   teamKey: string,
 ): Promise<SeatSettlementBreakdown | null> {
   const res = await query<PayoutRow>(
-    `select team_key, position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken, expired_slots
+    `select team_key, position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken, expired_slots,
+            rival_spy_team, rival_spy_success
      from race_settlement_payouts
      where lobby_id = $1 and season_no = $2 and round_no = $3 and team_key = $4`,
     [lobbyId, seasonNo, roundNo, teamKey],

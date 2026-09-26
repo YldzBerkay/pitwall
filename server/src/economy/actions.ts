@@ -27,7 +27,7 @@ import { loadLobby } from '../lobby/lobbyRepo.ts';
 import { isTeamKey } from '../lobby/grid.ts';
 import { departmentCost, factoryDepartments, DEPARTMENT_MAX_LEVEL } from '@pitwall/shared/factory';
 import { GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPrices, rpPrices } from '@pitwall/shared/economy';
-import { agentProfiles } from '@pitwall/shared/espionage';
+import { agentProfiles, type MissionOutcome } from '@pitwall/shared/espionage';
 
 export type ActionFailureCode =
   | 'unknown_action'
@@ -45,8 +45,23 @@ export type ActionFailureCode =
 
 const SPY_STAT_KEYS = new Set(['motor', 'aero', 'grip']);
 
+/**
+ * A resolved spy mission's outcome, returned ALONGSIDE `state` (never
+ * instead of it) by `claimSpyReport` — the one place a client can learn what
+ * actually happened, since `claimJob`'s own `applied` (jobs.ts) was
+ * otherwise thrown away here. `fine` is the amount `chargeRpFloor` actually
+ * deducted, never the nominal one it was asked for — see `jobs.ts`'s
+ * `applySpyEffect` docblock.
+ */
+export interface SpyClaimResult {
+  outcome: MissionOutcome;
+  targetTeam: string;
+  stat: string;
+  fine?: number;
+}
+
 export type RunActionResult =
-  | { ok: true; state: SlotState }
+  | { ok: true; state: SlotState; spyResult?: SpyClaimResult }
   | { ok: false; code: ActionFailureCode };
 
 export interface RunActionInput {
@@ -181,7 +196,16 @@ export async function runAction(input: RunActionInput): Promise<RunActionResult>
       if (!jobId) return fail('bad_payload');
       const claimed = await claimJob({ lobbyId, teamKey, jobId, now });
       if (!claimed.ok) return fail(claimed.reason);
-      return finish(lobbyId, teamKey, userId, now);
+      const result = await finish(lobbyId, teamKey, userId, now);
+      if (!result.ok) return result;
+      // Only `claimSpyReport` (never claimUpgrade/claimTraining, which share
+      // this case) carries a spyResult — `claimed.kind` is what the STORED
+      // job actually was, never trusted from the request `type` alone, in
+      // case a caller claims a non-spy job through this action name.
+      if (type === 'claimSpyReport' && claimed.kind === 'spy') {
+        return { ...result, spyResult: claimed.applied as unknown as SpyClaimResult };
+      }
+      return result;
     }
 
     case 'skipUpgrade':

@@ -73,6 +73,14 @@ const CAR_STAT_FIELDS: (keyof CarStats)[] = ['motor', 'aero', 'grip'];
  * fixture — the roll is seeded on `(round, season)`, not on the stochastic
  * race result, so nothing about it actually needs a real replayed race to
  * exercise.
+ *
+ * Returns a `teamKey -> { team, success }` map of every seat that was
+ * ACTUALLY attempted this round (a seat never rolled — not front-of-table,
+ * or the 20% roll missed, see `rivalAttempt` — has no entry at all, never a
+ * fabricated "not attempted" record). `writePayouts` folds this into each
+ * seat's settlement row so a player can finally learn what an ambient
+ * attempt against them did, the same gap `010_garage_hide.sql` closed for
+ * the DEFENSIVE half of espionage.
  */
 export async function runRivalEspionage(
   client: PoolClient,
@@ -82,14 +90,17 @@ export async function runRivalEspionage(
   seats: Seat[],
   positionOf: Map<string, number>,
   rivalPool: string[],
-): Promise<void> {
+): Promise<Map<string, { team: string; success: boolean }>> {
+  const results = new Map<string, { team: string; success: boolean }>();
   for (const seat of seats) {
     if (seat.managed !== 'human') continue;
     const position = positionOf.get(seat.teamKey) ?? Number.POSITIVE_INFINITY;
     const hidden = await isGarageHidden(lobbyId, seat.teamKey, roundNo, client);
     const rivals = rivalPool.filter((k) => k !== seat.teamKey);
     const attempt = rivalAttempt(roundNo, seasonNo, position, hidden, rivals);
-    if (!attempt?.success) continue;
+    if (!attempt) continue;
+    results.set(seat.teamKey, attempt);
+    if (!attempt.success) continue;
     // No single stat is "the" one a rival's ambient snoop improves — unlike
     // a player's OWN mission (which always names one) this has none to name.
     // The client's equivalent (`aiBonus`) was a single flat number added to
@@ -101,6 +112,7 @@ export async function runRivalEspionage(
       await bumpCarStat(client, lobbyId, attempt.team, field, RIVAL_GAIN);
     }
   }
+  return results;
 }
 
 export interface SettleRaceInput {
@@ -276,6 +288,18 @@ export async function settleRace(
     // slotu bir tur fazla kilitli tutar.
     const nextRound = roundNo + 1;
 
+    // Rolled BEFORE the per-seat payout loop (rather than after, where it
+    // used to live) so each seat's own settlement row can be written WITH
+    // its rival-espionage result in the same insert — see `SeatPayout`'s and
+    // `insertSettlementPayout`'s own doc comments for why splitting the two
+    // into a separate write would leave the effect applied with no record
+    // reachable by any screen. Once per settled race, per human seat — see
+    // `runRivalEspionage`'s own docblock for why this lives at settlement
+    // rather than on a timer or a claim.
+    const rivalResults = await runRivalEspionage(
+      c, lobbyId, seasonNo, roundNo, seats, positionOf, economies.map((e) => e.teamKey),
+    );
+
     const payouts: SeatPayout[] = [];
     for (const econ of economies) {
       // Ekonomi satırı olan ama tabloda olmayan bir takım olamaz (tablo 11
@@ -347,24 +371,23 @@ export async function settleRace(
       }
 
       await deps.addRp(c, lobbyId, econ.teamKey, rp);
+      const rival = rivalResults.get(econ.teamKey);
       // AYNI BAĞLANTI, AYNI İŞLEM: döküm `markSettled` kapısından SONRA ve
       // `addRp`yle TAM OLARAK aynı taahhütte yazılır (bkz. `settlementRepo.ts`
       // docblock'u) — ortada bir şey patlarsa ikisi birlikte geri alınır,
-      // parasız bir kayıt ya da kayıtsız bir ödeme çıkmaz.
+      // parasız bir kayıt ya da kayıtsız bir ödeme çıkmaz. Rival-espionage
+      // sonucu da AYNI satıra, AYNI yazmayla girer — `bumpCarStat`'ın rakip
+      // takımın arabasına uyguladığı etki de bu transaction'ın parçası, yani
+      // ortada bir şey patlarsa etki de kayıt da BİRLİKTE geri alınır.
       await insertSettlementPayout(c, lobbyId, seasonNo, roundNo, {
         teamKey: econ.teamKey, position, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
-        expiredSlots,
+        expiredSlots, rivalSpyTeam: rival?.team, rivalSpySuccess: rival?.success,
       });
       payouts.push({
         teamKey: econ.teamKey, position, rp, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
         expiredSlots,
       });
     }
-
-    // Once per settled race, per human seat — see `runRivalEspionage`'s own
-    // docblock for why this lives at settlement rather than on a timer or a
-    // claim.
-    await runRivalEspionage(c, lobbyId, seasonNo, roundNo, seats, positionOf, economies.map((e) => e.teamKey));
 
     return { standings, payouts };
   };

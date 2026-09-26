@@ -33,9 +33,11 @@
  * See `buildSlotState`'s own doc comment for how `now` reaches here.
  */
 import { loadTeamEconomy } from './repo.ts';
-import { openJobs, type OpenJob } from './jobs.ts';
+import { openJobs, spyCooldownEnd, type OpenJob } from './jobs.ts';
+import { loadGarageHide } from './espionageRepo.ts';
 import { teamValue } from './value.ts';
 import { goldOf, capsFor } from '../gold/repo.ts';
+import { loadLobby } from '../lobby/lobbyRepo.ts';
 import { ADS_PER_DAY, GOLD_TO_RP_DAILY_CAP } from '@pitwall/shared/economy';
 
 export class SlotStateError extends Error {
@@ -62,6 +64,21 @@ export interface SlotStateCaps {
   convertibleLeft: number;
 }
 
+/**
+ * Garage-hide state, exposed as the round it holds through — NEVER converted
+ * to a wall-clock time, because a hide's expiry (`garage_hides.until_round`,
+ * `010_garage_hide.sql`) genuinely IS round-based, not time-based; inventing
+ * a timestamp for it here would be a fabrication `buildSlotState` has no
+ * grounds for. `hidden` is computed HERE, against this same call's own
+ * `now`-derived current round, so the client never has to re-derive it
+ * itself from `untilRound` and a round number it would have to source
+ * elsewhere.
+ */
+export interface SlotStateHide {
+  hidden: boolean;
+  untilRound: number;
+}
+
 export interface SlotState {
   /** The server's own clock at the moment this snapshot was built — see the module docblock. */
   serverNow: string;
@@ -75,6 +92,16 @@ export interface SlotState {
   jobs: SlotStateJob[];
   teamValue: number;
   caps: SlotStateCaps;
+  /** `null` when this garage has never been hidden — never a fabricated round. */
+  hide: SlotStateHide | null;
+  /**
+   * ISO instant the 48h spy cooldown (`jobs.ts`'s `spyCooldownEnd`) lifts,
+   * or `undefined` if no spy mission has ever been claimed for this team.
+   * The client anchors this against its own monotonic clock — see this
+   * field's origin in `jobs.ts` for why it must never be read against
+   * `Date.now()` on either side.
+   */
+  spyCooldownUntil?: string;
 }
 
 export interface BuildSlotStateInput {
@@ -125,11 +152,14 @@ export async function buildSlotState(input: BuildSlotStateInput): Promise<SlotSt
   const { lobbyId, teamKey, userId, now } = input;
   const serverNow = new Date();
 
-  const [economy, jobs, gold, caps] = await Promise.all([
+  const [economy, jobs, gold, caps, lobby, garageHide, spyCooldownUntil] = await Promise.all([
     loadTeamEconomy(lobbyId, teamKey),
     openJobs(lobbyId, teamKey, now),
     goldOf(userId),
     capsFor(userId, now),
+    loadLobby(lobbyId),
+    loadGarageHide(lobbyId, teamKey),
+    spyCooldownEnd(lobbyId, teamKey),
   ]);
 
   if (!economy) {
@@ -158,5 +188,7 @@ export async function buildSlotState(input: BuildSlotStateInput): Promise<SlotSt
       adsLeft: Math.max(0, ADS_PER_DAY - caps.adsWatched),
       convertibleLeft: Math.max(0, GOLD_TO_RP_DAILY_CAP - caps.goldConverted),
     },
+    hide: garageHide ? { hidden: garageHide.untilRound >= (lobby?.roundNo ?? 0), untilRound: garageHide.untilRound } : null,
+    spyCooldownUntil: spyCooldownUntil?.toISOString(),
   };
 }

@@ -173,6 +173,14 @@ export function registerEconomyRoutes(router: Router): void {
           // kaynağı ödeme anında yazılan bu satır — bkz.
           // `009_settlement_expired_slots.sql`.
           expired: payout.expiredSlots,
+          // A rival's espionage attempt against THIS seat this round, or
+          // `null` when none was attempted — see `settlementRepo.ts`'s
+          // `SeatSettlementBreakdown` docblock for why the two are kept
+          // distinct rather than collapsing "never rolled" into "rolled and
+          // failed".
+          rivalSpy: payout.rivalSpyTeam !== undefined && payout.rivalSpySuccess !== undefined
+            ? { team: payout.rivalSpyTeam, success: payout.rivalSpySuccess }
+            : null,
         },
       },
     };
@@ -206,7 +214,11 @@ export function registerEconomyRoutes(router: Router): void {
     // value.
     const now = new Date();
     const result = await runAction({ lobbyId, userId, teamKey, body: ctx.body, now });
-    if (result.ok) return { status: 200, body: result.state };
+    // `spyResult` (only ever present on a `claimSpyReport` response) rides
+    // ALONGSIDE the whole slot state, never instead of it — see
+    // `actions.ts`'s own `SpyClaimResult` doc comment for why the client
+    // must never be left to recompute this itself.
+    if (result.ok) return { status: 200, body: result.spyResult ? { ...result.state, spyResult: result.spyResult } : result.state };
 
     const status = STATUS_BY_CODE[result.code];
     if (status === undefined) {

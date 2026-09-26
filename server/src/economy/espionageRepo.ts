@@ -54,3 +54,22 @@ export async function isGarageHidden(
     : await query(sql, [lobbyId, teamKey, round]);
   return (res.rowCount ?? 0) > 0;
 }
+
+/**
+ * Reads a team's current hide row, raw — just `untilRound`, never converted
+ * to a wall-clock time (there is none: hides are round-based, see
+ * `010_garage_hide.sql`). `null` means "never hidden", the same absence
+ * `garage_hides` itself uses — not "hidden until round 0". Callers that also
+ * know the CURRENT round (e.g. `buildSlotState`) compute "still hidden"
+ * themselves from `untilRound >= round`, exactly like `isGarageHidden`
+ * does, so there is only one place that comparison is written.
+ */
+export async function loadGarageHide(
+  lobbyId: string, teamKey: string, client?: PoolClient,
+): Promise<{ untilRound: number } | null> {
+  const sql = `select until_round from garage_hides where lobby_id = $1 and team_key = $2`;
+  const res = client
+    ? await client.query<{ until_round: number }>(sql, [lobbyId, teamKey])
+    : await query<{ until_round: number }>(sql, [lobbyId, teamKey]);
+  return res.rows[0] ? { untilRound: res.rows[0].until_round } : null;
+}

@@ -243,6 +243,40 @@ describe('GET /economy/settlement', () => {
     assert.equal(status, 403);
   });
 
+  it('reports a rival espionage attempt against this seat, distinguishing none from attempted', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    const rivalTeam = SEAT_LADDER[2];
+    await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    // `settleRace` itself only ever records a REAL `runRivalEspionage` roll
+    // (see espionage.test.ts for that); this route test is only about
+    // whether a row already carrying rival-spy fields is served back
+    // correctly, so the fields are set directly on the row it just wrote.
+    await query(
+      `update race_settlement_payouts set rival_spy_team = $3, rival_spy_success = true
+       where lobby_id = $1 and team_key = $2`,
+      [lobbyId, HUMAN, rivalTeam],
+    );
+
+    const { status, body } = await get(`/economy/settlement?lobbyId=${lobbyId}&round=1`, owner.token);
+    assert.equal(status, 200);
+    assert.ok(body.settlement.rivalSpy, 'a recorded attempt must be reported');
+    assert.equal(body.settlement.rivalSpy.team, rivalTeam);
+    assert.equal(body.settlement.rivalSpy.success, true);
+  });
+
+  it('reports no rival espionage when none was attempted this round', async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const { status, body } = await get(`/economy/settlement?lobbyId=${lobbyId}&round=1`, owner.token);
+    assert.equal(status, 200);
+    assert.equal(body.settlement.rivalSpy, null, 'no attempt this round must read as null, never a fabricated record');
+  });
+
   it('a missing lobbyId or round query param is 400 invalid_request, not a crash', async () => {
     const owner = await makeUser();
     const lobbyId = await makeLobby(owner.id);
