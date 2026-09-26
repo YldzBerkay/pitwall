@@ -43,6 +43,7 @@ const STATUS_BY_CODE: Record<ActionFailureCode, number> = {
   not_found: 404,
   cap_reached: 409,
   no_economy: 404,
+  cooldown: 409,
 };
 
 interface SeatRow {

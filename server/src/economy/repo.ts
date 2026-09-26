@@ -98,11 +98,17 @@ export async function seedTeamEconomy(client: PoolClient, lobbyId: string, teamK
   );
 }
 
-export async function loadTeamEconomy(lobbyId: string, teamKey: string): Promise<TeamEconomy | null> {
-  const res = await query<EconomyRow>(
-    `select * from lobby_economy where lobby_id = $1 and team_key = $2`,
-    [lobbyId, teamKey],
-  );
+/**
+ * `client` MUST be passed when this is called from inside a transaction —
+ * otherwise a caller holding a connection asks the bare pool for a second
+ * one, and a full pool deadlocks both (see `loadLobbyEconomy`'s doc comment,
+ * and `db/pool.ts`'s `withTransaction`).
+ */
+export async function loadTeamEconomy(lobbyId: string, teamKey: string, client?: PoolClient): Promise<TeamEconomy | null> {
+  const sql = `select * from lobby_economy where lobby_id = $1 and team_key = $2`;
+  const res = client
+    ? await client.query<EconomyRow>(sql, [lobbyId, teamKey])
+    : await query<EconomyRow>(sql, [lobbyId, teamKey]);
   return res.rows[0] ? toTeamEconomy(res.rows[0]) : null;
 }
 
@@ -226,6 +232,53 @@ export async function bumpCarStat(
      where lobby_id = $1 and team_key = $2`,
     [lobbyId, teamKey, [field], field, delta],
   );
+}
+
+/**
+ * `spy_state` — reused as the map of pending espionage multipliers, keyed by
+ * stat label directly (`{ "motor": 1.5 }`), one entry per stat waiting on its
+ * next upgrade. Chosen over a new column or a `pending_jobs` payload field
+ * because the column already exists for exactly this (see migration
+ * `003_economy.sql`'s comment) and needs no migration; keying it by stat lets
+ * `takePendingSpyBoost` remove the entry with the jsonb `-` (key-delete)
+ * operator in the same statement that reads it, so "read the pending
+ * multiplier" and "consume it" are one atomic write, not read-then-clear.
+ */
+export async function setPendingSpyBoost(
+  client: PoolClient, lobbyId: string, teamKey: string, stat: string, multiplier: number,
+): Promise<void> {
+  await client.query(
+    `update lobby_economy
+     set spy_state = jsonb_set(spy_state, $3::text[], to_jsonb($4::numeric), true),
+         updated_at = now()
+     where lobby_id = $1 and team_key = $2`,
+    [lobbyId, teamKey, [stat], multiplier],
+  );
+}
+
+/**
+ * Reads the multiplier pending on `stat` (1 when none is pending) and clears
+ * it in the same statement — a second call right after returns 1. Mirrors
+ * `chargeRpFloor`'s `WITH ... FOR UPDATE` shape: the CTE takes the row lock
+ * and computes the old value from the same snapshot the UPDATE removes the
+ * key from, so there is no read-then-write gap for a concurrent claim to
+ * land in between.
+ */
+export async function takePendingSpyBoost(
+  client: PoolClient, lobbyId: string, teamKey: string, stat: string,
+): Promise<number> {
+  const res = await client.query<{ boost: number | null }>(
+    `with prev as (
+       select spy_state from lobby_economy where lobby_id = $1 and team_key = $2 for update
+     )
+     update lobby_economy le
+     set spy_state = prev.spy_state - $3, updated_at = now()
+     from prev
+     where le.lobby_id = $1 and le.team_key = $2
+     returning (prev.spy_state->>$3)::numeric as boost`,
+    [lobbyId, teamKey, stat],
+  );
+  return res.rows[0]?.boost ?? 1;
 }
 
 /** Increments an upgrade-done counter, starting from 0 when absent. */

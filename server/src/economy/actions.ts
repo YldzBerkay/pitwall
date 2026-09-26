@@ -22,8 +22,11 @@ import { loadTeamEconomy, spendRp, addRp, setFactoryLevel } from './repo.ts';
 import { spendGold, bumpGoldConverted } from '../gold/repo.ts';
 import { buildSlotState, SlotStateError, type SlotState } from './state.ts';
 import { withTransaction } from '../db/pool.ts';
+import { loadLobby } from '../lobby/lobbyRepo.ts';
+import { isTeamKey } from '../lobby/grid.ts';
 import { departmentCost, factoryDepartments, DEPARTMENT_MAX_LEVEL } from '@pitwall/shared/factory';
 import { GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP } from '@pitwall/shared/economy';
+import { agentProfiles } from '@pitwall/shared/espionage';
 
 export type ActionFailureCode =
   | 'unknown_action'
@@ -36,7 +39,10 @@ export type ActionFailureCode =
   | 'no_user'
   | 'not_found'
   | 'cap_reached'
-  | 'no_economy';
+  | 'no_economy'
+  | 'cooldown';
+
+const SPY_STAT_KEYS = new Set(['motor', 'aero', 'grip']);
 
 export type RunActionResult =
   | { ok: true; state: SlotState }
@@ -100,9 +106,32 @@ export async function runAction(input: RunActionInput): Promise<RunActionResult>
     }
 
     case 'startSpyMission': {
-      // Whatever the client sent beyond the routing fields becomes the job
-      // payload as-is; `jobs.ts` stores it verbatim for `spy` jobs.
-      const { type: _type, lobbyId: _lobbyId, teamKey: _teamKey, ...payload } = body;
+      // Every field the mission needs at claim time is validated and
+      // rebuilt HERE — never spread verbatim from the body. In particular
+      // any `outcome` (or anything else) the client sends is dropped on the
+      // floor: `jobs.ts`'s `claimJob` decides the outcome itself, later,
+      // from `startedRound`/`targetTeam`/`agent` and the two teams' real car
+      // stats, and never reads anything resembling a result from storage
+      // the client could have written.
+      const targetTeam = body['targetTeam'];
+      const stat = body['stat'];
+      const agent = body['agent'];
+      if (
+        typeof targetTeam !== 'string' || !isTeamKey(targetTeam) || targetTeam === teamKey
+        || typeof stat !== 'string' || !SPY_STAT_KEYS.has(stat)
+        || typeof agent !== 'string' || !(agent in agentProfiles)
+      ) {
+        return fail('bad_payload');
+      }
+
+      // `startedRound` seeds `resolveMission`'s roll (shared/src/espionage.ts)
+      // and is captured once, at start, from the lobby's own round counter —
+      // never recomputed at claim time, so a mission's result cannot shift
+      // just because the season moved on before it was claimed.
+      const lobby = await loadLobby(lobbyId);
+      if (!lobby) return fail('no_economy');
+
+      const payload = { targetTeam, stat, agent, startedRound: lobby.roundNo };
       const started = await startJob({ lobbyId, teamKey, kind: 'spy', payload, now });
       if (!started.ok) return fail(started.reason);
       return finish(lobbyId, teamKey, userId, now);
