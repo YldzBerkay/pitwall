@@ -15,31 +15,52 @@
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { runMigrations } from '../src/db/migrate.ts';
 import { query, closePool, withTransaction } from '../src/db/pool.ts';
 import { createUserWithIdentity } from '../src/auth/userRepo.ts';
 import { seedTeamEconomy, loadTeamEconomy } from '../src/economy/repo.ts';
 import { startJob, claimJob } from '../src/economy/jobs.ts';
 import { runAction } from '../src/economy/actions.ts';
+import { bumpGarageHide } from '../src/economy/espionageRepo.ts';
+import { runRivalEspionage } from '../src/economy/settle.ts';
+import type { Seat } from '../src/lobby/lobbyRepo.ts';
+import { FREE_AGENT_RP, RIVAL_GAIN, missionSeed, resolveMission, type SpyMission } from '@pitwall/shared/espionage';
+import { goldPrices, rpPrices } from '@pitwall/shared/economy';
 
 let seq = 0;
 const createdLobbyIds: string[] = [];
 const createdUserIds: string[] = [];
 
-/** Verified lobby-creation helper, copied from `economy-repo.test.ts`. */
-async function makeLobby(label = 'Spy'): Promise<{ lobbyId: string; userId: string }> {
+/**
+ * Verified lobby-creation helper, copied from `economy-repo.test.ts`. Takes
+ * an optional explicit `id`: `resolveMission`'s seed now folds in `lobbyId`
+ * (see `shared/src/espionage.ts`'s docblock), so a test that needs a SPECIFIC
+ * outcome deterministically must control the real lobby id the roll is seeded
+ * on, not just the round — a random one would make the outcome random too.
+ */
+async function makeLobby(label = 'Spy', id?: string): Promise<{ lobbyId: string; userId: string }> {
   const n = ++seq;
   const owner = await createUserWithIdentity({
     base: 'SpyMaster', provider: 'google', providerUid: `g-spy-${n}`, emailHash: null,
   });
   const res = await query<{ id: string }>(
-    `insert into lobbies (name, name_base, name_seq, region, visibility, ai_difficulty,
-                          rank_min, rank_max, guests_can_invite, mid_season_join,
-                          creator_user_id, next_race_at)
-     values ($1, $2, $3, 'EU', 'private', 'normal', 1, 10, false, true, $4,
-             now() + interval '1 day')
-     returning id`,
-    [`${label} #${n}`, label, n, owner.id],
+    id
+      ? `insert into lobbies (id, name, name_base, name_seq, region, visibility, ai_difficulty,
+                            rank_min, rank_max, guests_can_invite, mid_season_join,
+                            creator_user_id, next_race_at)
+         values ($5, $1, $2, $3, 'EU', 'private', 'normal', 1, 10, false, true, $4,
+                 now() + interval '1 day')
+         returning id`
+      : `insert into lobbies (name, name_base, name_seq, region, visibility, ai_difficulty,
+                            rank_min, rank_max, guests_can_invite, mid_season_join,
+                            creator_user_id, next_race_at)
+         values ($1, $2, $3, 'EU', 'private', 'normal', 1, 10, false, true, $4,
+                 now() + interval '1 day')
+         returning id`,
+    id ? [`${label} #${n}`, label, n, owner.id, id] : [`${label} #${n}`, label, n, owner.id],
   );
   const lobbyId = res.rows[0].id;
   createdLobbyIds.push(lobbyId);
@@ -76,17 +97,34 @@ async function makeTargetWeaker(lobbyId: string): Promise<void> {
 }
 
 /**
- * Rounds pinned by brute-forcing `resolveMission`'s deterministic roll for
- * (targetTeam='ridgeline', agent='free', targetStronger=true) offline — see
- * the task's step-1 notes. Round 1 -> success, round 6 -> badIntel, round 20
- * -> caught, all with the target genuinely stronger.
+ * Round pinned for tests that don't care WHICH outcome they get, only that
+ * claiming succeeds and returns one of the defined ones — no specific lobby
+ * id is needed for these.
  */
 const ROUND_SUCCESS = 1;
-const ROUND_BAD_INTEL = 6;
-const ROUND_CAUGHT = 20;
+
+/**
+ * (lobbyId, round) pairs pinned by brute-forcing `resolveMission`'s
+ * deterministic roll offline, for (targetTeam='ridgeline', agent='free',
+ * season=1, ownTeam='bosphorus') — see the task's step-1 notes. Every
+ * lobby id below is passed as `makeLobby`'s explicit `id`, so the roll these
+ * tests exercise is under this file's control, not the database's random
+ * default.
+ *
+ * `resolveMission`'s seed now folds in `lobbyId`/`season`/`ownTeam`
+ * (`shared/src/espionage.ts`), which is exactly what closes the exploit this
+ * task exists to close — but it also means a round number ALONE no longer
+ * pins an outcome; the (lobby, round) PAIR does.
+ */
+const PIN_NOTHING = { id: '00000000-0000-4000-8000-000000000003', round: 1 }; // targetStronger=false -> 'nothing'
+const PIN_SUCCESS = { id: '00000000-0000-4000-8000-000000000300', round: 3 }; // targetStronger=true -> 'success'
+const PIN_BAD_INTEL = { id: '00000000-0000-4000-8000-000000000301', round: 5 }; // targetStronger=true -> 'badIntel'
+const PIN_CAUGHT_A = { id: '00000000-0000-4000-8000-000000000302', round: 7 }; // targetStronger=true -> 'caught'
+const PIN_CAUGHT_B = { id: '00000000-0000-4000-8000-000000000303', round: 12 }; // targetStronger=true -> 'caught'
+const PIN_CAUGHT_C = { id: '00000000-0000-4000-8000-000000000304', round: 8 }; // targetStronger=true -> 'caught'
 
 function spyPayload(startedRound: number, agent: 'free' | 'premium' = 'free') {
-  return { targetTeam: TARGET, stat: 'motor' as const, agent, startedRound };
+  return { targetTeam: TARGET, stat: 'motor' as const, agent, startedRound, season: 1 };
 }
 
 describe('espionage — resolved server-side', () => {
@@ -116,7 +154,7 @@ describe('espionage — resolved server-side', () => {
   });
 
   it("2) ignores a client-supplied 'outcome' in the start payload", async () => {
-    const { lobbyId, userId } = await makeLobby();
+    const { lobbyId, userId } = await makeLobby('Spy', PIN_NOTHING.id);
     await setup(lobbyId);
     // Round 1 with the target genuinely WEAKER resolves deterministically to
     // 'nothing' (same seed/roll as the success case, different interpretation
@@ -130,7 +168,6 @@ describe('espionage — resolved server-side', () => {
       [lobbyId, OWN, userId],
     );
     const now = new Date('2026-01-01T00:00:00Z');
-    const rpBefore = (await loadTeamEconomy(lobbyId, OWN))!.rp;
 
     const start = await runAction({
       lobbyId, userId, teamKey: OWN,
@@ -145,6 +182,10 @@ describe('espionage — resolved server-side', () => {
     )).rows[0];
     assert.ok(jobRow, 'startSpyMission did not create a job');
 
+    // Captured AFTER the start charge (FREE_AGENT_RP) has already landed, so
+    // this is isolated to what CLAIMING does — the thing this test is about.
+    const rpAfterStart = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+
     const claim = await runAction({
       lobbyId, userId, teamKey: OWN,
       body: { type: 'claimSpyReport', jobId: jobRow.id },
@@ -157,7 +198,7 @@ describe('espionage — resolved server-side', () => {
     // proving the injected 'success' was never read.
     const after = (await loadTeamEconomy(lobbyId, OWN))!;
     assert.equal(after.spyState['motor'], undefined, "the client's fake 'success' set a boost");
-    assert.equal(after.rp, rpBefore, "the client's fake 'success' should not have charged a fine either");
+    assert.equal(after.rp, rpAfterStart, "the client's fake 'success' should not have charged a fine either");
   });
 
   it('3) is deterministic — the same mission parameters resolve to the same outcome', async () => {
@@ -188,12 +229,12 @@ describe('espionage — resolved server-side', () => {
   });
 
   it('4) success multiplies the next upgrade of that stat by SPY_BOOST, then is consumed', async () => {
-    const { lobbyId } = await makeLobby();
+    const { lobbyId } = await makeLobby('Spy', PIN_SUCCESS.id);
     await setup(lobbyId);
     await makeTargetStronger(lobbyId);
     const now = new Date('2026-01-01T00:00:00Z');
 
-    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_SUCCESS), now });
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(PIN_SUCCESS.round), now });
     assert.equal(spy.ok, true);
     if (!spy.ok) return;
     const claimSpy = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
@@ -224,12 +265,12 @@ describe('espionage — resolved server-side', () => {
   });
 
   it('5) bad intel applies BAD_INTEL_FACTOR to the next upgrade of that stat, then is consumed', async () => {
-    const { lobbyId } = await makeLobby();
+    const { lobbyId } = await makeLobby('Spy', PIN_BAD_INTEL.id);
     await setup(lobbyId);
     await makeTargetStronger(lobbyId);
     const now = new Date('2026-01-01T00:00:00Z');
 
-    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_BAD_INTEL), now });
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(PIN_BAD_INTEL.round), now });
     assert.equal(spy.ok, true);
     if (!spy.ok) return;
     const claimSpy = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
@@ -260,15 +301,17 @@ describe('espionage — resolved server-side', () => {
   });
 
   it('6a) caught: the reported fine equals the rp actually deducted', async () => {
-    const { lobbyId } = await makeLobby();
+    const { lobbyId } = await makeLobby('Spy', PIN_CAUGHT_A.id);
     await setup(lobbyId);
     await makeTargetStronger(lobbyId);
     const now = new Date('2026-01-01T00:00:00Z');
-    const rpBefore = (await loadTeamEconomy(lobbyId, OWN))!.rp;
 
-    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_CAUGHT), now });
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(PIN_CAUGHT_A.round), now });
     assert.equal(spy.ok, true);
     if (!spy.ok) return;
+    // Captured AFTER the start charge (FREE_AGENT_RP), so this is isolated to
+    // what CLAIMING (the caught fine) does.
+    const rpBefore = (await loadTeamEconomy(lobbyId, OWN))!.rp;
     const claimed = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
     assert.equal(claimed.ok, true);
     if (!claimed.ok) return;
@@ -281,15 +324,18 @@ describe('espionage — resolved server-side', () => {
   });
 
   it('6b) caught: a fine larger than the balance is floored, and the reported fine matches what was charged', async () => {
-    const { lobbyId } = await makeLobby();
+    const { lobbyId } = await makeLobby('Spy', PIN_CAUGHT_B.id);
     await setup(lobbyId);
     await makeTargetStronger(lobbyId);
-    await query(`update lobby_economy set rp = 10 where lobby_id = $1 and team_key = $2`, [lobbyId, OWN]);
     const now = new Date('2026-01-01T00:00:00Z');
 
-    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_CAUGHT), now });
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(PIN_CAUGHT_B.round), now });
     assert.equal(spy.ok, true);
     if (!spy.ok) return;
+    // The low balance is set AFTER starting (which itself needs enough RP to
+    // charge FREE_AGENT_RP) — this test is about claim-time flooring, not
+    // about whether a low balance can even afford to start.
+    await query(`update lobby_economy set rp = 10 where lobby_id = $1 and team_key = $2`, [lobbyId, OWN]);
     const claimed = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
     assert.equal(claimed.ok, true);
     if (!claimed.ok) return;
@@ -337,5 +383,246 @@ describe('espionage — resolved server-side', () => {
     const okNow = new Date(spy.endsAt.getTime() + 48 * 3600 * 1000 + 1000);
     const allowed = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_SUCCESS), now: okNow });
     assert.equal(allowed.ok, true);
+  });
+
+  it('9a) starting a free-agent mission charges FREE_AGENT_RP', async () => {
+    const { lobbyId, userId } = await makeLobby();
+    await setup(lobbyId);
+    await query(
+      `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+       values ($1, $2, $3, 'human', now())`,
+      [lobbyId, OWN, userId],
+    );
+    const rpBefore = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    const res = await runAction({
+      lobbyId, userId, teamKey: OWN,
+      body: { type: 'startSpyMission', targetTeam: TARGET, stat: 'motor', agent: 'free' },
+      now,
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
+
+    const rpAfter = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+    assert.equal(rpBefore - rpAfter, FREE_AGENT_RP, 'a free-agent mission must charge exactly FREE_AGENT_RP');
+  });
+
+  it('9b) starting a premium-agent mission charges goldPrices.premiumAgent', async () => {
+    const { lobbyId, userId } = await makeLobby();
+    await setup(lobbyId);
+    await query(
+      `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+       values ($1, $2, $3, 'human', now())`,
+      [lobbyId, OWN, userId],
+    );
+    await query(`update users set gold = 100 where id = $1`, [userId]);
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    const res = await runAction({
+      lobbyId, userId, teamKey: OWN,
+      body: { type: 'startSpyMission', targetTeam: TARGET, stat: 'motor', agent: 'premium' },
+      now,
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
+
+    const goldAfter = (await query<{ gold: number }>(`select gold from users where id = $1`, [userId])).rows[0].gold;
+    assert.equal(100 - goldAfter, goldPrices.premiumAgent, 'a premium mission must charge exactly goldPrices.premiumAgent');
+  });
+
+  it('9c) insufficient RP refuses a free-agent mission and charges nothing', async () => {
+    const { lobbyId, userId } = await makeLobby();
+    await setup(lobbyId);
+    await query(
+      `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+       values ($1, $2, $3, 'human', now())`,
+      [lobbyId, OWN, userId],
+    );
+    await query(`update lobby_economy set rp = 0 where lobby_id = $1 and team_key = $2`, [lobbyId, OWN]);
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    const res = await runAction({
+      lobbyId, userId, teamKey: OWN,
+      body: { type: 'startSpyMission', targetTeam: TARGET, stat: 'motor', agent: 'free' },
+      now,
+    });
+    assert.equal(res.ok, false);
+    if (res.ok) return;
+    assert.equal(res.code, 'not_enough_rp');
+    const rpAfter = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+    assert.equal(rpAfter, 0, 'a refused mission must charge nothing');
+  });
+
+  it('9d) insufficient gold refuses a premium-agent mission and charges nothing', async () => {
+    const { lobbyId, userId } = await makeLobby();
+    await setup(lobbyId);
+    await query(
+      `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+       values ($1, $2, $3, 'human', now())`,
+      [lobbyId, OWN, userId],
+    );
+    await query(`update users set gold = 0 where id = $1`, [userId]);
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    const res = await runAction({
+      lobbyId, userId, teamKey: OWN,
+      body: { type: 'startSpyMission', targetTeam: TARGET, stat: 'motor', agent: 'premium' },
+      now,
+    });
+    assert.equal(res.ok, false);
+    if (res.ok) return;
+    assert.equal(res.code, 'not_enough_gold');
+    const goldAfter = (await query<{ gold: number }>(`select gold from users where id = $1`, [userId])).rows[0].gold;
+    assert.equal(goldAfter, 0, 'a refused mission must charge nothing');
+  });
+
+  it('10) hiding the garage charges the right price for each duration', async () => {
+    const { lobbyId, userId } = await makeLobby();
+    await setup(lobbyId);
+    await query(
+      `insert into lobby_seats (lobby_id, team_key, user_id, managed, joined_at)
+       values ($1, $2, $3, 'human', now())`,
+      [lobbyId, OWN, userId],
+    );
+    await query(`update users set gold = 100 where id = $1`, [userId]);
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    const rpBefore = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+    const hide1 = await runAction({ lobbyId, userId, teamKey: OWN, body: { type: 'hideGarage', days: 1 }, now });
+    assert.equal(hide1.ok, true, JSON.stringify(hide1));
+    const rpAfter = (await loadTeamEconomy(lobbyId, OWN))!.rp;
+    assert.equal(rpBefore - rpAfter, rpPrices.hide1Day, '1-day hide must charge rpPrices.hide1Day');
+
+    const goldBefore3 = (await query<{ gold: number }>(`select gold from users where id = $1`, [userId])).rows[0].gold;
+    const hide3 = await runAction({ lobbyId, userId, teamKey: OWN, body: { type: 'hideGarage', days: 3 }, now });
+    assert.equal(hide3.ok, true, JSON.stringify(hide3));
+    const goldAfter3 = (await query<{ gold: number }>(`select gold from users where id = $1`, [userId])).rows[0].gold;
+    assert.equal(goldBefore3 - goldAfter3, goldPrices.hide3Days, '3-day hide must charge goldPrices.hide3Days');
+
+    const hide7 = await runAction({ lobbyId, userId, teamKey: OWN, body: { type: 'hideGarage', days: 7 }, now });
+    assert.equal(hide7.ok, true, JSON.stringify(hide7));
+    const goldAfter7 = (await query<{ gold: number }>(`select gold from users where id = $1`, [userId])).rows[0].gold;
+    assert.equal(goldAfter3 - goldAfter7, goldPrices.hide7Days, '7-day hide must charge goldPrices.hide7Days');
+  });
+
+  it('11) a hidden garage blocks a mission against it — the outcome is "blocked"', async () => {
+    const { lobbyId } = await makeLobby();
+    await setup(lobbyId);
+    await makeTargetStronger(lobbyId);
+    const now = new Date('2026-01-01T00:00:00Z');
+
+    // Hide the TARGET (the one being spied on) well past ROUND_SUCCESS —
+    // `startedRound`/round-at-claim is 1 for a fresh lobby, so 7 days from
+    // round 1 covers rounds 1..7.
+    await withTransaction(async (c) => {
+      await bumpGarageHide(c, lobbyId, TARGET, 1, 7);
+    });
+
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(ROUND_SUCCESS), now });
+    assert.equal(spy.ok, true);
+    if (!spy.ok) return;
+    const claimed = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
+    assert.equal(claimed.ok, true);
+    if (!claimed.ok) return;
+    assert.equal(claimed.applied['outcome'], 'blocked');
+  });
+
+  it('12) being caught bumps the target team\'s spied-on car stat by RIVAL_GAIN', async () => {
+    const { lobbyId } = await makeLobby('Spy', PIN_CAUGHT_C.id);
+    await setup(lobbyId);
+    await makeTargetStronger(lobbyId);
+    const now = new Date('2026-01-01T00:00:00Z');
+    const motorBefore = (await loadTeamEconomy(lobbyId, TARGET))!.car.motor;
+
+    const spy = await startJob({ lobbyId, teamKey: OWN, kind: 'spy', payload: spyPayload(PIN_CAUGHT_C.round), now });
+    assert.equal(spy.ok, true);
+    if (!spy.ok) return;
+    const claimed = await claimJob({ lobbyId, teamKey: OWN, jobId: spy.jobId, now: spy.endsAt });
+    assert.equal(claimed.ok, true);
+    if (!claimed.ok) return;
+    assert.equal(claimed.applied['outcome'], 'caught');
+
+    const motorAfter = (await loadTeamEconomy(lobbyId, TARGET))!.car.motor;
+    // Floating-point addition (RIVAL_GAIN = 0.4 has no exact binary form), not
+    // an exact-equality case — mirrors how this file already tolerates that
+    // elsewhere with a ratio check; here a small epsilon does the same job.
+    assert.ok(Math.abs((motorAfter - motorBefore) - RIVAL_GAIN) < 1e-9, "the target's spied-on stat must gain RIVAL_GAIN");
+  });
+
+  it('13) a rival attempt against a front-runner bumps the rival on success, and a hidden garage blocks it', async () => {
+    const { lobbyId } = await makeLobby();
+    await setup(lobbyId);
+    // Round 10 / season 1 / championship position 1 / rivals=[TARGET] is
+    // pinned offline (brute-forced against `rivalAttempt`, shared/src/
+    // espionage.ts) to attempt-and-succeed against TARGET when OWN is not
+    // hidden, and attempt-and-fail when it is.
+    const ROUND = 10;
+    const SEASON = 1;
+    const seats: Seat[] = [{ teamKey: OWN, userId: null, managed: 'human', nickname: null, countryCode: null }];
+    const positionOf = new Map([[OWN, 1]]);
+
+    const motorBefore = (await loadTeamEconomy(lobbyId, TARGET))!.car.motor;
+    await withTransaction(async (c) => {
+      await runRivalEspionage(c, lobbyId, SEASON, ROUND, seats, positionOf, [OWN, TARGET]);
+    });
+    const afterSuccess = (await loadTeamEconomy(lobbyId, TARGET))!.car;
+    assert.ok(Math.abs((afterSuccess.motor - motorBefore) - RIVAL_GAIN) < 1e-9, 'a successful rival attempt must bump the rival by RIVAL_GAIN');
+    assert.ok(Math.abs((afterSuccess.aero - motorBefore) - RIVAL_GAIN) < 1e-9, 'the bump applies uniformly across the team\'s car stats');
+
+    // Now hide OWN for this same round and repeat: the attempt must still
+    // roll (it is the SAME seed) but must not succeed, so TARGET gains
+    // nothing further.
+    await withTransaction(async (c) => {
+      await bumpGarageHide(c, lobbyId, OWN, ROUND, 1);
+    });
+    const beforeSecond = (await loadTeamEconomy(lobbyId, TARGET))!.car.motor;
+    await withTransaction(async (c) => {
+      await runRivalEspionage(c, lobbyId, SEASON, ROUND, seats, positionOf, [OWN, TARGET]);
+    });
+    const afterSecond = (await loadTeamEconomy(lobbyId, TARGET))!.car.motor;
+    assert.equal(afterSecond, beforeSecond, 'a hidden garage must block a rival attempt against it');
+  });
+
+  it('14) the seed differs across lobbies for the same round/target/agent', async () => {
+    // Pinned offline (brute force over `resolveMission`, same round/target/
+    // agent/season/ownTeam, only `lobbyId` varying): 'lobby-0' resolves to
+    // 'success', 'lobby-2' resolves to 'badIntel' for the identical
+    // (round=1, target='ridgeline', agent='free', season=1, ownTeam=
+    // 'bosphorus', targetStronger=true) inputs — proving the outcome is not
+    // a function of round/target/agent alone.
+    const base = {
+      id: 'x', targetTeam: TARGET, stat: 'motor' as const, agent: 'free' as const,
+      startedRound: ROUND_SUCCESS, startedAt: 0, endsAt: 0, season: 1, ownTeam: OWN,
+    };
+    const missionA: SpyMission = { ...base, lobbyId: 'lobby-0' };
+    const missionB: SpyMission = { ...base, lobbyId: 'lobby-2' };
+
+    assert.notEqual(missionSeed(missionA), missionSeed(missionB), 'different lobbies must roll different seeds');
+    assert.equal(resolveMission(missionA, false, true), 'success');
+    assert.equal(resolveMission(missionB, false, true), 'badIntel');
+  });
+
+  it('15) FREE_AGENT_RP and RIVAL_GAIN have exactly one definition, in shared/', async () => {
+    const roots = [
+      fileURLToPath(new URL('../src/', import.meta.url)),
+      fileURLToPath(new URL('../../mobile/src/', import.meta.url)),
+    ];
+    const offenders: string[] = [];
+    for (const root of roots) {
+      const stack = [root];
+      while (stack.length) {
+        const dir = stack.pop()!;
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(full);
+          } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+            const text = await readFile(full, 'utf8');
+            if (/\bconst\s+FREE_AGENT_RP\s*=/.test(text)) offenders.push(`${full}: FREE_AGENT_RP`);
+            if (/\bconst\s+RIVAL_GAIN\s*=/.test(text)) offenders.push(`${full}: RIVAL_GAIN`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(offenders, [], `found a private redefinition: ${offenders.join(', ')}`);
   });
 });

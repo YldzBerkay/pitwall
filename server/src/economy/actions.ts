@@ -19,13 +19,14 @@
  */
 import { startJob, claimJob, skipJob } from './jobs.ts';
 import { loadTeamEconomy, spendRp, addRp, setFactoryLevel } from './repo.ts';
+import { bumpGarageHide } from './espionageRepo.ts';
 import { spendGold, bumpGoldConverted } from '../gold/repo.ts';
 import { buildSlotState, SlotStateError, type SlotState } from './state.ts';
 import { withTransaction } from '../db/pool.ts';
 import { loadLobby } from '../lobby/lobbyRepo.ts';
 import { isTeamKey } from '../lobby/grid.ts';
 import { departmentCost, factoryDepartments, DEPARTMENT_MAX_LEVEL } from '@pitwall/shared/factory';
-import { GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP } from '@pitwall/shared/economy';
+import { GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPrices, rpPrices } from '@pitwall/shared/economy';
 import { agentProfiles } from '@pitwall/shared/espionage';
 
 export type ActionFailureCode =
@@ -131,9 +132,45 @@ export async function runAction(input: RunActionInput): Promise<RunActionResult>
       const lobby = await loadLobby(lobbyId);
       if (!lobby) return fail('no_economy');
 
-      const payload = { targetTeam, stat, agent, startedRound: lobby.roundNo };
-      const started = await startJob({ lobbyId, teamKey, kind: 'spy', payload, now });
+      // `season` is captured here too, alongside `startedRound`, for the
+      // exact same reason: `resolveMission`'s seed (shared/src/espionage.ts)
+      // now folds it in, and a value read again at claim time could drift
+      // if the season rolled over in between.
+      const payload = { targetTeam, stat, agent, startedRound: lobby.roundNo, season: lobby.seasonNo };
+      const started = await startJob({ lobbyId, teamKey, kind: 'spy', payload, now, userId });
       if (!started.ok) return fail(started.reason);
+      return finish(lobbyId, teamKey, userId, now);
+    }
+
+    case 'hideGarage': {
+      const days = body['days'];
+      if (days !== 1 && days !== 3 && days !== 7) return fail('bad_payload');
+
+      const lobby = await loadLobby(lobbyId);
+      if (!lobby) return fail('no_economy');
+
+      const priceKey = days === 1 ? 'hide1Day' : days === 3 ? 'hide3Days' : 'hide7Days';
+      // Rule from `shared/src/economy.ts`'s own docblock: 1 day is the RP
+      // tier, 3 and 7 are Altın — mirrored here, never re-decided.
+      const useGold = days !== 1;
+
+      const spent = await withTransaction(async (client) => {
+        if (useGold) {
+          if (!userId) return false;
+          const charged = await spendGold(client, userId, goldPrices[priceKey]);
+          if (!charged) return false;
+        } else {
+          const charged = await spendRp(client, lobbyId, teamKey, rpPrices[priceKey]);
+          if (!charged) return false;
+        }
+        // The spend and the write live in ONE transaction, same as every
+        // other paid action here — a charged Gold/RP amount with no hide to
+        // show for it is exactly the "successful spend, nothing in return"
+        // shape this codebase's house rule exists to rule out.
+        await bumpGarageHide(client, lobbyId, teamKey, lobby.roundNo, days);
+        return true;
+      });
+      if (!spent) return fail(useGold ? 'not_enough_gold' : 'not_enough_rp');
       return finish(lobbyId, teamKey, userId, now);
     }
 

@@ -32,6 +32,17 @@ export const agentProfiles: Record<AgentKind, AgentProfile> = {
 };
 
 /**
+ * Bedava ajanın RP fiyatı.
+ *
+ * Profesyonel ajanın Altın karşılığı zaten `goldPrices.premiumAgent`'ta
+ * (economy.ts) — burada, tıpkı orada olduğu gibi, TEK yerde tanımlanır ve her
+ * iki taraf da (mobile, server) buradan okur. Bir dönem sunucunun yükseltme
+ * formüllerini özel olarak yeniden yazıp sessizce ayrıştığı bir denetimden
+ * sonra konan kural bu: `shared/` kuralı İTHAL EDER, yeniden yazmaz.
+ */
+export const FREE_AGENT_RP = 25;
+
+/**
  * İstihbarat gerçek zamanlı çalışır — üçüncü tezgah (spec §5A).
  *
  * Bu grup, araç ve sürücüyü bağlayan 22 saatlik tavanın DIŞINDADIR ve
@@ -71,6 +82,28 @@ export interface SpyMission {
   /** Raporun düşeceği an. */
   endsAt: number;
   outcome?: MissionOutcome;
+  /**
+   * Tohumu ayıran üç alan — HEPSİ İSTEĞE BAĞLI, çünkü istemci (henüz göç
+   * etmedi) bunları hiç doldurmuyor ve derlenmeye devam etmesi gerekiyor.
+   * Sunucu ÜÇÜNÜ DE doldurur (bkz. `jobs.ts` `applySpyEffect`).
+   *
+   * NEDEN GEREKLİLER: eski tohum yalnızca `startedRound` + hedefin adının
+   * UZUNLUĞU + ajan türünden üretiliyordu. Bu üç değer aynı olduğu sürece
+   * (aynı turda, aynı uzunlukta bir hedefe, aynı ajanla) HER lobide, HER
+   * oyuncu için AYNI sonuç çıkıyordu — öğrenilebilir ve paylaşılabilir bir
+   * kural ("3. turda 7 harfli bir takıma bedava ajan gönderme"). Yakalanma
+   * hedefe (belki başka bir İNSAN oyuncuya) araç puanı kazandırdığından
+   * beri bu, iki oyuncunun anlaşarak sonucu önceden bilip puan aktarmasına
+   * yarayan deterministik bir kanala da dönüştü. `lobbyId`/`season`/
+   * `ownTeam` tohuma girince aynı üç değer artık FARKLI lobilerde ve FARKLI
+   * casus takımlar için farklı sonuç üretir — kural hâlâ deterministiktir
+   * (aynı görev ikinci kez çözülürse aynı sonucu verir, test §3), ama artık
+   * ne paylaşılabilir ne de iki taraf arasında önceden hesaplanabilir.
+   */
+  lobbyId?: string;
+  season?: number;
+  /** Görevi başlatan (casusluk yapan) takım — hedefle KARIŞTIRILMAMALI. */
+  ownTeam?: string;
 }
 
 export interface GarageHide {
@@ -78,10 +111,40 @@ export interface GarageHide {
   untilRound: number;
 }
 
+/**
+ * A string -> uint32 hash, purely so a lobby id or team key can feed a
+ * seed alongside the numeric fields `rng` already takes. Not a hash
+ * anyone needs to reverse or keep stable across versions — only stable
+ * WITHIN one run of `resolveMission`, which is all determinism requires.
+ */
+function strHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
+/**
+ * The seed `resolveMission` rolls on. Exported so a test can assert on it
+ * directly instead of hunting for a low-probability outcome difference —
+ * see `SpyMission`'s docblock for why `lobbyId`/`season`/`ownTeam` are in
+ * here at all.
+ */
+export function missionSeed(mission: SpyMission): number {
+  const base = mission.startedRound * 6113
+    + mission.targetTeam.length * 977
+    + (mission.agent === 'premium' ? 31 : 7);
+  const lobbyTerm = strHash(mission.lobbyId ?? '') * 104729;
+  const seasonTerm = (mission.season ?? 0) * 7919;
+  const ownTeamTerm = strHash(mission.ownTeam ?? '') * 15485863;
+  return (base + lobbyTerm + seasonTerm + ownTeamTerm) >>> 0;
+}
+
 /** Decide a mission's fate. Deterministic for the same mission. */
 export function resolveMission(mission: SpyMission, targetHidden: boolean, targetStronger: boolean): MissionOutcome {
   if (targetHidden) return 'blocked';
-  const random = rng(mission.startedRound * 6113 + mission.targetTeam.length * 977 + (mission.agent === 'premium' ? 31 : 7));
+  const random = rng(missionSeed(mission));
   const p = agentProfiles[mission.agent];
   const roll = random();
   if (roll < p.caught) return 'caught';

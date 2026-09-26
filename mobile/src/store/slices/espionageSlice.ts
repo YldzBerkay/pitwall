@@ -3,6 +3,7 @@ import {
   BAD_INTEL_FACTOR,
   CAUGHT_FINE_MIN,
   CAUGHT_FINE_SHARE,
+  FREE_AGENT_RP,
   RIVAL_GAIN,
   SPY_BOOST,
   SPY_COOLDOWN_MS,
@@ -50,8 +51,6 @@ export interface EspionageSlice {
   /** Take (and clear) the boost waiting on a stat. */
   takeBoost: (stat: StatKey) => number;
 }
-
-const FREE_AGENT_RP = 25;
 
 export const createEspionageSlice: SliceCreator<EspionageSlice> = (set, get) => ({
   missions: [],

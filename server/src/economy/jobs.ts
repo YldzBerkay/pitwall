@@ -25,13 +25,14 @@
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from '../db/pool.ts';
 import { loadTeamEconomy, spendRp, chargeRpFloor, bumpCarStat, bumpUpgradesDone, setPendingSpyBoost, takePendingSpyBoost, type CarStats } from './repo.ts';
+import { isGarageHidden } from './espionageRepo.ts';
 import { spendGold } from '../gold/repo.ts';
-import { skipCostGold } from '@pitwall/shared/economy';
+import { skipCostGold, goldPrices } from '@pitwall/shared/economy';
 import { factoryEffects } from '@pitwall/shared/factory';
 import { upgradeCostFor, upgradeDurationMs as sharedUpgradeDurationMs, UPGRADE_GAIN } from '@pitwall/shared/carCustomisation';
 import {
   resolveMission, SPY_RESOLVE_MS, SPY_COOLDOWN_MS, SPY_BOOST, BAD_INTEL_FACTOR,
-  CAUGHT_FINE_SHARE, CAUGHT_FINE_MIN, agentProfiles,
+  CAUGHT_FINE_SHARE, CAUGHT_FINE_MIN, FREE_AGENT_RP, RIVAL_GAIN, agentProfiles,
   type AgentKind, type SpyMission,
 } from '@pitwall/shared/espionage';
 
@@ -91,11 +92,17 @@ export interface StartJobInput {
   kind: JobKind;
   payload: Record<string, unknown>;
   now: Date;
+  /**
+   * The account issuing the command — needed ONLY when a premium spy agent
+   * (gold, per-user) might be charged. Every other job kind ignores it, the
+   * same way `skipJob`'s optional `userId` does for its own gold path.
+   */
+  userId?: string;
 }
 
 export type StartJobResult =
-  | { ok: true; jobId: string; endsAt: Date; rpCost: number }
-  | { ok: false; reason: 'already_running' | 'not_enough_rp' | 'no_economy' | 'bad_payload' | 'cooldown' };
+  | { ok: true; jobId: string; endsAt: Date; rpCost: number; goldCost: number }
+  | { ok: false; reason: 'already_running' | 'not_enough_rp' | 'not_enough_gold' | 'no_economy' | 'bad_payload' | 'cooldown' | 'no_user' };
 
 /**
  * Starts a job. The RP charge (for upgrades) and the insert live in ONE
@@ -105,7 +112,7 @@ export type StartJobResult =
  * charged for a start that did not happen.
  */
 export async function startJob(input: StartJobInput): Promise<StartJobResult> {
-  const { lobbyId, teamKey, kind, payload, now } = input;
+  const { lobbyId, teamKey, kind, payload, now, userId } = input;
   assertKnownKind(kind);
 
   const economy = await loadTeamEconomy(lobbyId, teamKey);
@@ -132,6 +139,7 @@ export async function startJob(input: StartJobInput): Promise<StartJobResult> {
   const effects = factoryEffects(economy.factoryLevels);
 
   let rpCost = 0;
+  let goldCost = 0;
   let durationMs = JOB_DURATIONS_MS[kind];
   let storedPayload: Record<string, unknown> = payload;
 
@@ -146,11 +154,37 @@ export async function startJob(input: StartJobInput): Promise<StartJobResult> {
     storedPayload = { stat };
   }
 
+  if (kind === 'spy') {
+    // A free agent costs RP, a premium agent costs gold — restated from
+    // nowhere: `FREE_AGENT_RP` and `goldPrices.premiumAgent` are `shared/`'s
+    // own numbers (see espionage.ts / economy.ts), never re-typed here.
+    // Before this, the server started a mission for free; the client's own
+    // local charge hid the gap until the client stopped being the one
+    // deciding what happened, at which point espionage became free.
+    const agent = payload?.['agent'];
+    if (agent !== 'free' && agent !== 'premium') {
+      return { ok: false, reason: 'bad_payload' };
+    }
+    if (agent === 'premium') {
+      goldCost = goldPrices.premiumAgent;
+    } else {
+      rpCost = FREE_AGENT_RP;
+    }
+  }
+
   const endsAt = new Date(now.getTime() + durationMs);
 
   try {
     return await withTransaction(async (client) => {
-      if (rpCost > 0) {
+      // The spend and the insert live in ONE transaction: a lost
+      // `pending_jobs_open_idx` race below rolls the spend back with it (the
+      // `catch` re-throws anything but that conflict, so `withTransaction`
+      // never has a reason to swallow a real error here).
+      if (goldCost > 0) {
+        if (!userId) return { ok: false as const, reason: 'no_user' as const };
+        const spent = await spendGold(client, userId, goldCost);
+        if (!spent) return { ok: false as const, reason: 'not_enough_gold' as const };
+      } else if (rpCost > 0) {
         const spent = await spendRp(client, lobbyId, teamKey, rpCost);
         if (!spent) return { ok: false as const, reason: 'not_enough_rp' as const };
       }
@@ -161,7 +195,7 @@ export async function startJob(input: StartJobInput): Promise<StartJobResult> {
          returning id`,
         [lobbyId, teamKey, kind, JSON.stringify(storedPayload), now, endsAt],
       );
-      return { ok: true as const, jobId: res.rows[0].id, endsAt, rpCost };
+      return { ok: true as const, jobId: res.rows[0].id, endsAt, rpCost, goldCost };
     });
   } catch (err) {
     if (isOpenJobConflict(err)) {
@@ -302,47 +336,52 @@ async function applyJobEffect(
  * Resolves a claimed spy mission and applies its effect.
  *
  * The outcome is rolled HERE, from values the server itself holds — the
- * mission's own stored `startedRound`/`targetTeam`/`agent` and the two
- * teams' actual `car` stats read fresh from the database — never from
+ * mission's own stored `startedRound`/`season`/`targetTeam`/`agent`, the
+ * spying team's own key, the TARGET's current garage-hide state, and the two
+ * teams' actual `car` stats, all read fresh from the database — never from
  * anything in the client's request. `shared/src/espionage.ts`'s
  * `resolveMission` is the one place that decides the roll; this function
  * only feeds it and applies what it returns.
  *
- * `targetHidden` is always `false`: the garage-hide side of espionage has no
- * server-side storage yet (no migration, no route) — porting it is a
- * separate task. Until then no target can be "hidden" from the server's
- * point of view, which only means missions never come back `blocked`; it
- * does not change success/badIntel/caught/nothing.
+ * `targetHidden` is read at CLAIM time (the current round, from `lobbies`),
+ * not from anything captured at start — the same "current data, not stale
+ * data" rule the two teams' car stats already followed here. A garage
+ * un-hidden between start and claim must not retroactively un-block a
+ * mission that would have hit a live hide; the target's CURRENT state is
+ * what the intel would actually have found.
  */
 async function applySpyEffect(
   client: PoolClient, lobbyId: string, teamKey: string, job: PendingJobRow,
 ): Promise<Record<string, unknown>> {
-  const { targetTeam, stat, agent, startedRound } = job.payload as {
-    targetTeam?: unknown; stat?: unknown; agent?: unknown; startedRound?: unknown;
+  const { targetTeam, stat, agent, startedRound, season } = job.payload as {
+    targetTeam?: unknown; stat?: unknown; agent?: unknown; startedRound?: unknown; season?: unknown;
   };
   if (
     typeof targetTeam !== 'string' || typeof stat !== 'string'
     || typeof agent !== 'string' || !(agent in agentProfiles)
-    || typeof startedRound !== 'number'
+    || typeof startedRound !== 'number' || typeof season !== 'number'
   ) {
     // Stored at start time by `actions.ts`'s `startSpyMission`, which
-    // validates all four fields before ever calling `startJob`. Reaching
-    // claim with one missing/malformed means stored data drifted from the
-    // code — fail loudly, the same way the upgrade branch above does for an
-    // unknown stat.
+    // validates every field before ever calling `startJob`. Reaching claim
+    // with one missing/malformed means stored data drifted from the code —
+    // fail loudly, the same way the upgrade branch above does for an unknown
+    // stat.
     throw new JobError(`claimJob: stored spy payload is malformed ${JSON.stringify(job.payload)}`);
   }
 
-  const [ownEconomy, targetEconomy] = await Promise.all([
+  const [ownEconomy, targetEconomy, lobbyRow] = await Promise.all([
     loadTeamEconomy(lobbyId, teamKey, client),
     loadTeamEconomy(lobbyId, targetTeam, client),
+    client.query<{ round_no: number }>('select round_no from lobbies where id = $1', [lobbyId]),
   ]);
   if (!ownEconomy || !targetEconomy) {
     throw new JobError(`claimJob: spy mission references a team with no economy row (own=${teamKey}, target=${targetTeam})`);
   }
+  const currentRound = lobbyRow.rows[0]?.round_no ?? startedRound;
 
   const statField = stat as keyof CarStats;
   const targetStronger = (targetEconomy.car[statField] ?? 0) > (ownEconomy.car[statField] ?? 0);
+  const targetHidden = await isGarageHidden(lobbyId, targetTeam, currentRound, client);
 
   const mission: SpyMission = {
     id: job.id,
@@ -352,8 +391,11 @@ async function applySpyEffect(
     startedRound,
     startedAt: job.started_at.getTime(),
     endsAt: job.ends_at.getTime(),
+    lobbyId,
+    season,
+    ownTeam: teamKey,
   };
-  const outcome = resolveMission(mission, false, targetStronger);
+  const outcome = resolveMission(mission, targetHidden, targetStronger);
 
   if (outcome === 'success') {
     await setPendingSpyBoost(client, lobbyId, teamKey, stat, SPY_BOOST);
@@ -368,6 +410,13 @@ async function applySpyEffect(
     // `chargeRpFloor` floors at zero AND returns what it actually deducted —
     // that returned value, never `nominalFine`, is what gets reported back.
     const fine = await chargeRpFloor(client, lobbyId, teamKey, nominalFine);
+    // The target wins the affair, the way the 2007 spygate fine also handed
+    // the wronged team an edge: it gets a real bump on the very stat that
+    // was being spied on (the intel it had to defend became a lead of its
+    // own). `RIVAL_GAIN` is the SAME constant the client already used for
+    // this (`aiBonus[target] += RIVAL_GAIN`); the server has no `aiBonus`,
+    // so this lands on the target's actual `car` row instead.
+    await bumpCarStat(client, lobbyId, targetTeam, statField, RIVAL_GAIN);
     return { outcome, targetTeam, stat, fine };
   }
   // 'nothing' / 'blocked': no further effect.

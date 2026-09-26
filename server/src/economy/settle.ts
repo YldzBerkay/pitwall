@@ -45,12 +45,63 @@ import { racePrize, settleRace as settleSponsorships } from '@pitwall/shared/spo
 import { briefFor, briefCompliance, BRIEF_RP_EACH, type WeekendChoices } from '@pitwall/shared/brief';
 import { trackForRound } from '@pitwall/shared/tracks';
 import type { TeamStanding } from '@pitwall/shared/teams';
+import { rivalAttempt, RIVAL_GAIN } from '@pitwall/shared/espionage';
 import { withTransaction } from '../db/pool.ts';
 import { loadDecisions, loadRun, markSettled } from '../lobby/raceRepo.ts';
+import { loadSeats, type Seat } from '../lobby/lobbyRepo.ts';
 import { replayRace } from '../lobby/replay.ts';
-import { addRp, loadLobbyEconomy } from './repo.ts';
+import { addRp, bumpCarStat, loadLobbyEconomy, type CarStats } from './repo.ts';
+import { isGarageHidden } from './espionageRepo.ts';
 import { deleteDeal, loadTeamSponsorships, setStreak } from './sponsorshipRepo.ts';
 import { insertSettlementPayout } from './settlementRepo.ts';
+
+const CAR_STAT_FIELDS: (keyof CarStats)[] = ['motor', 'aero', 'grip'];
+
+/**
+ * Rival espionage against human seats — ambient intelligence, not a player's
+ * job. It has no start, no claim, no client request behind it at all: it is
+ * something the grid does to a human seat whether or not anyone is looking,
+ * which is exactly what settlement already is for every OTHER ambient
+ * outcome here (prize money, sponsor income). So it runs HERE, once per
+ * settled race, per human seat — never on a timer, never at claim, and never
+ * against an AI-run seat (nothing reads an AI seat's spy news, and only a
+ * human's championship POSITION is meaningful bait per
+ * `shared/src/espionage.ts`'s own front-of-the-table rule).
+ *
+ * Exported and given its own client/data parameters (rather than folded
+ * inline into `writePayouts`) so a test can drive it directly with a small
+ * fixture — the roll is seeded on `(round, season)`, not on the stochastic
+ * race result, so nothing about it actually needs a real replayed race to
+ * exercise.
+ */
+export async function runRivalEspionage(
+  client: PoolClient,
+  lobbyId: string,
+  seasonNo: number,
+  roundNo: number,
+  seats: Seat[],
+  positionOf: Map<string, number>,
+  rivalPool: string[],
+): Promise<void> {
+  for (const seat of seats) {
+    if (seat.managed !== 'human') continue;
+    const position = positionOf.get(seat.teamKey) ?? Number.POSITIVE_INFINITY;
+    const hidden = await isGarageHidden(lobbyId, seat.teamKey, roundNo, client);
+    const rivals = rivalPool.filter((k) => k !== seat.teamKey);
+    const attempt = rivalAttempt(roundNo, seasonNo, position, hidden, rivals);
+    if (!attempt?.success) continue;
+    // No single stat is "the" one a rival's ambient snoop improves — unlike
+    // a player's OWN mission (which always names one) this has none to name.
+    // The client's equivalent (`aiBonus`) was a single flat number added to
+    // the WHOLE team's strength; a team's three `car` fields are seeded
+    // equal (`repo.ts`'s `startingCar`) and meant to move together at this
+    // level, so applying the full `RIVAL_GAIN` to each keeps that same
+    // one-number-per-team shape rather than arbitrarily picking a field.
+    for (const field of CAR_STAT_FIELDS) {
+      await bumpCarStat(client, lobbyId, attempt.team, field, RIVAL_GAIN);
+    }
+  }
+}
 
 export interface SettleRaceInput {
   lobbyId: string;
@@ -178,6 +229,7 @@ export async function settleRace(
   const positionOf = new Map(standings.map((s) => [s.teamKey, s.position]));
 
   const economies = await loadLobbyEconomy(lobbyId);
+  const seats = await loadSeats(lobbyId);
 
   // Brifing, tarifin DONDURULMUŞ katılımından okunur — asla yeniden
   // hesaplanmaz, asla oyuncudan istenmez. Pist ve hava tarifin kendisinden
@@ -308,6 +360,11 @@ export async function settleRace(
         expiredSlots,
       });
     }
+
+    // Once per settled race, per human seat — see `runRivalEspionage`'s own
+    // docblock for why this lives at settlement rather than on a timer or a
+    // claim.
+    await runRivalEspionage(c, lobbyId, seasonNo, roundNo, seats, positionOf, economies.map((e) => e.teamKey));
 
     return { standings, payouts };
   };

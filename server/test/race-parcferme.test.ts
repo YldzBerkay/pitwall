@@ -167,8 +167,12 @@ describe('parc fermé', () => {
   it('5) casusluk raporu araca dokunmaz, ceza vermez', async () => {
     await seed(lobbyId);
     const before = (await loadTeamEconomy(lobbyId, TEAM))!.car;
+    // `agent: 'free'` is the minimum a spy job's payload needs since
+    // `startJob` now charges its RP cost at start time (Faz 3b-1 closing
+    // task) — this test itself is about parc fermé, not espionage, so the
+    // rest of the payload stays as loose as it always was.
     const started = await startJob({
-      lobbyId, teamKey: TEAM, kind: 'spy', payload: { target: 'aurelia' }, now: STARTED,
+      lobbyId, teamKey: TEAM, kind: 'spy', payload: { target: 'aurelia', agent: 'free' }, now: STARTED,
     });
     assert.equal(started.ok, true);
 
