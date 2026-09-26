@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { runMigrations } from '../src/db/migrate.ts';
 import { query, closePool, withTransaction } from '../src/db/pool.ts';
 import { createUserWithIdentity } from '../src/auth/userRepo.ts';
-import { seedTeamEconomy, loadTeamEconomy } from '../src/economy/repo.ts';
-import { startJob } from '../src/economy/jobs.ts';
+import { seedTeamEconomy, loadTeamEconomy, setPendingSpyBoost } from '../src/economy/repo.ts';
+import { startJob, claimJob } from '../src/economy/jobs.ts';
 import { bumpAdsWatched, bumpGoldConverted, grantGold } from '../src/gold/repo.ts';
 import { buildSlotState, SlotStateError } from '../src/economy/state.ts';
 import { ADS_PER_DAY, GOLD_TO_RP_DAILY_CAP } from '@pitwall/shared/economy';
+import { SPY_BOOST, BAD_INTEL_FACTOR } from '@pitwall/shared/espionage';
 
 let seq = 0;
 
@@ -141,6 +142,38 @@ describe('slot state', () => {
     for (const forbidden of ['password', 'token', 'secret']) {
       assert.ok(!lowerKeys.includes(forbidden), `serialised state must not contain a "${forbidden}" key`);
     }
+  });
+
+  it('carries a pending spy boost after a successful mission', async () => {
+    const { lobbyId, userId } = await makeLobbyWithTeam();
+    await withTransaction((c) => setPendingSpyBoost(c, lobbyId, 'bosphorus', 'motor', SPY_BOOST));
+
+    const state = await buildSlotState({ lobbyId, teamKey: 'bosphorus', userId, now: new Date() });
+    assert.equal(state.spyBoosts['motor'], SPY_BOOST);
+  });
+
+  it('no longer carries the multiplier once the upgrade that consumed it has been claimed', async () => {
+    const { lobbyId, userId } = await makeLobbyWithTeam();
+    await withTransaction((c) => setPendingSpyBoost(c, lobbyId, 'bosphorus', 'motor', SPY_BOOST));
+
+    const now = new Date('2026-03-01T00:00:00Z');
+    const upgrade = await startJob({ lobbyId, teamKey: 'bosphorus', kind: 'upgrade', payload: { stat: 'motor' }, now });
+    assert.equal(upgrade.ok, true);
+    if (!upgrade.ok) return;
+    const claimed = await claimJob({ lobbyId, teamKey: 'bosphorus', jobId: upgrade.jobId, now: upgrade.endsAt });
+    assert.equal(claimed.ok, true);
+
+    const state = await buildSlotState({ lobbyId, teamKey: 'bosphorus', userId, now: upgrade.endsAt });
+    assert.equal(state.spyBoosts['motor'], undefined, 'the boost must disappear once the upgrade that used it was claimed');
+  });
+
+  it('reading SlotState mutates nothing — a pending boost survives repeated reads', async () => {
+    const { lobbyId, userId } = await makeLobbyWithTeam();
+    await withTransaction((c) => setPendingSpyBoost(c, lobbyId, 'bosphorus', 'aero', BAD_INTEL_FACTOR));
+
+    await buildSlotState({ lobbyId, teamKey: 'bosphorus', userId, now: new Date() });
+    const again = await buildSlotState({ lobbyId, teamKey: 'bosphorus', userId, now: new Date() });
+    assert.equal(again.spyBoosts['aero'], BAD_INTEL_FACTOR, 'a mere read must not consume the pending boost');
   });
 
   it('a slot with no economy row is a handleable error, not a half-built object', async () => {

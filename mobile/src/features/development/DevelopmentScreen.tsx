@@ -77,6 +77,11 @@ export function DevelopmentScreen() {
 
   const statValue = (label: string): number =>
     display.kind === 'ready' ? display.carStats.find((s) => s.label === label)?.value ?? 50 : 50;
+  // The server's own pending espionage multiplier for this stat's NEXT
+  // upgrade (`factoryDisplay.ts`'s `FactoryCarStat.pendingBoost`) — never
+  // recomputed here. `undefined` means nothing pending.
+  const statPendingBoost = (label: string): number | undefined =>
+    display.kind === 'ready' ? display.carStats.find((s) => s.label === label)?.pendingBoost : undefined;
   const motor = statValue('MOTOR');
   const aero = statValue('AERO');
   const grip = statValue('GRIP');
@@ -249,6 +254,7 @@ export function DevelopmentScreen() {
                     key={s.label}
                     label={s.label}
                     value={s.value}
+                    pendingBoost={statPendingBoost(s.label)}
                     building={currentUpgrade?.label === s.label}
                     busy={!!currentUpgrade && currentUpgrade.label !== s.label}
                     remainingMs={currentUpgrade?.label === s.label ? currentUpgrade.remainingMs : 0}
@@ -298,6 +304,13 @@ export function DevelopmentScreen() {
 interface StatRowProps {
   label: string;
   value: number;
+  /**
+   * The server's own pending espionage multiplier for this stat's NEXT
+   * upgrade — `undefined` when nothing is pending. Above 1 is a bonus
+   * (spy success); below 1 is a warning, not a bonus (bad intel) — the two
+   * must render distinctly.
+   */
+  pendingBoost?: number;
   /** This stat is on the bench right now. */
   building: boolean;
   /** Another stat is on the bench — the factory is taken. */
@@ -316,6 +329,7 @@ interface StatRowProps {
 function StatRow({
   label,
   value,
+  pendingBoost,
   building,
   busy,
   remainingMs,
@@ -327,6 +341,8 @@ function StatRow({
   onSkip,
 }: StatRowProps) {
   const tier = tierOf(value);
+  const isBoosted = pendingBoost !== undefined && pendingBoost > 1;
+  const isHalved = pendingBoost !== undefined && pendingBoost < 1;
   // Distance to the next part unlock, so the player can see what they're buying.
   const nextGate = tier === 1 ? 60 : tier === 2 ? 70 : null;
   const nextUnlock = nextGate ? tierUnlocks[label]?.[(tier + 1) as 2 | 3] : null;
@@ -341,6 +357,24 @@ function StatRow({
           <AppText variant="labelSmall" color={colors.textTertiary}>
             Kademe {tier === 3 ? 'A' : tier === 2 ? 'B' : 'C'}
           </AppText>
+          {(isBoosted || isHalved) && (
+            <View
+              className="rounded-sm px-1.5 py-0.5"
+              style={{
+                borderWidth: 1,
+                borderColor: isBoosted ? 'rgba(154,230,120,0.5)' : 'rgba(255,140,64,0.5)',
+                backgroundColor: isBoosted ? 'rgba(154,230,120,0.12)' : 'rgba(255,140,64,0.12)',
+              }}
+            >
+              <AppText
+                variant="labelSmall"
+                color={isBoosted ? colors.accentLime : colors.solarAmber}
+                style={{ fontSize: 10 }}
+              >
+                {isBoosted ? `Casusluk x${pendingBoost} — sıradaki yükseltme güçlü` : `Kötü istihbarat x${pendingBoost} — sıradaki yükseltme zayıf`}
+              </AppText>
+            </View>
+          )}
         </View>
         <AppText variant="statSmall" color={colors.textPrimary}>
           {value}

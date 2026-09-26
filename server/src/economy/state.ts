@@ -102,6 +102,21 @@ export interface SlotState {
    * `Date.now()` on either side.
    */
   spyCooldownUntil?: string;
+  /**
+   * Pending espionage multipliers awaiting the NEXT upgrade of that stat —
+   * `lobby_economy.spy_state` (`repo.ts`'s `setPendingSpyBoost`/
+   * `takePendingSpyBoost`) surfaced verbatim, e.g. `{ motor: 1.5 }` after a
+   * successful mission or `{ aero: 0.5 }` after bad intel. A stat with no
+   * key here has nothing pending — never a fabricated `1`. This is what
+   * lets the Development screen show the player their next MOTOR upgrade is
+   * boosted, or their next AERO upgrade is halved, BEFORE they spend RP on
+   * it; `jobs.ts`'s `applyJobEffect` consumes the entry the instant that
+   * stat's upgrade is claimed (`takePendingSpyBoost` reads and deletes it in
+   * the same statement), so the very next snapshot built after that claim
+   * no longer carries it — this field is read fresh on every call, never
+   * cached, so it can never show a boost that has already been spent.
+   */
+  spyBoosts: Record<string, number>;
 }
 
 export interface BuildSlotStateInput {
@@ -190,5 +205,6 @@ export async function buildSlotState(input: BuildSlotStateInput): Promise<SlotSt
     },
     hide: garageHide ? { hidden: garageHide.untilRound >= (lobby?.roundNo ?? 0), untilRound: garageHide.untilRound } : null,
     spyCooldownUntil: spyCooldownUntil?.toISOString(),
+    spyBoosts: economy.spyState as Record<string, number>,
   };
 }

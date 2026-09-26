@@ -112,6 +112,18 @@ export interface SlotState {
   spyCooldownUntil?: string;
   /** Present ONLY on a `claimSpyReport` response — see `SpyClaimResult`. */
   spyResult?: SpyClaimResult;
+  /**
+   * Mirrors `server/src/economy/state.ts`'s own `spyBoosts` — pending
+   * espionage multipliers (server's lowercase stat key -> multiplier)
+   * awaiting that stat's NEXT upgrade claim, e.g. `{ motor: 1.5 }` after a
+   * successful mission or `{ aero: 0.5 }` after bad intel. A stat absent
+   * here has nothing pending. Optional (rather than always-present) so an
+   * older cached response or a hand-built test fixture that predates this
+   * field still type-checks; `factoryDisplay.ts` treats a missing key and a
+   * missing object the same way — nothing to flag. This is the server's own
+   * figure, never recomputed on the device.
+   */
+  spyBoosts?: Record<string, number>;
 }
 
 /**

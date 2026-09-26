@@ -58,6 +58,25 @@ import { jobRemainingMs, defaultClock, type Clock, type ServerTimeAnchor } from 
 export const STAT_LABEL_TO_SERVER: Record<string, string> = { MOTOR: 'motor', AERO: 'aero', GRIP: 'grip' };
 export const SERVER_STAT_TO_LABEL: Record<string, string> = { motor: 'MOTOR', aero: 'AERO', grip: 'GRIP' };
 
+export interface FactoryCarStat {
+  label: string;
+  value: number;
+  /**
+   * The server's own pending espionage multiplier for this stat's NEXT
+   * upgrade (`SlotState.spyBoosts`, keyed by the server's lowercase stat
+   * label and translated back here) — `undefined` when nothing is
+   * pending, never a fabricated `1`. A value above 1 is a bonus (a
+   * successful mission's `SPY_BOOST`); a value below 1 is a warning, not a
+   * bonus (bad intel's `BAD_INTEL_FACTOR`) — the screen must render the two
+   * distinctly, never with the same "good news" styling. The number itself
+   * is never recomputed here — it is the server's figure, verbatim, and it
+   * disappears from a later snapshot the instant the upgrade that consumes
+   * it (`server/src/economy/jobs.ts`'s `applyJobEffect` ->
+   * `takePendingSpyBoost`) is claimed.
+   */
+  pendingBoost?: number;
+}
+
 export interface FactoryUpgradeJob {
   jobId: string;
   /** Translated back to the UI's uppercase label (`MOTOR`/`AERO`/`GRIP`). */
@@ -82,13 +101,25 @@ export type FactoryDisplay =
       kind: 'ready';
       rp: number;
       gold: number;
-      carStats: { label: string; value: number }[];
+      carStats: FactoryCarStat[];
       /** Department code -> level, straight from `SlotState.factory`. */
       factoryLevels: Record<string, number>;
       /** The one upgrade job the factory bench can hold, if any — undefined
        * means the bench is free to start a new one. */
       currentUpgrade?: FactoryUpgradeJob;
     };
+
+/**
+ * Builds one `FactoryCarStat`, omitting `pendingBoost` entirely (rather than
+ * setting it to `undefined`) when nothing is pending — this keeps a
+ * fixture built before this field existed (`assert.deepEqual` against a
+ * plain `{ label, value }` object) equal to what this function returns, and
+ * matches the rest of `SlotState`'s own "absent key means nothing", not a
+ * fabricated placeholder.
+ */
+function carStat(label: string, value: number, pendingBoost: number | undefined): FactoryCarStat {
+  return pendingBoost === undefined ? { label, value } : { label, value, pendingBoost };
+}
 
 function toFactoryUpgradeJob(job: SlotStateJob, anchor: ServerTimeAnchor, clock: Clock): FactoryUpgradeJob {
   const stat = String(job.payload['stat'] ?? '');
@@ -126,9 +157,9 @@ export function displayFactory(
     rp: slot.rp,
     gold: slot.gold,
     carStats: [
-      { label: 'MOTOR', value: slot.car.motor },
-      { label: 'AERO', value: slot.car.aero },
-      { label: 'GRIP', value: slot.car.grip },
+      carStat('MOTOR', slot.car.motor, slot.spyBoosts?.['motor']),
+      carStat('AERO', slot.car.aero, slot.spyBoosts?.['aero']),
+      carStat('GRIP', slot.car.grip, slot.spyBoosts?.['grip']),
     ],
     factoryLevels: slot.factory,
     currentUpgrade,

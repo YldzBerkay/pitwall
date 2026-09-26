@@ -163,6 +163,46 @@ test('distinct server errors stay distinct (afford vs. daily cap)', async () => 
   );
 });
 
+test('a boosted stat and a halved stat are reported distinctly, from the server\'s own figure', async () => {
+  // motor is boosted (spy success, SPY_BOOST=1.5), aero is halved (bad
+  // intel, BAD_INTEL_FACTOR=0.5) — the server's own SlotState.spyBoosts,
+  // never a client-side recomputation.
+  const slotState = makeSlotState({ spyBoosts: { motor: 1.5, aero: 0.5 } });
+  const getEconomyStateApi = async (): Promise<ApiResult<SlotState>> => ({ ok: true, data: slotState });
+  const store = buildStore({ getEconomyStateApi });
+  await store.getState().economyApi.hydrate(LOBBY_ID);
+
+  const display = displayFactory(LOBBY_ID, store.getState().economyApi);
+  assert.equal(display.kind, 'ready');
+  if (display.kind !== 'ready') throw new Error('unreachable');
+
+  const motor = display.carStats.find((s) => s.label === 'MOTOR');
+  const aero = display.carStats.find((s) => s.label === 'AERO');
+  const grip = display.carStats.find((s) => s.label === 'GRIP');
+
+  assert.equal(motor?.pendingBoost, 1.5, 'motor carries the server\'s own boost figure');
+  assert.equal(aero?.pendingBoost, 0.5, 'aero carries the server\'s own halved figure');
+  assert.equal(grip?.pendingBoost, undefined, 'grip has nothing pending');
+
+  assert.ok((motor?.pendingBoost ?? 0) > 1, 'a boosted stat must read as a bonus, not a warning');
+  assert.ok((aero?.pendingBoost ?? 0) < 1, 'a halved stat must read as a warning, not a bonus — distinguishable at a glance');
+});
+
+test('with no pending multiplier, nothing is flagged', async () => {
+  const slotState = makeSlotState({ spyBoosts: {} });
+  const getEconomyStateApi = async (): Promise<ApiResult<SlotState>> => ({ ok: true, data: slotState });
+  const store = buildStore({ getEconomyStateApi });
+  await store.getState().economyApi.hydrate(LOBBY_ID);
+
+  const display = displayFactory(LOBBY_ID, store.getState().economyApi);
+  assert.equal(display.kind, 'ready');
+  if (display.kind !== 'ready') throw new Error('unreachable');
+
+  for (const s of display.carStats) {
+    assert.equal(s.pendingBoost, undefined, `${s.label} must not be flagged when nothing is pending`);
+  }
+});
+
 test('with no lobby, the selector says "no lobby" — it does not fall back to local economy numbers', async () => {
   // A slot IS present in economyApi (e.g. left over from a previous lobby),
   // proving this is a deliberate branch and not just "slot is null".
