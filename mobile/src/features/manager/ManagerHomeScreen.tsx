@@ -15,6 +15,7 @@ import { explainPace } from '@pitwall/shared/raceEngine';
 import { haptic } from '@/lib/haptics';
 import { useShellLayout } from '@/lib/useShellLayout';
 import { displayFactory } from '@/store/slices/factoryDisplay';
+import { displayEspionage } from '@/store/slices/espionageDisplay';
 import { displayPhase, displayWeekPanel } from '@/store/slices/raceSlice';
 import { weekPanelLabel } from '../raceweek/shared';
 
@@ -68,12 +69,10 @@ export function ManagerHomeScreen() {
   const injuries = useGameStore((s) => s.injuries);
   const training = useGameStore((s) => s.training);
   const staff = useGameStore((s) => s.staff);
-  const missions = useGameStore((s) => s.missions);
-  const nextMissionAt = useGameStore((s) => s.nextMissionAt);
   const setupFn = useGameStore((s) => s.setup);
   const track = trackForRound(round);
   const [carWidth, setCarWidth] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
+  const [, setNow] = useState(() => Date.now());
 
   // Refresh the factory countdown once a second; the clock itself reads the
   // slice's monotonic anchor (`displayFactory`/`economyClock.ts`), never
@@ -89,6 +88,7 @@ export function ManagerHomeScreen() {
   }, [lobbyId]);
 
   const display = displayFactory(lobbyId, economyApi);
+  const spyDisplay = displayEspionage(lobbyId, economyApi);
   const stat = (label: string) => (display.kind === 'ready' ? display.carStats.find((s) => s.label === label)?.value : undefined) ?? 50;
   const spec = describeSpec(stat('MOTOR'), stat('AERO'), stat('GRIP'));
   const currentUpgrade = display.kind === 'ready' ? display.currentUpgrade : undefined;
@@ -117,7 +117,13 @@ export function ManagerHomeScreen() {
   if (!training) todos.push({ icon: 'driver', title: 'Sürücü antrenmanı planlanmadı', detail: '6 saatlik bir antrenman başlat; genç sürücüler hızlı gelişir.', route: '/(tabs)/paddock' });
   const emptySeats = (['mechanic', 'strategist', 'pitCrew'] as const).filter((r) => !staff[r]).length;
   if (emptySeats > 0) todos.push({ icon: 'mechanic', title: `${emptySeats} personel kadrosu boş`, detail: 'Mekanik, stratejist ve pit şefi yarış sonucunu doğrudan etkiler.', route: '/(tabs)/paddock' });
-  if (!missions.some((m) => !m.outcome) && now >= nextMissionAt()) todos.push({ icon: 'spy', title: 'Ajan gönderilebilir', detail: 'Bir rakibin güçlü olduğu alanı hedefle; başarı sonraki yükseltmeni ×1,5 yapar.', route: '/(tabs)/paddock' });
+  // A mission ready to send: not currently on a mission, and not in the
+  // server's 48h cooldown. `spyDisplay` is the same server-backed selector
+  // `PaddockScreen.tsx`'s intel section uses — no local mission state left
+  // to consult here either.
+  if (spyDisplay.kind === 'ready' && !spyDisplay.currentMission && !spyDisplay.cooldownRemainingMs) {
+    todos.push({ icon: 'spy', title: 'Ajan gönderilebilir', detail: 'Bir rakibin güçlü olduğu alanı hedefle; başarı sonraki yükseltmeni ×1,5 yapar.', route: '/(tabs)/paddock' });
+  }
   // The upgrade job itself — cost, duration, whether one is even running —
   // is entirely the server's (`currentUpgrade`, from `displayFactory`); this
   // never previews a cost/duration itself (see `factoryDisplay.ts`'s "WHAT

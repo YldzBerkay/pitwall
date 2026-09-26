@@ -75,6 +75,14 @@ export interface SettlementBreakdown {
    * empty (see `server/src/db/migrations/009_settlement_expired_slots.sql`).
    */
   expired: string[];
+  /**
+   * A rival's espionage attempt against THIS seat this round, or `null` when
+   * none was attempted (the seat wasn't front-of-table, or the roll simply
+   * didn't pick it — `rivalAttempt`, shared/src/espionage.ts). This is the
+   * only place a player can ever learn an ambient rival attempt happened:
+   * there is no start, no claim, nothing else to check.
+   */
+  rivalSpy: { team: string; success: boolean } | null;
 }
 
 /** `settlement` is `null` for a round that has not been paid out yet. */

@@ -62,6 +62,31 @@ export interface SlotStateCaps {
 }
 
 /**
+ * Mirrors `server/src/economy/state.ts`'s own `SlotStateHide` — garage-hide
+ * state exposed as the round it holds through, NEVER a wall-clock time (a
+ * hide's expiry is genuinely round-based; see `010_garage_hide.sql`).
+ * `null` on `SlotState.hide` means "never hidden", not "hidden until round
+ * 0" — the same absence `garage_hides` itself represents.
+ */
+export interface SlotStateHide {
+  hidden: boolean;
+  untilRound: number;
+}
+
+/**
+ * Mirrors `server/src/economy/actions.ts`'s own `SpyClaimResult` — returned
+ * ONLY by `claimSpyReport`, alongside the whole `SlotState`, never instead
+ * of it. `fine` is the amount the server ACTUALLY charged (`chargeRpFloor`'s
+ * own return value), never a client-recomputed nominal figure.
+ */
+export interface SpyClaimResult {
+  outcome: 'success' | 'nothing' | 'badIntel' | 'caught' | 'blocked';
+  targetTeam: string;
+  stat: string;
+  fine?: number;
+}
+
+/**
  * Mirrors `server/src/economy/state.ts`'s own `SlotState` — the WHOLE state
  * of a team's economy slot, returned in full by every action call below.
  * `serverNow` is the server's own clock reading at the moment this snapshot
@@ -80,6 +105,13 @@ export interface SlotState {
   jobs: SlotStateJob[];
   teamValue: number;
   caps: SlotStateCaps;
+  hide: SlotStateHide | null;
+  /** ISO instant, or `undefined` if no spy mission has ever been claimed —
+   * derive the remaining cooldown from this against the slice's own
+   * monotonic anchor (`economyClock.ts`), never `Date.now()`. */
+  spyCooldownUntil?: string;
+  /** Present ONLY on a `claimSpyReport` response — see `SpyClaimResult`. */
+  spyResult?: SpyClaimResult;
 }
 
 /**
@@ -139,6 +171,17 @@ export function skipTraining(baseUrl: string, token: string, input: { lobbyId: s
 
 export function skipSpy(baseUrl: string, token: string, input: { lobbyId: string; jobId: string }): Promise<ApiResult<SlotState>> {
   return post(baseUrl, token, { type: 'skipSpy', lobbyId: input.lobbyId, jobId: input.jobId });
+}
+
+/**
+ * Hides the garage for `days` (1, 3 or 7) — `actions.ts`'s `hideGarage` case.
+ * The real price for each duration (RP for 1 day, gold for 3/7) is decided
+ * and charged entirely server-side (`shared/src/economy.ts`'s
+ * `rpPrices`/`goldPrices`, mirrored nowhere on this client); this function
+ * only names which duration was bought.
+ */
+export function hideGarage(baseUrl: string, token: string, input: { lobbyId: string; days: 1 | 3 | 7 }): Promise<ApiResult<SlotState>> {
+  return post(baseUrl, token, { type: 'hideGarage', lobbyId: input.lobbyId, days: input.days });
 }
 
 /** `code` is a factory department code (`@pitwall/shared/factory`'s `factoryDepartments`). */

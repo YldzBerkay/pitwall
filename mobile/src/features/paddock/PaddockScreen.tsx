@@ -9,7 +9,8 @@ import { useGameStore } from '@/store/gameStore';
 import { Chip } from '@/features/raceweek/shared';
 import { ADS_PER_DAY, goldPacks, goldPrices, rpPrices } from '@pitwall/shared/economy';
 import { hiringFee, staffRoles, type StaffRole } from '@pitwall/shared/staff';
-import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS, agentProfiles, type AgentKind } from '@pitwall/shared/espionage';
+import { SPY_COOLDOWN_MS, SPY_RESOLVE_MS, agentProfiles, outcomeText, type AgentKind } from '@pitwall/shared/espionage';
+import { displayEspionage } from '@/store/slices/espionageDisplay';
 import { formatDuration } from '@pitwall/shared/carCustomisation';
 import {
   contractTerms,
@@ -583,51 +584,126 @@ const STATS: { key: StatKey; label: string }[] = [
   { key: 'grip', label: 'GRIP' },
 ];
 
+/** Server error codes this section can hit, in the player's own words —
+ * never flattened into one generic "something went wrong" (see this
+ * task's brief). */
+const spyErrorText: Record<string, string> = {
+  cooldown: 'Bekleme süresi henüz bitmedi.',
+  not_enough_rp: 'Yeterli RP yok (25 RP).',
+  not_enough_gold: 'Yeterli altın yok.',
+  already_running: 'Zaten sahada bir ajan var.',
+  not_ready: 'Rapor henüz hazır değil.',
+  already_claimed: 'Bu rapor zaten alındı.',
+  not_found: 'Görev bulunamadı.',
+  no_economy: 'Ekonomi verisi bulunamadı.',
+  bad_payload: 'Geçersiz istek.',
+  not_signed_in: 'Oturum yok.',
+};
+
 function IntelSection() {
-  const missions = useGameStore((s) => s.missions);
-  const boosts = useGameStore((s) => s.upgradeBoosts);
-  const news = useGameStore((s) => s.intelNews);
-  const nextMissionAtFn = useGameStore((s) => s.nextMissionAt);
-  const skipMission = useGameStore((s) => s.skipMission);
-  const skipMissionCost = useGameStore((s) => s.skipMissionCost);
-  const startMission = useGameStore((s) => s.startMission);
-  const hideGarage = useGameStore((s) => s.hideGarage);
-  const isHiddenFn = useGameStore((s) => s.isHidden);
-  const hide = useGameStore((s) => s.hide);
-  const gold = useGameStore((s) => s.gold);
+  const lobbyId = useGameStore((s) => s.race.lobbyId);
+  const economyApi = useGameStore((s) => s.economyApi);
+  const gold = economyApi.slot?.gold ?? 0;
   const [target, setTarget] = useState(teams.find((t) => !t.isPlayer)!.key);
   const [stat, setStat] = useState<StatKey>('aero');
   const [agent, setAgent] = useState<AgentKind>('free');
   const [message, setMessage] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
 
-  const pending = missions.find((m) => !m.outcome);
-  const nextMissionAt = nextMissionAtFn();
-  // Geri sayımlar her dakika tazelenir; saniye hassasiyeti gerekmiyor.
-  const [spyNow, setSpyNow] = useState(() => Date.now());
+  // Render pulse only — the actual countdown comes from `displayEspionage`,
+  // which derives it from the slice's monotonic anchor, never this tick.
+  const [, setTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setSpyNow(Date.now()), 60_000);
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
-  const hidden = isHiddenFn();
+
+  useEffect(() => {
+    if (lobbyId) void useGameStore.getState().economyApi.hydrate(lobbyId);
+  }, [lobbyId]);
+
+  const display = displayEspionage(lobbyId, economyApi);
   const profile = agentProfiles[agent];
 
-  const onStart = () => {
-    const r = startMission(target, stat, agent);
-    const text: Record<string, string> = {
-      ok: 'Ajan yola çıktı. Rapor bir gün sonra.',
-      cooldown: `Bekleme süresi: ${formatDuration(nextMissionAt - Date.now())} kaldı.`,
-      noGold: 'Yeterli altın yok.',
-      noRp: 'Yeterli RP yok (25 RP).',
-      pending: 'Zaten sahada bir ajan var.',
-    };
-    setMessage(text[r]);
-    if (r === 'ok') {
+  const onStart = async () => {
+    if (!lobbyId || busy) return;
+    setBusy(true);
+    const r = await useGameStore.getState().economyApi.startSpyMission(lobbyId, { targetTeam: target, stat, agent });
+    setBusy(false);
+    if (r.ok) {
+      setMessage('Ajan yola çıktı. Rapor hazır olunca alabilirsin.');
       haptic.medium();
       sfx.play('spark');
     } else {
+      setMessage(spyErrorText[r.error] ?? r.error);
       haptic.error();
     }
   };
+
+  const onClaim = async (jobId: string) => {
+    if (!lobbyId || busy) return;
+    setBusy(true);
+    const r = await useGameStore.getState().economyApi.claimSpyReport(lobbyId, jobId);
+    setBusy(false);
+    if (r.ok) {
+      const spy = r.state.spyResult;
+      setMessage(
+        spy
+          ? spy.outcome === 'caught' && spy.fine !== undefined
+            ? `${outcomeText[spy.outcome]} (${spy.fine} RP)`
+            : outcomeText[spy.outcome]
+          : 'Rapor alındı.',
+      );
+      haptic.success();
+      sfx.play('partFitted');
+    } else {
+      setMessage(spyErrorText[r.error] ?? r.error);
+      haptic.error();
+    }
+  };
+
+  const onSkip = async (jobId: string) => {
+    if (!lobbyId || busy) return;
+    setBusy(true);
+    const r = await useGameStore.getState().economyApi.skipSpy(lobbyId, jobId);
+    setBusy(false);
+    if (r.ok) {
+      haptic.success();
+    } else {
+      setMessage(spyErrorText[r.error] ?? r.error);
+      haptic.error();
+    }
+  };
+
+  const onHide = async (days: 1 | 3 | 7) => {
+    if (!lobbyId || busy) return;
+    setBusy(true);
+    const r = await useGameStore.getState().economyApi.hideGarage(lobbyId, days);
+    setBusy(false);
+    if (r.ok) {
+      haptic.success();
+    } else {
+      setMessage(spyErrorText[r.error] ?? r.error);
+      haptic.error();
+    }
+  };
+
+  if (display.kind === 'no-lobby') {
+    return (
+      <GlassCard contentStyle={{ gap: spacing.xs }}>
+        <AppText variant="cardTitle" color={colors.textPrimary}>
+          Casusluk
+        </AppText>
+        <AppText variant="labelSmall" color={colors.textTertiary}>
+          Bir lige katılmadan casusluk yapılamaz.
+        </AppText>
+      </GlassCard>
+    );
+  }
+
+  const currentMission = display.kind === 'ready' ? display.currentMission : undefined;
+  const cooldownRemainingMs = display.kind === 'ready' ? display.cooldownRemainingMs : undefined;
+  const hide = display.kind === 'ready' ? display.hide : null;
 
   return (
     <View style={{ gap: spacing.lg }}>
@@ -675,20 +751,25 @@ function IntelSection() {
           </AppText>
           <GlassButton
             label={
-              pending
-                ? `Ajan sahada · rapor ${formatDuration(pending.endsAt - spyNow)}`
-                : spyNow < nextMissionAt
-                  ? `Bekleme · ${formatDuration(nextMissionAt - spyNow)}`
+              currentMission
+                ? currentMission.ready
+                  ? 'Rapor hazır · Al'
+                  : `Ajan sahada · rapor ${formatDuration(currentMission.remainingMs)}`
+                : cooldownRemainingMs
+                  ? `Bekleme · ${formatDuration(cooldownRemainingMs)}`
                   : 'Ajanı Gönder'
             }
-            disabled={Boolean(pending) || spyNow < nextMissionAt || (agent === 'premium' && gold < goldPrices.premiumAgent)}
-            onPress={onStart}
+            disabled={busy || (currentMission ? !currentMission.ready : Boolean(cooldownRemainingMs) || (agent === 'premium' && gold < goldPrices.premiumAgent))}
+            onPress={() => {
+              if (currentMission?.ready) void onClaim(currentMission.jobId);
+              else if (!currentMission) void onStart();
+            }}
           />
-          {pending && (
+          {currentMission && !currentMission.ready && (
             <GlassButton
-              label={`Raporu hemen al · ${skipMissionCost()} Altın`}
-              disabled={gold < skipMissionCost()}
-              onPress={() => { haptic.success(); skipMission(); }}
+              label={`Raporu hemen al · ${currentMission.skipCostGold} Altın`}
+              disabled={busy || gold < currentMission.skipCostGold}
+              onPress={() => void onSkip(currentMission.jobId)}
             />
           )}
           {message && (
@@ -704,54 +785,21 @@ function IntelSection() {
               <AppText variant="cardTitle" color={colors.textPrimary}>
                 Garajı Gizle
               </AppText>
-              <AppText variant="labelSmall" color={hidden ? colors.matrixGreen : colors.textTertiary} uppercase>
-                {hidden ? `Gizli · ${hide!.untilRound}. tura kadar` : 'Açık'}
+              <AppText variant="labelSmall" color={hide?.hidden ? colors.matrixGreen : colors.textTertiary} uppercase>
+                {hide?.hidden ? `Gizli · ${hide.untilRound}. tura kadar` : 'Açık'}
               </AppText>
             </View>
             <AppText variant="bodySmall" color={colors.textTertiary}>
               {"Tabloda ilk 4'teysen rakipler her gün %20 ihtimalle sızmayı dener. Gizliyken hiçbiri başaramaz."}
             </AppText>
             <View className="flex-row gap-1.5">
-              <Chip label={`1 GÜN · ${rpPrices.hide1Day} RP`} selected={false} onPress={() => { if (hideGarage(1)) haptic.success(); else haptic.error(); }} />
-              <Chip label={`3 GÜN · ${goldPrices.hide3Days} ALTIN`} selected={false} tint={colors.solarAmber} onPress={() => { if (hideGarage(3)) haptic.success(); else haptic.error(); }} />
-              <Chip label={`7 GÜN · ${goldPrices.hide7Days} ALTIN`} selected={false} tint={colors.solarAmber} onPress={() => { if (hideGarage(7)) haptic.success(); else haptic.error(); }} />
+              <Chip label={`1 GÜN · ${rpPrices.hide1Day} RP`} selected={false} onPress={() => void onHide(1)} />
+              <Chip label={`3 GÜN · ${goldPrices.hide3Days} ALTIN`} selected={false} tint={colors.solarAmber} onPress={() => void onHide(3)} />
+              <Chip label={`7 GÜN · ${goldPrices.hide7Days} ALTIN`} selected={false} tint={colors.solarAmber} onPress={() => void onHide(7)} />
             </View>
-          </GlassCard>
-
-          <GlassCard contentStyle={{ gap: spacing.xs }}>
-            <AppText variant="cardTitle" color={colors.textPrimary}>
-              Bekleyen Güçlendirmeler
-            </AppText>
-            {Object.keys(boosts).length === 0 ? (
-              <AppText variant="labelSmall" color={colors.textTertiary}>
-                Yok. Başarılı görev sonraki geliştirmeyi ×1.5 yapar.
-              </AppText>
-            ) : (
-              STATS.filter((s) => boosts[s.key]).map((s) => (
-                <AppText key={s.key} variant="labelSmall" color={(boosts[s.key] ?? 1) > 1 ? colors.matrixGreen : colors.neonCoral}>
-                  {s.label}: sonraki geliştirme ×{boosts[s.key]}
-                </AppText>
-              ))
-            )}
           </GlassCard>
         </View>
       </Cols>
-
-      <GlassCard contentStyle={{ gap: 2 }}>
-        <AppText variant="cardTitle" color={colors.textPrimary} className="mb-1">
-          İstihbarat Günlüğü
-        </AppText>
-        {news.length === 0 && (
-          <AppText variant="labelSmall" color={colors.textTertiary}>
-            Henüz rapor yok.
-          </AppText>
-        )}
-        {news.map((n, i) => (
-          <AppText key={i} variant="labelSmall" color={i === 0 ? colors.textSecondary : colors.textTertiary}>
-            {n}
-          </AppText>
-        ))}
-      </GlassCard>
     </View>
   );
 }

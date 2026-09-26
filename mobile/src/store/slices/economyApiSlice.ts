@@ -63,6 +63,7 @@ import {
   skipUpgrade as skipUpgradeApi,
   skipTraining as skipTrainingApi,
   skipSpy as skipSpyApi,
+  hideGarage as hideGarageApi,
   upgradeFactory as upgradeFactoryApi,
   convertGoldToRp as convertGoldToRpApi,
   getEconomyState as getEconomyStateApi,
@@ -72,6 +73,9 @@ import {
 import { makeAnchor, jobRemainingMs, defaultClock, type Clock, type ServerTimeAnchor } from './economyClock';
 
 export type EconomyActionOutcome =
+  /** `state.spyResult` (present only after `claimSpyReport`) rides here too —
+   * nothing here is ever re-derived, only passed through from the server's
+   * own response. */
   | { ok: true; state: SlotState }
   /** `error` is always the server's own code (or the local `not_signed_in`
    * refusal below) — never flattened into one generic failure string. A
@@ -116,6 +120,7 @@ export interface EconomyApiSliceActions {
   skipUpgrade: (lobbyId: string, jobId: string) => Promise<EconomyActionOutcome>;
   skipTraining: (lobbyId: string, jobId: string) => Promise<EconomyActionOutcome>;
   skipSpy: (lobbyId: string, jobId: string) => Promise<EconomyActionOutcome>;
+  hideGarage: (lobbyId: string, days: 1 | 3 | 7) => Promise<EconomyActionOutcome>;
   upgradeFactory: (lobbyId: string, code: string) => Promise<EconomyActionOutcome>;
   convertGoldToRp: (lobbyId: string, gold: number) => Promise<EconomyActionOutcome>;
 }
@@ -152,6 +157,7 @@ export interface EconomyApiSliceInjected {
   skipUpgradeApi?: ActionApi<{ lobbyId: string; jobId: string }>;
   skipTrainingApi?: ActionApi<{ lobbyId: string; jobId: string }>;
   skipSpyApi?: ActionApi<{ lobbyId: string; jobId: string }>;
+  hideGarageApi?: ActionApi<{ lobbyId: string; days: 1 | 3 | 7 }>;
   upgradeFactoryApi?: ActionApi<{ lobbyId: string; code: string }>;
   convertGoldToRpApi?: ActionApi<{ lobbyId: string; gold: number }>;
   clock?: Clock;
@@ -182,6 +188,7 @@ export function createEconomyApiSlice(
     skipUpgrade: injected.skipUpgradeApi ?? skipUpgradeApi,
     skipTraining: injected.skipTrainingApi ?? skipTrainingApi,
     skipSpy: injected.skipSpyApi ?? skipSpyApi,
+    hideGarage: injected.hideGarageApi ?? hideGarageApi,
     upgradeFactory: injected.upgradeFactoryApi ?? upgradeFactoryApi,
     convertGoldToRp: injected.convertGoldToRpApi ?? convertGoldToRpApi,
   };
@@ -249,6 +256,7 @@ export function createEconomyApiSlice(
       skipUpgrade: (lobbyId, jobId) => run(lobbyId, apis.skipUpgrade, { lobbyId, jobId }),
       skipTraining: (lobbyId, jobId) => run(lobbyId, apis.skipTraining, { lobbyId, jobId }),
       skipSpy: (lobbyId, jobId) => run(lobbyId, apis.skipSpy, { lobbyId, jobId }),
+      hideGarage: (lobbyId, days) => run(lobbyId, apis.hideGarage, { lobbyId, days }),
       upgradeFactory: (lobbyId, code) => run(lobbyId, apis.upgradeFactory, { lobbyId, code }),
       convertGoldToRp: (lobbyId, gold) => run(lobbyId, apis.convertGoldToRp, { lobbyId, gold }),
     },

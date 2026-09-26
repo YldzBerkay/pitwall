@@ -21,6 +21,7 @@ import {
   skipUpgrade,
   skipTraining,
   skipSpy,
+  hideGarage,
   upgradeFactory,
   convertGoldToRp,
   type SlotState,
@@ -80,6 +81,7 @@ const okSlotState: SlotState = {
   jobs: [],
   teamValue: 1234,
   caps: { adsLeft: 8, convertibleLeft: 6 },
+  hide: null,
 };
 
 /**
@@ -136,6 +138,11 @@ const cases: {
     name: 'skipSpy',
     call: (baseUrl) => skipSpy(baseUrl, TOKEN, { lobbyId: LOBBY_ID, jobId: 'job-6' }),
     expectedBody: { type: 'skipSpy', lobbyId: LOBBY_ID, jobId: 'job-6' },
+  },
+  {
+    name: 'hideGarage',
+    call: (baseUrl) => hideGarage(baseUrl, TOKEN, { lobbyId: LOBBY_ID, days: 3 }),
+    expectedBody: { type: 'hideGarage', lobbyId: LOBBY_ID, days: 3 },
   },
   {
     name: 'upgradeFactory',

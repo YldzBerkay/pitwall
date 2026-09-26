@@ -41,6 +41,7 @@ function makeSlotState(overrides: Partial<SlotState> = {}): SlotState {
     jobs: [],
     teamValue: 999,
     caps: { adsLeft: 8, convertibleLeft: 6 },
+    hide: null,
     ...overrides,
   };
 }

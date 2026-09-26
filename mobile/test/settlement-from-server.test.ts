@@ -71,6 +71,7 @@ const SERVER_BREAKDOWN: SettlementBreakdown = {
   bonusesEarned: ['velox', 'nimbus'],
   streaksBroken: ['aurora'],
   expired: ['sidepod'],
+  rivalSpy: null,
 };
 
 type Store = SettlementApiSlice & SettlementApiSliceDeps;

@@ -60,7 +60,6 @@ import {
 import { briefFor, type BriefItem } from '@pitwall/shared/brief';
 import { createEconomySlice, type EconomySlice } from './slices/economySlice';
 import { createStaffSlice, type StaffSlice } from './slices/staffSlice';
-import { createEspionageSlice, type EspionageSlice } from './slices/espionageSlice';
 import { createDriverSlice, type DriverSlice } from './slices/driverSlice';
 import { createSettingsSlice, type SettingsSlice } from './slices/settingsSlice';
 import { createAuthSlice, type AuthSlice } from './slices/authSlice';
@@ -288,7 +287,6 @@ interface CoreState {
 export type GameState = CoreState &
   EconomySlice &
   StaffSlice &
-  EspionageSlice &
   DriverSlice &
   SettingsSlice &
   AuthSlice &
@@ -313,7 +311,6 @@ export const useGameStore = create<GameState>()(
     (set, get) => ({
   ...createEconomySlice(set, get),
   ...createStaffSlice(set, get),
-  ...createEspionageSlice(set, get),
   ...createDriverSlice(set, get),
   ...createSettingsSlice(set, get),
   ...createAuthSlice(set, get),
@@ -408,12 +405,13 @@ export const useGameStore = create<GameState>()(
       set({ build: undefined });
       return undefined;
     }
-    // Taban kazanç, baş mekanik bonusu üstüne, istihbarat hepsini çarpar;
-    // kesirler bir sonraki yükseltmeye taşınır, 0,5 hiç kaybolmaz. Casusluk
-    // boost'u burada harcanır — gerçekten takılan parçanın üstünde.
-    const key = statKeyOf[build.label];
-    const boost = key ? get().takeBoost(key) : 1;
-    const raw = (UPGRADE_GAIN + state.effects().upgradeBonus + state.factory().upgradeGainBonus) * boost
+    // Taban kazanç, baş mekanik bonusu üstüne; kesirler bir sonraki
+    // yükseltmeye taşınır, 0,5 hiç kaybolmaz. Casusluk boost'u artık bu
+    // yerel yoldan değil, sunucuda `claimJob`/`takePendingSpyBoost`
+    // (server/src/economy/repo.ts) tarafından uygulanıyor — bu yerel
+    // yükseltme yolunun (DevelopmentScreen artık server-backed) burada
+    // ayrıca bir boost araması yapmasına gerek yok.
+    const raw = (UPGRADE_GAIN + state.effects().upgradeBonus + state.factory().upgradeGainBonus)
       + (state.upgradeCarry[build.label] ?? 0);
     const gain = Math.floor(raw);
     const carry = Math.round((raw - gain) * 100) / 100;
