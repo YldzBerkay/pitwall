@@ -5,6 +5,7 @@
  *   POST /lobby/create · /lobby/quick-match · /lobby/join   lobbies (spec §3)
  *   POST /lobby/invite · GET /invites lobby invites (spec §3.6)
  *   POST /race/checkin {lobbyId} · POST /race/pit {lobbyId, driverIdx, compound, lap?}
+ *   GET  /staff/market · /staff/roster · POST /staff/hire · /staff/release  staff market (Faz 3b-2 Aşama C)
  *   WS   /race/live                   per-lobby rooms: {type:'subscribe'|'unsubscribe', lobbyId, token}
  *
  * Environment: PORT (8787), TICK_MS (2500), CHECKIN_SECONDS (300),
@@ -22,6 +23,7 @@ import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
 import { registerSponsorRoutes } from './economy/sponsorRoutes.ts';
 import { registerDriverMarketRoutes } from './drivers/routes.ts';
+import { registerStaffRoutes } from './staff/routes.ts';
 import { registerCheckinRoutes } from './lobby/checkin.ts';
 import { registerWeekendChoiceRoutes } from './lobby/weekendChoices.ts';
 import { createLiveHub, LIVE_PATH } from './lobby/live.ts';
@@ -39,6 +41,7 @@ registerGoldRoutes(identityRouter);
 registerEconomyRoutes(identityRouter);
 registerSponsorRoutes(identityRouter);
 registerDriverMarketRoutes(identityRouter);
+registerStaffRoutes(identityRouter);
 registerCheckinRoutes(identityRouter);
 registerWeekendChoiceRoutes(identityRouter);
 

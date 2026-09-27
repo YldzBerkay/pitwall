@@ -16,7 +16,7 @@
  * (docs/paddock-research.md §1).
  */
 
-import { rng } from './rng';
+import { rng, strHash } from './rng';
 
 export type StaffRole = 'mechanic' | 'strategist' | 'pitCrew';
 
@@ -91,8 +91,17 @@ export function staffEffects(roster: StaffRoster): StaffEffects {
  */
 export const wageFor = (skill: number): number => Math.round(25 + ((skill - 30) / 70) * 110);
 
+/**
+ * Signing fee multiplier: two races of wages up front. A named constant
+ * (not an inline `* 2`) because it is a RULE, not an implementation detail —
+ * the server (`server/src/staff/market.ts`) imports it rather than
+ * restating it, same reason `RESERVE_SIGN_SCALE` lives in
+ * `shared/driverMarket.ts` instead of being copied into `drivers/market.ts`.
+ */
+export const HIRE_FEE_MULTIPLIER = 2;
+
 /** Signing fee: two races of wages. */
-export const hiringFee = (member: StaffMember): number => member.wage * 2;
+export const hiringFee = (member: StaffMember): number => member.wage * HIRE_FEE_MULTIPLIER;
 
 const FIRST = ['Deniz', 'Elif', 'Marco', 'Sofia', 'Hiro', 'Amara', 'Lukas', 'Nadia', 'Tomás', 'Ingrid', 'Kaan', 'Yara', 'Pieter', 'Zeynep', 'Rafael', 'Mei'];
 const LAST = ['Aksoy', 'Bianchi', 'Okafor', 'Lindgren', 'Sato', 'Duarte', 'Novak', 'Haddad', 'Kowalski', 'Öztürk', 'Moreau', 'Ferreira', 'Nakamura', 'Costa', 'Weber', 'Demir'];
@@ -100,9 +109,20 @@ const LAST = ['Aksoy', 'Bianchi', 'Okafor', 'Lindgren', 'Sato', 'Duarte', 'Novak
 /**
  * This round's candidates: six heads across the three roles, seeded by the
  * round so the list is stable and cannot be re-rolled by navigating away.
+ *
+ * `lobbyId` is folded into the seed (hashed with `strHash`, same as
+ * `driverMarket`'s own candidates and `developRosterSeason`'s winter
+ * growth) so that two different lobbies never see byte-identical
+ * candidates in the same round — this bug class (a seed that omitted the
+ * lobby) has now been found three times: the espionage mission seed, the
+ * winter development seed, and the driver market seed. Optional and
+ * defaulted to `''` so the mobile client's single-lobby call site
+ * (`staffMarket(round, season)`, `mobile/src/store/slices/staffSlice.ts`)
+ * keeps compiling unchanged — Stage F is the client's turn to pass a real
+ * one, same as `driverMarket`'s own docblock notes for its own `lobbyId`.
  */
-export function staffMarket(round: number, season: number): StaffMember[] {
-  const random = rng(season * 7919 + round * 104729 + 17);
+export function staffMarket(round: number, season: number, lobbyId?: string): StaffMember[] {
+  const random = rng(season * 7919 + round * 104729 + 17 + strHash(lobbyId ?? '') * 104729);
   const roles: StaffRole[] = ['mechanic', 'mechanic', 'strategist', 'strategist', 'pitCrew', 'pitCrew'];
   return roles.map((role, i) => {
     const skill = Math.round(35 + random() * 55);
