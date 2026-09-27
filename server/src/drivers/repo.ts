@@ -24,7 +24,7 @@
 import type { PoolClient } from 'pg';
 import { query } from '../db/pool.ts';
 import { teamByKey, type Driver, type DriverStats } from '@pitwall/shared/teams';
-import { initialContracts, type Contract } from '@pitwall/shared/driverMarket';
+import { initialContracts, stopgapDriver, type Contract } from '@pitwall/shared/driverMarket';
 import type { Rosters } from '@pitwall/shared/raceEngine';
 
 export type DriverPosition = 'seat_0' | 'seat_1' | 'reserve' | 'market';
@@ -36,6 +36,15 @@ export interface LobbyDriver {
   position: DriverPosition;
   driver: Driver;
   contract: Contract;
+  /** True when this race seat currently holds the stopgap filler, not a
+   *  signed driver — see `seatStopgapDriver`'s docblock. Always `false` for
+   *  a reserve or team-default row. */
+  isStopgap: boolean;
+  /** The market id currently signed into this SEAT row, or `null` when the
+   *  seat holds its team-default driver or the stopgap. `null` for a
+   *  reserve row too — there, the row's own `id` already IS the market id.
+   *  See `signSeatDriver`'s docblock for why a seat needs this separately. */
+  marketId: string | null;
 }
 
 interface DriverRow {
@@ -51,6 +60,8 @@ interface DriverRow {
   potential: number;
   seasons_left: number;
   wage: number;
+  is_stopgap: boolean;
+  market_id: string | null;
 }
 
 function toLobbyDriver(row: DriverRow): LobbyDriver {
@@ -68,6 +79,8 @@ function toLobbyDriver(row: DriverRow): LobbyDriver {
       potential: row.potential,
     },
     contract: { seasonsLeft: row.seasons_left, wage: row.wage },
+    isStopgap: row.is_stopgap,
+    marketId: row.market_id,
   };
 }
 
@@ -232,26 +245,57 @@ export async function releaseMarketSigning(client: PoolClient, lobbyId: string, 
 }
 
 /**
- * Overwrites a race seat's occupant and contract. The outgoing driver is
- * discarded entirely — no roster remembers him — matching the mobile
- * client's own `signDriver` for a seat (`mobile/src/store/slices/driverSlice.ts`):
+ * Overwrites a race seat's occupant and contract — a real signing, whether
+ * the seat previously held its team-default driver or the stopgap filler
+ * (`isStopgap` is always cleared here). The outgoing driver is discarded
+ * entirely — no roster remembers him — matching the mobile client's own
+ * `signDriver` for a seat (`mobile/src/store/slices/driverSlice.ts`):
  * `drivers: seat === 0 ? [driver, state.drivers[1]] : ...` simply replaces
  * the pair, keeping no record of who left. The row's OWN id
  * (`teamKey:seat`) never changes — a seat's identity is the seat, not
  * whoever currently holds it (014_drivers.sql's own "Kimlik" note).
+ *
+ * `marketId` is stored on the row (not just in `lobby_driver_signings`)
+ * because a seat's own id never becomes the market id — unlike a reserve
+ * row, which IS keyed by its market id. Without recording it here, a later
+ * contract expiry (`drivers/ageing.ts`) would have no way to find and
+ * release the signing claim this driver came from.
  */
 export async function signSeatDriver(
-  client: PoolClient, lobbyId: string, teamKey: string, seat: 0 | 1, driver: Driver, contract: Contract,
+  client: PoolClient, lobbyId: string, teamKey: string, seat: 0 | 1, driver: Driver, contract: Contract, marketId: string,
 ): Promise<void> {
   await client.query(
     `update lobby_drivers
         set name = $4, number = $5, skill = $6, stats = $7::jsonb, age = $8, potential = $9,
-            seasons_left = $10, wage = $11, updated_at = now()
+            seasons_left = $10, wage = $11, is_stopgap = false, market_id = $12, updated_at = now()
       where lobby_id = $1 and team_key = $2 and position = $3`,
     [
       lobbyId, teamKey, seat === 0 ? 'seat_0' : 'seat_1',
       driver.name, driver.number, driver.skill, JSON.stringify(driver.stats), driver.age, driver.potential,
-      contract.seasonsLeft, contract.wage,
+      contract.seasonsLeft, contract.wage, marketId,
+    ],
+  );
+}
+
+/**
+ * Seats the stopgap filler (`@pitwall/shared/driverMarket`'s `stopgapDriver`
+ * — ONE definition, imported here and by the mobile client) into a race
+ * seat whose contract just expired with nobody signed to replace him.
+ * `seasons_left`/`wage` are zeroed and `is_stopgap` set — a stopgap carries
+ * no contract, and `renewSeatContract`/a sale must both refuse him (see
+ * `drivers/market.ts`). `market_id` is cleared: the stopgap never came from
+ * the market and has no claim to release later.
+ */
+export async function seatStopgapDriver(client: PoolClient, lobbyId: string, teamKey: string, seat: 0 | 1): Promise<void> {
+  const driver = stopgapDriver(seat);
+  await client.query(
+    `update lobby_drivers
+        set name = $4, number = $5, skill = $6, stats = $7::jsonb, age = $8, potential = $9,
+            seasons_left = 0, wage = 0, is_stopgap = true, market_id = null, updated_at = now()
+      where lobby_id = $1 and team_key = $2 and position = $3`,
+    [
+      lobbyId, teamKey, seat === 0 ? 'seat_0' : 'seat_1',
+      driver.name, driver.number, driver.skill, JSON.stringify(driver.stats), driver.age, driver.potential,
     ],
   );
 }

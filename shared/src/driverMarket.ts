@@ -213,6 +213,28 @@ export interface Contract {
   wage: number;
 }
 
+/**
+ * Who is in the seat when there is nobody else to put there — an injured
+ * regular with no reserve to promote (mobile's `raceDrivers`), or a race
+ * seat whose contract just ran out with nobody yet signed to fill it
+ * (server's winter rollover). ONE definition: the mobile client and the
+ * server both import this rather than each keeping their own copy — this
+ * codebase has already had a rule (a winter-development seed) silently
+ * drift apart for a whole phase because it existed twice.
+ *
+ * A stopgap is not a signed driver: he costs nothing, earns no contract,
+ * and is replaced outright the moment a real signing lands in that seat —
+ * never sold, never renewed.
+ */
+export const stopgapDriver = (seat: 0 | 1): Driver => ({
+  name: seat === 0 ? 'M. Yedek' : 'S. Yedek',
+  number: 90 + seat,
+  skill: 55,
+  stats: { pace: 56, consistency: 55, racecraft: 52, wet: 50, reaction: 55, dev: 40 },
+  age: 27,
+  potential: 58,
+});
+
 export interface ContractTerm {
   seasons: number;
   label: string;
@@ -229,6 +251,18 @@ export const contractTerms: ContractTerm[] = [
 ];
 
 export const termFor = (seasons: number): ContractTerm => contractTerms.find((t) => t.seasons === seasons) ?? contractTerms[1];
+
+/**
+ * A reserve signing costs half of a seat signing, and pays half the wage —
+ * the squad is a cheaper, lower-stakes way to hold a driver. One named
+ * constant so the mobile client's `signDriver` (`Math.round(signingCost(...)
+ * / 2)`) and the server's own signing flow (`server/src/drivers/market.ts`)
+ * apply the SAME number rather than each hard-coding its own `/ 2` — this
+ * codebase has already had one rule (a winter-development seed) drift
+ * unnoticed for a whole phase because it was quietly reimplemented in two
+ * places instead of shared once.
+ */
+export const RESERVE_SIGN_SCALE = 0.5;
 
 /** What signing this driver on this term costs up front. */
 export const signingCost = (driver: Driver, seasons: number): number => Math.round(driverFee(driver) * termFor(seasons).feeScale);

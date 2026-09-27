@@ -36,7 +36,7 @@ import { withTransaction } from '../db/pool.ts';
 import { loadLobby } from '../lobby/lobbyRepo.ts';
 import { spendRp, addRp } from '../economy/repo.ts';
 import {
-  driverMarket, signingCost, contractWage, renewalCost, saleValue, SQUAD_MAX,
+  driverMarket, signingCost, contractWage, renewalCost, saleValue, SQUAD_MAX, RESERVE_SIGN_SCALE,
   type MarketDriver, type Contract,
 } from '@pitwall/shared/driverMarket';
 import {
@@ -106,13 +106,13 @@ export interface SignResult {
  * dedicated sentinel instead of returning; the ONE exit that returns
  * directly (`not_found`) is also the only one that has written nothing yet.
  *
- * A reserve signing costs half of a seat signing, and its wage is half too
- * — mirroring the mobile client's own `signDriver` (`driverSlice.ts`:
- * `seat === 'reserve' ? Math.round(signingCost(...) / 2) : ...`). That
- * halving rule has no `shared/` counterpart of its own to import (like
- * `sponsorRoutes.ts`'s 0.35 release-fee rate, see that file's docblock) —
- * it is applied here, server-side, to the server's OWN computed fee, never
- * to anything the client sent.
+ * A reserve signing costs `RESERVE_SIGN_SCALE` of a seat signing, and its
+ * wage scales the same way — one shared constant (`@pitwall/shared/
+ * driverMarket`), imported here and by the mobile client's own `signDriver`
+ * (`driverSlice.ts`), not a `/2` reimplemented on each side (unlike
+ * `sponsorRoutes.ts`'s 0.35 release-fee rate, which genuinely has no
+ * `shared/` counterpart — see that file's docblock). Applied here to the
+ * server's OWN computed fee, never to anything the client sent.
  */
 export async function signMarketDriver(
   lobbyId: string, teamKey: string, marketId: string, target: SignTarget, seasons: number,
@@ -127,8 +127,8 @@ export async function signMarketDriver(
 
       const { id: _id, fee: _candidateFee, wage: _candidateWage, ...driver } = candidate;
       const isReserve = target === 'reserve';
-      fee = isReserve ? Math.round(signingCost(driver, seasons) / 2) : signingCost(driver, seasons);
-      wage = isReserve ? Math.round(contractWage(driver, seasons) / 2) : contractWage(driver, seasons);
+      fee = isReserve ? Math.round(signingCost(driver, seasons) * RESERVE_SIGN_SCALE) : signingCost(driver, seasons);
+      wage = isReserve ? Math.round(contractWage(driver, seasons) * RESERVE_SIGN_SCALE) : contractWage(driver, seasons);
       const contract: Contract = { seasonsLeft: seasons, wage };
 
       // THE GUARD: whoever's `insert` lands first wins; the other throws
@@ -149,7 +149,7 @@ export async function signMarketDriver(
       if (!paid) throw new NotEnoughRp();
 
       if (isReserve) await insertReserveDriver(client, lobbyId, marketId, teamKey, driver, contract);
-      else await signSeatDriver(client, lobbyId, teamKey, target === 'seat_0' ? 0 : 1, driver, contract);
+      else await signSeatDriver(client, lobbyId, teamKey, target === 'seat_0' ? 0 : 1, driver, contract, marketId);
 
       return 'ok';
     });
@@ -162,7 +162,7 @@ export async function signMarketDriver(
   }
 }
 
-export type RenewOutcome = 'ok' | 'not_found' | 'not_due' | 'not_enough_rp';
+export type RenewOutcome = 'ok' | 'not_found' | 'not_due' | 'not_enough_rp' | 'no_contract';
 
 /**
  * Extends a driver already in a race seat — only in his final contract
@@ -170,6 +170,13 @@ export type RenewOutcome = 'ok' | 'not_found' | 'not_due' | 'not_enough_rp';
  * rule as the mobile client's `renewDriver`: no transfer fee, only a
  * signing bonus, but on today's value — a driver who improved is dearer to
  * keep than he was to sign).
+ *
+ * A stopgap (`row.isStopgap`) is refused with its OWN distinct code,
+ * `no_contract` — never `not_due` (which would say the opposite: too EARLY
+ * to renew) and never silently treated as `not_found` (the row genuinely
+ * exists, occupying the seat). He has nothing to renew: no fee was ever
+ * paid for him and no contract was ever signed, see
+ * `drivers/repo.ts`'s `seatStopgapDriver`.
  */
 export async function renewSeatContract(
   lobbyId: string, teamKey: string, seat: 0 | 1, seasons: number,
@@ -177,6 +184,7 @@ export async function renewSeatContract(
   return withTransaction(async (client) => {
     const row = await loadDriverRow(lobbyId, teamKey, seat === 0 ? 'seat_0' : 'seat_1', undefined, client);
     if (!row) return { outcome: 'not_found' as const };
+    if (row.isStopgap) return { outcome: 'no_contract' as const };
     if (row.contract.seasonsLeft > 1) return { outcome: 'not_due' as const };
 
     const cost = renewalCost(row.driver, seasons);

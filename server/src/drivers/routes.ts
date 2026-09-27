@@ -67,6 +67,7 @@ const RENEW_STATUS: Record<RenewOutcome, number> = {
   not_found: 404,
   not_due: 409,
   not_enough_rp: 409,
+  no_contract: 409,
 };
 
 const SELL_STATUS: Record<SellOutcome, number> = {

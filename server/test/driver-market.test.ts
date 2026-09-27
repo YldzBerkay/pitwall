@@ -17,6 +17,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { Router } from '../src/http/router.ts';
 import { registerDriverMarketRoutes } from '../src/drivers/routes.ts';
 import { signSession } from '../src/auth/jwt.ts';
@@ -129,8 +132,12 @@ async function setRp(lobbyId: string, teamKey: string, rp: number): Promise<void
 }
 
 async function driverRow(lobbyId: string, id: string) {
-  const res = await query<{ id: string; team_key: string | null; position: string; seasons_left: number; wage: number }>(
-    `select id, team_key, position, seasons_left, wage from lobby_drivers where lobby_id = $1 and id = $2`,
+  const res = await query<{
+    id: string; team_key: string | null; position: string; seasons_left: number; wage: number;
+    is_stopgap: boolean; market_id: string | null; name: string;
+  }>(
+    `select id, team_key, position, seasons_left, wage, is_stopgap, market_id, name
+       from lobby_drivers where lobby_id = $1 and id = $2`,
     [lobbyId, id],
   );
   return res.rows[0] ?? null;
@@ -477,5 +484,162 @@ describe('driver market and contracts', () => {
       frozenSeat0Before,
       'a driver signed after lights-out changed an already-frozen race replay',
     );
+  });
+
+  // ── The stopgap: expiry is real for race seats ──────────────────────────
+  // A follow-up decision replaced the earlier "clamp at seasonsLeft = 1"
+  // behaviour: a human race seat's contract now genuinely reaches zero, the
+  // driver leaves, and `@pitwall/shared/driverMarket`'s `stopgapDriver`
+  // fills the seat until the player signs someone. This is also what makes
+  // renewing in the final year matter — without real expiry there was
+  // nothing a renewal actually prevented.
+
+  it('10a. at rollover, a human race-seat driver on his last contract year leaves and a stopgap takes the seat', async () => {
+    const lobbyId = await makeLobby();
+    const owner = await makeUser('seat-expiry');
+    await seatHuman(lobbyId, TEAM_A, owner.id);
+
+    const before = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(before.is_stopgap, false);
+    await query(`update lobby_drivers set seasons_left = 1 where lobby_id = $1 and id = $2`, [lobbyId, `${TEAM_A}:0`]);
+
+    await query(`update lobbies set phase = 'result', season_no = 1, round_no = $2 where id = $1`, [lobbyId, SEASON_ROUNDS]);
+    const outcome = await rolloverRace(lobbyId, 1, SEASON_ROUNDS, new Date());
+    assert.ok(outcome.rolled && outcome.seasonRolled, 'rollover did not actually turn the season over');
+
+    const after = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(after.is_stopgap, true, 'the expired driver was not replaced by the stopgap');
+    assert.equal(after.seasons_left, 0);
+    assert.equal(after.wage, 0);
+    assert.equal(after.market_id, null);
+    assert.notEqual(after.name, before.name, 'the original driver is still listed in the seat that expired');
+  });
+
+  it('10b. a driver renewed in his final year does not leave — no stopgap appears', async () => {
+    const lobbyId = await makeLobby();
+    const owner = await makeUser('seat-renewed');
+    await seatHuman(lobbyId, TEAM_A, owner.id);
+    await setRp(lobbyId, TEAM_A, 100_000);
+
+    const before = await driverRow(lobbyId, `${TEAM_A}:0`);
+    await query(`update lobby_drivers set seasons_left = 1 where lobby_id = $1 and id = $2`, [lobbyId, `${TEAM_A}:0`]);
+
+    const renewed = await post('/drivers/renew', owner.token, { lobbyId, seat: 0, seasons: 2 });
+    assert.equal(renewed.status, 200, JSON.stringify(renewed.body));
+
+    await query(`update lobbies set phase = 'result', season_no = 1, round_no = $2 where id = $1`, [lobbyId, SEASON_ROUNDS]);
+    const outcome = await rolloverRace(lobbyId, 1, SEASON_ROUNDS, new Date());
+    assert.ok(outcome.rolled && outcome.seasonRolled);
+
+    const after = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(after.is_stopgap, false, 'a renewed driver was replaced by the stopgap anyway');
+    assert.equal(after.name, before.name, 'a renewed driver is not the same person anymore');
+    assert.ok(after.seasons_left > 0, 'a renewed contract shows zero seasons left after its own tick');
+  });
+
+  it('10c. signing a driver into a stopgap\'s seat removes the stopgap', async () => {
+    const lobbyId = await makeLobby();
+    const owner = await makeUser('seat-refill');
+    await seatHuman(lobbyId, TEAM_A, owner.id);
+    await setRp(lobbyId, TEAM_A, 100_000);
+
+    await query(`update lobby_drivers set seasons_left = 1 where lobby_id = $1 and id = $2`, [lobbyId, `${TEAM_A}:0`]);
+    await query(`update lobbies set phase = 'result', season_no = 1, round_no = $2 where id = $1`, [lobbyId, SEASON_ROUNDS]);
+    await rolloverRace(lobbyId, 1, SEASON_ROUNDS, new Date());
+    const stopgap = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(stopgap.is_stopgap, true, 'setup did not actually produce a stopgap');
+
+    const market = await marketRows(lobbyId, owner.token);
+    const candidate = cheapestOf(market);
+    const signed = await post('/drivers/sign', owner.token, { lobbyId, marketId: candidate.id, seat: 'seat_0', seasons: 2 });
+    assert.equal(signed.status, 200, JSON.stringify(signed.body));
+
+    const after = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(after.is_stopgap, false, 'signing into the seat did not remove the stopgap');
+    assert.equal(after.market_id, candidate.id);
+    assert.notEqual(after.name, stopgap.name);
+  });
+
+  it('10d. the stopgap cannot be sold or renewed, and carries no contract', async () => {
+    const lobbyId = await makeLobby();
+    const owner = await makeUser('seat-stopgap-rules');
+    await seatHuman(lobbyId, TEAM_A, owner.id);
+    await setRp(lobbyId, TEAM_A, 100_000);
+
+    await query(`update lobby_drivers set seasons_left = 1 where lobby_id = $1 and id = $2`, [lobbyId, `${TEAM_A}:0`]);
+    await query(`update lobbies set phase = 'result', season_no = 1, round_no = $2 where id = $1`, [lobbyId, SEASON_ROUNDS]);
+    await rolloverRace(lobbyId, 1, SEASON_ROUNDS, new Date());
+
+    const stopgap = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.equal(stopgap.is_stopgap, true);
+    assert.equal(stopgap.seasons_left, 0);
+    assert.equal(stopgap.wage, 0);
+
+    const renewed = await post('/drivers/renew', owner.token, { lobbyId, seat: 0, seasons: 2 });
+    assert.equal(renewed.status, 409);
+    assert.equal(renewed.body.error, 'no_contract');
+
+    // A stopgap sits in a race seat, not the reserve squad — selling by his
+    // row id must be a clean 404, exactly like any other unowned id.
+    const sold = await post('/drivers/sell', owner.token, { lobbyId, driverId: stopgap.id });
+    assert.equal(sold.status, 404);
+    assert.equal(sold.body.error, 'not_found');
+
+    // Nothing about the stopgap changed.
+    const after = await driverRow(lobbyId, `${TEAM_A}:0`);
+    assert.deepEqual(after, stopgap);
+  });
+
+  it('10e. AI race seats keep auto-renewing across rollovers — never a stopgap', async () => {
+    const lobbyId = await makeLobby();
+    const owner = await makeUser('seat-ai-renews');
+    await seatHuman(lobbyId, TEAM_A, owner.id); // TEAM_B stays AI.
+
+    for (let season = 1; season <= 2; season += 1) {
+      await query(`update lobbies set phase = 'result', season_no = $2, round_no = $3 where id = $1`, [lobbyId, season, SEASON_ROUNDS]);
+      const outcome = await rolloverRace(lobbyId, season, SEASON_ROUNDS, new Date());
+      assert.ok(outcome.rolled && outcome.seasonRolled, `rollover ${season} did not turn the season over`);
+    }
+
+    const aiSeat0 = await driverRow(lobbyId, `${TEAM_B}:0`);
+    const aiSeat1 = await driverRow(lobbyId, `${TEAM_B}:1`);
+    assert.equal(aiSeat0.is_stopgap, false, 'an AI seat became a stopgap');
+    assert.equal(aiSeat1.is_stopgap, false, 'an AI seat became a stopgap');
+    assert.ok(aiSeat0.seasons_left > 0);
+    assert.ok(aiSeat1.seasons_left > 0);
+  });
+
+  it('10f. the stopgap has exactly one definition, in shared/', async () => {
+    // A definition (`export const stopgapDriver = (` / `function
+    // stopgapDriver(`) — not an import or a call site, both of which are
+    // expected in server/src and mobile/src now that both sides import the
+    // shared one.
+    const DEFINITION = /(?:export\s+)?(?:const\s+stopgapDriver\s*=|function\s+stopgapDriver\s*\()/;
+    const roots = [
+      { label: 'shared/src', dir: fileURLToPath(new URL('../../shared/src/', import.meta.url)) },
+      { label: 'server/src', dir: fileURLToPath(new URL('../src/', import.meta.url)) },
+      { label: 'mobile/src', dir: fileURLToPath(new URL('../../mobile/src/', import.meta.url)) },
+    ];
+
+    const hits: string[] = [];
+    async function scan(label: string, dir: string): Promise<void> {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await scan(label, full);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
+        const text = await readFile(full, 'utf8');
+        for (const [i, line] of text.split('\n').entries()) {
+          if (DEFINITION.test(line)) hits.push(`${label}:${full}:${i + 1}: ${line.trim()}`);
+        }
+      }
+    }
+    for (const { label, dir } of roots) await scan(label, dir);
+
+    const outsideShared = hits.filter((h) => !h.startsWith('shared/src:'));
+    assert.equal(outsideShared.length, 0, `stopgapDriver defined outside shared/: ${JSON.stringify(outsideShared)}`);
+    assert.equal(hits.length, 1, `expected exactly one stopgapDriver definition, found ${hits.length}: ${JSON.stringify(hits)}`);
   });
 });

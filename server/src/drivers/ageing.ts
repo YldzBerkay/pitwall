@@ -64,21 +64,25 @@
  * saklanmıyor, bkz. `drivers/market.ts`), ama artık "zaten imzalanmış"
  * değil — o kimlik yeniden imzalanabilir hale gelir.
  *
- * İNSAN TAKIM, ASIL KOLTUK: bir yarış koltuğu asla BOŞ bırakılamaz, ve onu
- * yeniden dolduracak mekanizma (poaching/rookie) tam olarak yukarıda
- * BİLEREK dışarıda bırakılan AI transfer penceresidir. Bu yüzden bir koltuk
- * sözleşmesi sıfıra indiğinde koltuk BOŞALTILMAZ — sürücü kalır, sözleşme
- * "son yıl"da (`seasonsLeft = 1`) sabitlenir, taban altına asla inmez. Bu,
- * görevin kendi ölçeğini aşmadan (poaching/rookie inşa etmeden) test
- * edilebilir, dürüst bir ara durumdur; tam yerine koyma AI transfer
- * penceresiyle birlikte gelecek bir görevdir.
+ * İNSAN TAKIM, ASIL KOLTUK: bir yarış koltuğunun sözleşmesi sıfıra indiğinde
+ * artık GERÇEKTEN AYRILIR — satır o pazar kimliğinden geldiyse
+ * (`market_id`) o kimlik serbest bırakılır (`releaseMarketSigning`), tıpkı
+ * yedek kadronun aldığı yol gibi. Ama koltuk BOŞ bırakılamaz (yarış iki
+ * sürücü ister); yerine `@pitwall/shared/driverMarket`'in `stopgapDriver`ı
+ * (`seatStopgapDriver`, `drivers/repo.ts`) geçer — sözleşmesiz, ücretsiz,
+ * ne satılabilir ne yenilenebilir bir dolgu. Oyuncu birini imzaladığı anda
+ * (`signSeatDriver`) stopgap silinir, tıpkı başka biri gelince gerçek bir
+ * sürücünün silinmesi gibi. Önceki tasarım burada `seasonsLeft = 1`de
+ * sonsuza dek KENETLENİYORDU — kullanıcı kararı bunu tersine çevirdi:
+ * kenetlenme, sözleşme yenileme mekaniğini (%45 bedelle) anlamsız
+ * kılıyordu, çünkü sözleşme asla gerçekten bitmiyordu.
  */
 import type { PoolClient } from 'pg';
 import { ageOneSeason, developRosterSeason } from '@pitwall/shared/driverMarket';
 import type { Driver } from '@pitwall/shared/teams';
 import {
   loadLobbyDrivers, saveDriverAfterSeason, updateContract, deleteReserveDriver, releaseMarketSigning,
-  type LobbyDriver,
+  seatStopgapDriver, type LobbyDriver,
 } from './repo.ts';
 import { loadHumanTeamKeys } from '../lobby/lobbyRepo.ts';
 
@@ -88,9 +92,13 @@ const AI_RENEWAL_SEASONS = 2;
 /**
  * Ticks one driver row's contract for the season now beginning. See the
  * module docblock for what happens to each of the three cases (AI, human
- * reserve, human race seat).
+ * reserve, human race seat). A stopgap-occupied seat is skipped entirely —
+ * he carries no contract to tick, and stays exactly as he is until the
+ * player signs someone.
  */
 async function tickContract(client: PoolClient, lobbyId: string, row: LobbyDriver, isHuman: boolean): Promise<void> {
+  if (row.isStopgap) return;
+
   if (!isHuman) {
     await updateContract(client, lobbyId, row.id, { seasonsLeft: AI_RENEWAL_SEASONS, wage: row.contract.wage });
     return;
@@ -102,14 +110,20 @@ async function tickContract(client: PoolClient, lobbyId: string, row: LobbyDrive
     return;
   }
 
-  // Expired.
+  // Expired: the driver leaves, for real, in both positions. A reserve
+  // row's OWN id is its market id (`insertReserveDriver`); a seat row's
+  // market id, if it has one, lives in the separate `market_id` column
+  // (`signSeatDriver`'s docblock) since the seat's own id never changes.
   if (row.position === 'reserve') {
-    await deleteReserveDriver(client, lobbyId, row.id);
     await releaseMarketSigning(client, lobbyId, row.id);
+    await deleteReserveDriver(client, lobbyId, row.id);
     return;
   }
-  // A race seat: see module docblock for why it is clamped, not vacated.
-  await updateContract(client, lobbyId, row.id, { seasonsLeft: 1, wage: row.contract.wage });
+  if (row.marketId) await releaseMarketSigning(client, lobbyId, row.marketId);
+  // A race seat can't be left empty — the stopgap fills it until the
+  // player signs a real driver.
+  const seat = row.position === 'seat_0' ? 0 : 1;
+  await seatStopgapDriver(client, lobbyId, row.teamKey!, seat);
 }
 
 /**
@@ -139,18 +153,25 @@ export async function ageDriversForSeason(client: PoolClient, lobbyId: string, n
     const seat1 = seats.get(`${teamKey}:seat_1`);
     if (!seat0 || !seat1) continue; // half a pair should not happen (see repo.ts) — nothing safe to write
     const isHuman = humanTeamKeys.has(teamKey);
-    const [next0, next1]: [Driver, Driver] = isHuman
-      ? [ageOneSeason(seat0.driver), ageOneSeason(seat1.driver)]
-      : developRosterSeason([seat0.driver, seat1.driver], teamKey, nextSeasonNo, lobbyId);
-    await saveDriverAfterSeason(client, lobbyId, seat0.id, next0);
-    await saveDriverAfterSeason(client, lobbyId, seat1.id, next1);
+    // A seat holding the stopgap is skipped entirely (age AND contract) —
+    // he's a placeholder, not a career; see `tickContract`'s doc comment.
+    if (!seat0.isStopgap && !seat1.isStopgap) {
+      const [next0, next1]: [Driver, Driver] = isHuman
+        ? [ageOneSeason(seat0.driver), ageOneSeason(seat1.driver)]
+        : developRosterSeason([seat0.driver, seat1.driver], teamKey, nextSeasonNo, lobbyId);
+      await saveDriverAfterSeason(client, lobbyId, seat0.id, next0);
+      await saveDriverAfterSeason(client, lobbyId, seat1.id, next1);
+    } else {
+      if (!seat0.isStopgap) await saveDriverAfterSeason(client, lobbyId, seat0.id, ageOneSeason(seat0.driver));
+      if (!seat1.isStopgap) await saveDriverAfterSeason(client, lobbyId, seat1.id, ageOneSeason(seat1.driver));
+    }
     await tickContract(client, lobbyId, seat0, isHuman);
     await tickContract(client, lobbyId, seat1, isHuman);
   }
 
   for (const row of rest) {
     const isHuman = row.teamKey ? humanTeamKeys.has(row.teamKey) : false;
-    await saveDriverAfterSeason(client, lobbyId, row.id, ageOneSeason(row.driver));
+    if (!row.isStopgap) await saveDriverAfterSeason(client, lobbyId, row.id, ageOneSeason(row.driver));
     await tickContract(client, lobbyId, row, isHuman);
   }
 }

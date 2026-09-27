@@ -17,6 +17,8 @@ import {
   saleValue,
   SQUAD_MIN,
   SQUAD_MAX,
+  RESERVE_SIGN_SCALE,
+  stopgapDriver,
   transferHeadline,
   type Contract,
   type DriverStatKey,
@@ -31,16 +33,6 @@ export type RenewResult = 'ok' | 'noRp' | 'notDue';
 
 /** Races a driver sits out after a heavy crash. */
 export const INJURY_ROUNDS: [number, number] = [1, 2];
-
-/** Who is in the seat this weekend when the regular is hurt and there is no reserve. */
-export const stopgapDriver = (seat: 0 | 1): Driver => ({
-  name: seat === 0 ? 'M. Yedek' : 'S. Yedek',
-  number: 90 + seat,
-  skill: 55,
-  stats: { pace: 56, consistency: 55, racecraft: 52, wet: 50, reaction: 55, dev: 40 },
-  age: 27,
-  potential: 58,
-});
 
 /** A driver in his final year, anywhere on the grid — the season's transfer talk. */
 export interface Rumour {
@@ -217,12 +209,12 @@ export const createDriverSlice: SliceCreator<DriverSlice> = (set, get) => ({
     if (!candidate) return 'missing';
     if (state.training && seat !== 'reserve' && state.training.driverIdx === seat) return 'busy';
     const { id: _id, fee: _fee, wage: _wage, ...driver } = candidate;
-    // A reserve is cheaper to sign and cheaper to keep: half of both.
-    const fee = seat === 'reserve' ? Math.round(signingCost(driver, seasons) / 2) : signingCost(driver, seasons);
+    // A reserve is cheaper to sign and cheaper to keep: RESERVE_SIGN_SCALE of both.
+    const fee = seat === 'reserve' ? Math.round(signingCost(driver, seasons) * RESERVE_SIGN_SCALE) : signingCost(driver, seasons);
     if (state.rp < fee) return 'noRp';
     const contract: Contract = {
       seasonsLeft: seasons,
-      wage: seat === 'reserve' ? Math.round(contractWage(driver, seasons) / 2) : contractWage(driver, seasons),
+      wage: seat === 'reserve' ? Math.round(contractWage(driver, seasons) * RESERVE_SIGN_SCALE) : contractWage(driver, seasons),
     };
     if (seat === 'reserve') {
       // Kadro tavanı: yedinci sürücü alınamaz, önce biri satılmalı.
