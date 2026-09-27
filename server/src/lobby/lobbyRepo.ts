@@ -15,6 +15,7 @@ import { formatLobbyName, pickNameBase } from './names.ts';
 import { nextRaceAt } from './schedule.ts';
 import { claimSlot } from './slotRepo.ts';
 import { seedTeamEconomy } from '../economy/repo.ts';
+import { seedTeamDrivers } from '../drivers/repo.ts';
 
 export type Visibility = 'public' | 'private';
 export type LobbyPhase = 'open' | 'checkin' | 'live' | 'result' | 'finished';
@@ -173,6 +174,10 @@ export async function createLobby(
         // bir araca sahip.
         for (const teamKey of SEAT_LADDER) {
           await seedTeamEconomy(client, lobby.id, teamKey);
+          // Sürücüler de öyle — her takımın iki asıl koltuğu `teams.ts`
+          // varsayılanlarından doğar (Faz 3b-2 Aşama A). Yarışa henüz
+          // kablolanmadı: `runner.ts` hâlâ `rosters: {}` gönderiyor.
+          await seedTeamDrivers(client, lobby.id, teamKey);
         }
         return lobby;
       });
@@ -385,6 +390,9 @@ export async function takeSeat(input: TakeSeatInput): Promise<TakeSeatResult> {
       // Lobi Faz 2'de kurulmuşsa ekonomi satırı yoktur. `on conflict do
       // nothing` olduğu için var olan bir ekonomiyi asla sıfırlamaz.
       await seedTeamEconomy(client, lobbyId, teamKey);
+      // Aynı gerekçe sürücüler için de geçerli: bir AI koltuğu insan
+      // tarafından devralınırken kadro zaten varsa dokunulmaz.
+      await seedTeamDrivers(client, lobbyId, teamKey);
 
       await client.query(
         `update lobby_invites set accepted_at = now()
