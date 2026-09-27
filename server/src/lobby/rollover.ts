@@ -43,13 +43,14 @@
  * round_no = $y`) verilir; kazanan `rowCount = 1` görür, kaybeden `0` — tıpkı
  * `phase.ts`/`lease.ts`/`raceRepo.ts`teki `advanceLastLap` gibi.
  *
- * NEDEN İKİ YAZMA (EVRE + EKONOMİ) TEK İŞLEMDE:
- * Evre geçişi taahhüt edilip kış reseti arada çökerse, lobi bir sonraki
- * sezonda ama araçlar hâlâ geçen sezonun statlarıyla kalırdı — ve evre artık
- * `result` olmadığı için bu fonksiyon BİR DAHA ASLA o resetı denemez (kendi
- * koruması bunu engeller). `runner.ts`teki `flag()`in aynı dersi: üç yazmayı
- * (damga, evre, muhasebe) tek taahhüde alması. Burada da evre + kış resetini
- * tek taahhüde alıyoruz.
+ * NEDEN EVRE + EKONOMİ + KADRO TEK İŞLEMDE:
+ * Evre geçişi taahhüt edilip kış reseti (araç ya da kadro) arada çökerse,
+ * lobi bir sonraki sezonda ama araçlar/sürücüler hâlâ geçen sezonun
+ * statlarıyla kalırdı — ve evre artık `result` olmadığı için bu fonksiyon BİR
+ * DAHA ASLA o resetı denemez (kendi koruması bunu engeller). `runner.ts`teki
+ * `flag()`in aynı dersi: üç yazmayı (damga, evre, muhasebe) tek taahhüde
+ * alması. Burada da evre + araç resetini + kadro yaşlandırmasını
+ * (`ageDriversForSeason`, `drivers/ageing.ts`) tek taahhüde alıyoruz.
  *
  * `now` her zaman çağırandan gelir; bu modül saati asla kendisi okumaz
  * (server/README.md §"now sadece route'ta örneklenir").
@@ -58,6 +59,7 @@ import { factoryEffects } from '@pitwall/shared/factory';
 import { regressCar, SEASON_ROUNDS } from '@pitwall/shared/season';
 import { withTransaction } from '../db/pool.ts';
 import { bumpCarStat, loadLobbyEconomy, type CarStats } from '../economy/repo.ts';
+import { ageDriversForSeason } from '../drivers/ageing.ts';
 import { loadLobby } from './lobbyRepo.ts';
 import { nextRaceAt } from './schedule.ts';
 
@@ -131,6 +133,12 @@ export async function rolloverRace(
           if (delta !== 0) await bumpCarStat(client, lobbyId, econ.teamKey, field, delta);
         }
       }
+
+      // KADRO GEÇİŞİ: aynı korumanın (yukarıdaki UPDATE'i kazanmak) ardından,
+      // aynı taahhütte. `ageDriversForSeason` (drivers/ageing.ts) her
+      // sürücüyü bir yaş büyütür ve AI takımlarını potansiyele doğru
+      // geliştirir — kendi docblock'unda gerekçesi var.
+      await ageDriversForSeason(client, lobbyId, nextSeason);
     }
 
     return true;

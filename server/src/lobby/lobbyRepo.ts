@@ -207,6 +207,28 @@ export async function loadLobby(lobbyId: string): Promise<Lobby | null> {
   }
 }
 
+/**
+ * Which of this lobby's teams a human currently occupies — season
+ * rollover's line between "ages only, develops through training" and "ages
+ * and develops on its own" (see `drivers/ageing.ts`).
+ *
+ * Reads `user_id`, not `managed`: `managed` flips between `human`/`assistant`
+ * week to week when a check-in is missed (`checkin.ts`), but the seat is
+ * still that manager's own team meanwhile — a missed check-in does not turn
+ * a human's roster into an AI one for the winter.
+ *
+ * `client` MUST be passed when called inside a transaction — see
+ * `loadTeamDrivers`'s doc comment in `drivers/repo.ts` for the deadlock a
+ * bare-pool read would risk while a transaction connection is held.
+ */
+export async function loadHumanTeamKeys(lobbyId: string, client?: PoolClient): Promise<Set<string>> {
+  const sql = `select team_key from lobby_seats where lobby_id = $1 and user_id is not null`;
+  const res = client
+    ? await client.query<{ team_key: string }>(sql, [lobbyId])
+    : await query<{ team_key: string }>(sql, [lobbyId]);
+  return new Set(res.rows.map((r) => r.team_key));
+}
+
 export async function loadSeats(lobbyId: string): Promise<Seat[]> {
   const res = await query<{
     team_key: string;

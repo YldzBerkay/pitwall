@@ -13,7 +13,7 @@
  * is a quarter of the lap, a chief mechanic a tenth of an upgrade.
  */
 
-import { rng } from './rng';
+import { rng, strHash } from './rng';
 import { overallOf, type Driver, type DriverStats } from './teams';
 
 export type StatKey = 'motor' | 'aero' | 'grip';
@@ -83,10 +83,20 @@ export function ageOneSeason(driver: Driver): Driver {
 /**
  * A rival team's season: everyone a year older, the young ones grow toward
  * their potential, the veterans fade. Seeded on team + season so the whole
- * league develops the same way for every manager.
+ * league develops the same way for every manager — for the mobile client,
+ * whose only "league" is the one save it lives in, that is the whole seed.
+ *
+ * The server has many lobbies developing the SAME team on the SAME season at
+ * once, so it passes `lobbyId` too: without it every lobby's `aurelia` would
+ * grow identically, a leak of the exact shape a past incident already found
+ * in this codebase (`espionage.ts`'s `missionSeed` once seeded only on
+ * `targetTeam.length`, so a spy mission's outcome was the same in every
+ * lobby — see its docblock). `lobbyId` is hashed with the same `strHash`
+ * that fix uses, so a lobby that never supplies one (the client) reproduces
+ * the exact old seed.
  */
-export function developRosterSeason(roster: [Driver, Driver], teamKey: string, season: number): [Driver, Driver] {
-  const random = rng(season * 2917 + teamKey.length * 431 + teamKey.charCodeAt(0));
+export function developRosterSeason(roster: [Driver, Driver], teamKey: string, season: number, lobbyId?: string): [Driver, Driver] {
+  const random = rng(season * 2917 + teamKey.length * 431 + teamKey.charCodeAt(0) + strHash(lobbyId ?? '') * 104729);
   const grow = (d: Driver): Driver => {
     const aged = ageOneSeason(d);
     const headroom = Math.max(0, aged.potential - overallOf(aged.stats));

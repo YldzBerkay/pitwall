@@ -116,6 +116,26 @@ export async function loadLobbyDrivers(lobbyId: string, client?: PoolClient): Pr
 }
 
 /**
+ * Overwrites a driver's age/stats/skill after a season rollover ages or
+ * develops him. `name`, `number` and `potential` are set once at seeding
+ * (`seedTeamDrivers`) and never revised here — a rollover moves a driver
+ * along the rules he was given, it does not reissue him.
+ *
+ * `client` MUST be the rollover's own transaction client (see
+ * `loadTeamDrivers`'s doc comment for the deadlock a bare-pool write would
+ * risk) — the whole point of Faz 3b-2's ageing pass is that it lands in the
+ * same commit as the season number it belongs to.
+ */
+export async function saveDriverAfterSeason(client: PoolClient, lobbyId: string, driverId: string, driver: Driver): Promise<void> {
+  await client.query(
+    `update lobby_drivers
+        set age = $3, stats = $4::jsonb, skill = $5, updated_at = now()
+      where lobby_id = $1 and id = $2`,
+    [lobbyId, driverId, driver.age, JSON.stringify(driver.stats), driver.skill],
+  );
+}
+
+/**
  * Every team's race-seat pair, as the race engine's `Rosters` shape — the
  * live counterpart of `teams.ts`' fixed defaults. `driverOf` (raceEngine.ts)
  * falls back to `rosters[teamKey]` for EVERY team, human-managed or AI, so

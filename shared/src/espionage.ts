@@ -15,7 +15,7 @@
  * re-rolled. Constants in docs/paddock-research.md §2.3.
  */
 
-import { rng } from './rng';
+import { rng, strHash } from './rng';
 import type { StatKey } from './driverMarket';
 
 export type AgentKind = 'free' | 'premium';
@@ -109,20 +109,6 @@ export interface SpyMission {
 export interface GarageHide {
   /** Hidden through this round inclusive. */
   untilRound: number;
-}
-
-/**
- * A string -> uint32 hash, purely so a lobby id or team key can feed a
- * seed alongside the numeric fields `rng` already takes. Not a hash
- * anyone needs to reverse or keep stable across versions — only stable
- * WITHIN one run of `resolveMission`, which is all determinism requires.
- */
-function strHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
-  }
-  return h;
 }
 
 /**

@@ -9,6 +9,24 @@
  *
  * Seed convention: `round * prime + secondInput * prime`, see each caller.
  */
+/**
+ * A string -> uint32 hash, purely so an id (a lobby id, a team key, a driver
+ * id) can feed a seed alongside the numeric fields `rng` already takes. Not a
+ * hash anyone needs to reverse or keep stable across versions — only stable
+ * WITHIN one run of whatever it seeds.
+ *
+ * Shared rather than reimplemented per caller (`espionage.ts`'s `missionSeed`
+ * had its own private copy first): the whole point of a seed helper is that
+ * every caller salts the SAME way, so an audit can trust it once.
+ */
+export function strHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
 export function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
