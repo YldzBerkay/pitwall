@@ -12,6 +12,62 @@
 
 ---
 
+## DURUM — oturum sonu (2026-09-27)
+
+Sunucu **780/780**, mobil **193/193**, üç tip denetimi temiz, `econ` geçiyor,
+ağaç temiz. Son commit `dcfd271`.
+
+| Aşama | Durum | Commit'ler |
+|---|---|---|
+| **A** Sürücüler sunucuda | ✅ | `303facb` şema · `66be8a3` tarifte donma · `f50b6fd` yaşlanma |
+| **B** Pazar, sözleşme, antrenman | ✅ | `8618efc` pazar · `9c3513e` geçici sürücü · `0687a63` antrenman |
+| **C** Personel | ✅ | `ab611ff` pazar · `e1a9f35` etkiler · `dcfd271` boş koltuk = 40 |
+| **D** Maaş ve sakatlık | ⬜ **sırada** | |
+| **E** Rütbe puanı | ⬜ | |
+| **F** İstemci | ⬜ | |
+
+### Yürütmede verilen kararlar (kullanıcıyla)
+
+- **Sözleşmesi biten insan yarış koltuğu → geçici sürücü** oturur, oyuncu yenisini
+  imzalayana kadar. (Ajan önce koltuğu 1 yılda sabitlemişti; bu yenilemeyi
+  anlamsız kılıyordu.) `stopgapDriver` artık `shared/`'da.
+- **Personelsiz insan takımı = 40 beceri.** Motorun "alan boş" varsayılanları
+  cömertti: personelsiz takım en iyi strateji uzmanıyla aynı brifingi bedavaya
+  alıyordu, yani personel tutmamak zayıf personel tutmaktan iyiydi. İstemcinin
+  orijinal tasarımı geri getirildi. AI takımları motor varsayılanlarında kalıyor.
+
+### Aşama D için bilinmesi gerekenler
+
+- **Geçici sürücü mekanizması hazır** (`seatStopgapDriver`) — sakat sürücünün
+  yerine de o ya da en iyi yedek girecek.
+- **Personel sözleşmeleri zaten muhasebede işliyor** (`tickStaffContracts`), yani
+  maaşın muhasebeye eklenmesi aynı yere oturuyor.
+- **Maaş kararı:** ödeyebildiği kadar, `chargeRpFloor` ile, gelirden SONRA, aynı
+  transaction'da, gerçek tutar bildirilir.
+
+### Açık kalanlar (Aşama F'de kapanmalı)
+
+- **Brifing istemciye hiç gönderilmiyor.** Sunucu onu yalnızca muhasebede
+  hesaplıyor; oyuncu takip etmesi gereken brifingi göremiyor. Mobil hâlâ kendi
+  yerel kopyasını üretiyor.
+- **Antrenman `stat`'ı isteğe bağlı.** İstemci göndermezse antrenman sessizce
+  hiçbir şey yapmaz — Aşama F'de istemcinin gönderdiği kanıtlanmalı.
+- **Yedek kadro antrenmanı** kapsam dışı bırakıldı (kararlı bir sıra indeksi yok).
+
+### Bu fazda dört kez görülen hata sınıfı: tohum lobiler arası tekrarlıyor
+
+Casusluk sonucu (takım adının **uzunluğu**), kışın gelişme, sürücü pazarı ve
+personel pazarı — dördü de lobi içermeyen bir tohumla her lobide aynı davranıyordu.
+`strHash` artık `shared/rng.ts`'te; yeni tohumlanmış her kural lobiyi içermeli.
+
+### Paralel iş
+
+Kararsız sunucu testlerinin ortak sebebini arayan ayrı bir oturum koşuyor
+(`task_cd27bf6a`). **Aynı test veritabanını paylaşıyor** — o koşarken burada
+görülen tek seferlik bir düşüş, iki oturumun çakışmasından olabilir.
+
+---
+
 ## Başlangıç durumu
 
 Sunucu **712/712**, mobil **193/193**, üç tip denetimi temiz, `npm run econ`
