@@ -35,6 +35,7 @@ import {
   type Sponsorship,
 } from '@pitwall/shared/sponsors';
 import { briefFor, briefCompliance, BRIEF_RP_EACH, type BriefItem, type WeekendChoices } from '@pitwall/shared/brief';
+import { staffEffects } from '@pitwall/shared/staff';
 import { emptyCareer, type Career } from '@pitwall/shared/achievements';
 import { scoreSeatWeekend, recordSeatWeekend } from '../src/economy/weekendAchievements.ts';
 import { loadCareer } from '../src/economy/careerRepo.ts';
@@ -179,17 +180,26 @@ function predictRace(seed: number, snapshot: RaceSnapshot) {
 }
 
 /**
- * What settle.ts should pay a team in briefing RP: the true (accuracy-1)
- * brief for the frozen recipe, judged against that team's own frozen
- * weekend choices. Zero for a team with no entry (AI-run seat — no choices
- * were ever made for it to be judged against).
+ * What settle.ts should pay a team in briefing RP: the brief for the frozen
+ * recipe, judged against that team's own frozen weekend choices. Zero for a
+ * team with no entry (AI-run seat — no choices were ever made for it to be
+ * judged against).
+ *
+ * `accuracy`/`forecastBand` come from `snapshot.briefParams` — a human-owned
+ * team gets `staffEffects`' own skill-40 default whether or not it ever
+ * hired a strategist (Faz 3b-2 Stage D's follow-up: an empty seat is skill
+ * 40 ON PURPOSE, see `runner.ts`'s `buildFrozenEntries` docblock), so this
+ * is NOT the perfect (accuracy-1) brief unless a real strategist earns it.
  */
 function briefBonusFor(seed: number, snapshot: RaceSnapshot, teamKey: string): number {
   const entry = snapshot.entries[teamKey];
   if (!entry) return 0;
   const track = trackForRound(1);
   const weather = weatherFor(track, seed);
-  const items = briefFor(track, weather, entry.setup);
+  const params = snapshot.briefParams?.[teamKey];
+  const items = params
+    ? briefFor(track, weather, entry.setup, params.accuracy, 0, params.forecastBand)
+    : briefFor(track, weather, entry.setup);
   const choices: WeekendChoices = {
     raceCompound: entry.setup.compound,
     tactics: entry.tactics,
@@ -472,11 +482,19 @@ describe('race settlement — the earning loop', () => {
     const goodLobby = await makeLobby('BriefGood');
     const badLobby = await makeLobby('BriefBad');
 
+    // HUMAN'ın frozen brief parametreleri artık `staffEffects({})`in skill-40
+    // varsayılanı (0.70 doğruluk / 0.30 bant) — motorun eski örtük
+    // varsayılanı (doğruluk 1) DEĞİL (Faz 3b-2 Stage D'nin follow-up'ı: boş
+    // koltuk BİLEREK skill 40'tır). `bestAndWorstChoices` bu YÜZDEN gerçekte
+    // ÖDENECEK (yanlış-çağrı çevrilmiş) öğelere karşı arama yapmalı, yoksa
+    // en iyi/en kötü kombinasyon settle.ts'in gerçekte puanladığından ayrışır.
+    const defaultBrief = staffEffects({});
+
     const goodSeed = deriveSeed(goodLobby, 1, 1);
     const goodTrack = trackForRound(1);
     const goodWeather = weatherFor(goodTrack, goodSeed);
     const dummySetup = { motor: 50, aero: 50, grip: 50, compound: 'MEDIUM' as CompoundKey };
-    const goodItems = briefFor(goodTrack, goodWeather, dummySetup);
+    const goodItems = briefFor(goodTrack, goodWeather, dummySetup, defaultBrief.briefAccuracy, 0, defaultBrief.forecastBand);
     const { best, bestScore } = bestAndWorstChoices(goodItems);
     await setWeekendChoices(goodLobby, HUMAN, {
       compound: best.raceCompound, bias: best.bias, tactics: best.tactics, qualiRisk: best.risk,
@@ -485,7 +503,7 @@ describe('race settlement — the earning loop', () => {
     const badSeed = deriveSeed(badLobby, 1, 1);
     const badTrack = trackForRound(1);
     const badWeather = weatherFor(badTrack, badSeed);
-    const badItems = briefFor(badTrack, badWeather, dummySetup);
+    const badItems = briefFor(badTrack, badWeather, dummySetup, defaultBrief.briefAccuracy, 0, defaultBrief.forecastBand);
     const { worst, worstScore } = bestAndWorstChoices(badItems);
     await setWeekendChoices(badLobby, HUMAN, {
       compound: worst.raceCompound, bias: worst.bias, tactics: worst.tactics, qualiRisk: worst.risk,

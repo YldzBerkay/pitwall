@@ -11,6 +11,25 @@
  * whoever happens to be on the roster at settlement time), and that
  * `contractRounds` ticks exactly once per settled race.
  *
+ * ── UNSTAFFED HUMAN vs. UNSTAFFED AI ─────────────────────────────────────
+ * A first version of this task gated every effect on that specific role
+ * being HIRED, so an unstaffed team of any kind fell back to the engine's
+ * own hardcoded defaults. That inverted the mechanic for a human team: at
+ * skill 40 (an empty seat) `staffEffects` gives a WORSE brief (0.70/0.30)
+ * and a WORSE pit crew (0.08 fail chance) than the engine's own hardcoded
+ * "nobody hired" numbers (implicit accuracy 1 / band 0.05, 0.04 fail
+ * chance) — so a human team was BETTER OFF never touching the staff
+ * system, and hiring anyone below skill ~90 made the team worse. The
+ * client's original design was the opposite: an empty seat is skill 40 ON
+ * PURPOSE, so having no staff is meant to be bad and hiring is meant to
+ * matter. The fix (this version): `staffEffects` applies to a
+ * HUMAN-OWNED team's all three roles unconditionally (an absent role runs
+ * on `staffEffects`'s own skill-40 default); an AI team (no owner) is
+ * untouched, exactly as before this whole feature. Ownership is read via
+ * `loadHumanTeamKeys` (`user_id is not null`), never `managed` — `managed`
+ * flips human/assistant on a missed check-in, but the seat is still that
+ * manager's own team meanwhile (see `lobbyRepo.ts`'s own doc comment).
+ *
  * Every id this suite creates is tracked and only those are torn down —
  * other suites share this database (house rule, see `race-settle.test.ts`).
  */
@@ -37,6 +56,8 @@ const createdUsers: string[] = [];
 let seq = 0;
 
 const HUMAN = SEAT_LADDER[0];
+/** Never claimed by `makeLobby` — stays `managed: 'ai'`, unowned. */
+const AI_SEAT = SEAT_LADDER[2];
 
 async function makeLobby(label: string): Promise<string> {
   const owner = await createUserWithIdentity({
@@ -75,14 +96,62 @@ describe('staff effects — hiring actually changes the game', () => {
     await closePool();
   });
 
-  it('unstaffed team: race-entry fields are absent, same as today', async () => {
-    const lobbyId = await makeLobby('Unstaffed');
-    const { entries } = await buildFrozenEntries(lobbyId, new Date());
+  it('an unstaffed AI team races exactly as before — never enters entries at all', async () => {
+    const lobbyId = await makeLobby('AiUnstaffed');
+    const { entries, briefParams } = await buildFrozenEntries(lobbyId, new Date());
+    // AI hiç `entries`e girmez — bugünkü sözleşme: motorun kendi
+    // `aiStrength`/`aiReliability` yoluyla koştuğu takımlar `entries`te HİÇ
+    // görünmez. Bu görev bu invaryantı DEĞİŞTİRMEDİ; yalnızca `entries`e
+    // giren (insan sahipli) takımların içeriğini değiştirdi.
+    assert.equal(entries[AI_SEAT], undefined, 'AI takımı katılıma girmiş');
+    assert.equal(briefParams[AI_SEAT], undefined, 'AI takımı için brifing parametresi üretilmiş');
+  });
+
+  it('an unstaffed human team gets the skill-40 effects, not the engine\'s hardcoded defaults', async () => {
+    const lobbyId = await makeLobby('HumanUnstaffed');
+    const { entries, briefParams } = await buildFrozenEntries(lobbyId, new Date());
+    const expected = staffEffects({}); // skill-40 fallback for all three roles
+
     const own = entries[HUMAN];
     assert.ok(own, 'insan koltuğu katılıma girmedi');
-    assert.equal(own.assistantErrorScale, undefined, 'stratejist yokken assistantErrorScale ayarlanmış');
-    assert.equal(own.pitSecondsSaved, undefined, 'pit şefi yokken pitSecondsSaved ayarlanmış');
-    assert.equal(own.pitFailChance, undefined, 'pit şefi yokken pitFailChance ayarlanmış');
+    assert.equal(own.assistantErrorScale, expected.assistantErrorScale);
+    assert.equal(own.pitSecondsSaved, expected.pitSecondsSaved);
+    assert.equal(own.pitFailChance, expected.pitFailChance);
+    assert.notEqual(own.pitFailChance, 0.04, 'motorun eski sabit varsayılanı hâlâ kullanılıyor');
+
+    const params = briefParams[HUMAN];
+    assert.ok(params, 'personelsiz insan takımı için brifing parametresi hiç üretilmedi');
+    assert.equal(params.accuracy, expected.briefAccuracy);
+    assert.equal(params.forecastBand, expected.forecastBand);
+    assert.notEqual(params.accuracy, 1, 'briefFor\'ın eski örtük varsayılanı (doğruluk 1) hâlâ kullanılıyor');
+  });
+
+  it('hiring improves the team — the skill-40/no-staff inversion is gone', async () => {
+    const bare = await makeLobby('InvBare');
+    const staffed = await makeLobby('InvStaffed');
+    await hire(staffed, HUMAN, 'strategist', 65);
+    await hire(staffed, HUMAN, 'pitCrew', 65);
+
+    const { briefParams: bareBrief } = await buildFrozenEntries(bare, new Date());
+    const { briefParams: staffedBrief, entries: staffedEntries } = await buildFrozenEntries(staffed, new Date());
+
+    // A skill-65 strategist gives a MORE accurate, NARROWER brief than an
+    // unstaffed (skill-40) team — not a worse one.
+    assert.ok(
+      staffedBrief[HUMAN].accuracy > bareBrief[HUMAN].accuracy,
+      'skill-65 stratejist personelsiz takımdan daha kötü bir brifing üretti',
+    );
+    assert.ok(
+      staffedBrief[HUMAN].forecastBand < bareBrief[HUMAN].forecastBand,
+      'skill-65 stratejist personelsiz takımdan daha geniş bir yağmur bandı üretti',
+    );
+
+    // A skill-65 pit crew fails LESS often than an unstaffed (skill-40) crew.
+    const { entries: bareEntries } = await buildFrozenEntries(bare, new Date());
+    assert.ok(
+      staffedEntries[HUMAN].pitFailChance! < bareEntries[HUMAN].pitFailChance!,
+      'skill-65 pit şefi personelsiz takımdan daha sık hata yaptı',
+    );
   });
 
   it('mechanic: reliabilityBonus raises frozen reliability, staffed vs unstaffed', async () => {
@@ -182,20 +251,26 @@ describe('staff effects — hiring actually changes the game', () => {
     const lobbyId = await makeLobby('BriefFrozenSettle');
     const { seed, snapshot } = await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
 
-    // No strategist at lights-out — frozen brief is the plain (accuracy 1) one.
-    assert.equal(snapshot.briefParams?.[HUMAN], undefined);
+    // No strategist at lights-out — frozen brief is the skill-40 default
+    // (`staffEffects({})`), not the engine's own implicit accuracy-1 default.
+    const expectedDefault = staffEffects({});
+    assert.equal(snapshot.briefParams?.[HUMAN]?.accuracy, expectedDefault.briefAccuracy);
+    assert.equal(snapshot.briefParams?.[HUMAN]?.forecastBand, expectedDefault.forecastBand);
 
     // A strategist joins AFTER lights-out but BEFORE settlement. Skill 60
     // (not 90): at skill 90 `staffEffects` happens to hit the lerp's exact
-    // top (accuracy 1.0, band 0.05), which is byte-identical to the
-    // no-strategist default and would hide a settlement-time regeneration
-    // bug behind a numeric coincidence.
+    // top (accuracy 1.0, band 0.05), which would be indistinguishable from a
+    // DIFFERENT bug (ignoring the frozen params entirely and defaulting to
+    // accuracy 1) and would hide a settlement-time regeneration bug behind a
+    // numeric coincidence.
     await hire(lobbyId, HUMAN, 'strategist', 60);
 
     const track = trackForRound(1);
     const weather = weatherFor(track, seed);
     const entry = snapshot.entries[HUMAN];
-    const items = briefFor(track, weather, entry.setup); // frozen params: none
+    // The FROZEN params (skill-40 default), never the skill-60 strategist
+    // hired after lights-out.
+    const items = briefFor(track, weather, entry.setup, expectedDefault.briefAccuracy, 0, expectedDefault.forecastBand);
     const choices: WeekendChoices = {
       raceCompound: entry.setup.compound, tactics: entry.tactics,
       risk: snapshot.risks[HUMAN] ?? 'safe', bias: entry.setup.bias ?? 0,
@@ -233,8 +308,11 @@ describe('staff effects — hiring actually changes the game', () => {
     const seat = await loadStaffSeat(lobbyId, HUMAN, 'pitCrew');
     assert.equal(seat, null, 'süresi dolan sözleşme koltukta kaldı');
 
+    // Koltuk boşaldıktan sonra takım İNSAN SAHİPLİ olmaya devam eder —
+    // `staffEffects`in KENDİ skill-40 varsayılanına döner, `undefined`e değil.
+    const expectedDefault = staffEffects({});
     const { entries } = await buildFrozenEntries(lobbyId, new Date());
-    assert.equal(entries[HUMAN].pitSecondsSaved, undefined, 'süresi dolmuş pit şefi hâlâ etkisini sürdürüyor');
-    assert.equal(entries[HUMAN].pitFailChance, undefined, 'süresi dolmuş pit şefi hâlâ etkisini sürdürüyor');
+    assert.equal(entries[HUMAN].pitSecondsSaved, expectedDefault.pitSecondsSaved, 'süresi dolmuş pit şefi hâlâ eski etkisini sürdürüyor');
+    assert.equal(entries[HUMAN].pitFailChance, expectedDefault.pitFailChance, 'süresi dolmuş pit şefi hâlâ eski etkisini sürdürüyor');
   });
 });

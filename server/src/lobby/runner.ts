@@ -48,7 +48,7 @@ import { settleRace, type SettleDeps } from '../economy/settle.ts';
 import { loadLobbyStaff } from '../staff/repo.ts';
 import { staffEffects } from '@pitwall/shared/staff';
 import { renewLease, releaseLease } from './lease.ts';
-import { loadSeats } from './lobbyRepo.ts';
+import { loadHumanTeamKeys, loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
 import { advanceLastLap, finishRun, loadDecisions, loadRun, startRun } from './raceRepo.ts';
 import { decisionsForLap, replayRace, type DecisionLogEntry, type RaceSnapshot } from './replay.ts';
@@ -249,6 +249,12 @@ export async function buildFrozenEntries(
   // ETKİLEMEZ — yalnızca `entries`e ve `briefParams`e BURADA donan sayılar
   // yarışın ve brifingin geri kalanını belirler.
   const staffByTeam = await loadLobbyStaff(lobbyId);
+  // Kim İNSAN sahipli, `managed`E DEĞİL `user_id`YE göre — `managed` bir
+  // kaçırılan check-in'de human/assistant arasında gidip gelir
+  // (`checkin.ts`), ama koltuk yine o yöneticinin takımıdır; sahiplik
+  // sorusu için tek doğru kaynak `loadHumanTeamKeys` (`lobbyRepo.ts`, aynı
+  // ilke `drivers/ageing.ts`'in zaten kullandığı).
+  const humanTeamKeys = await loadHumanTeamKeys(lobbyId);
 
   const entries: Entries = {};
   const risks: Record<string, QualiRisk> = {};
@@ -279,23 +285,34 @@ export async function buildFrozenEntries(
     // yerde tanımlı — burada asla tekrar yazılmaz, yalnızca İTHAL edilir
     // (server/README.md "shared'in kuralları asla tekrar yazılmaz").
     //
-    // ROL BAZINDA KAPI, hepsi-ya-da-hiçbiri DEĞİL: `staffEffects({})` boş bir
-    // rosterde bile (skill 40 varsayılanıyla) pit şefi ve brifing için
-    // BUGÜNKÜ motor/brifing varsayılanlarından FARKLI sayılar üretir — pit
-    // için `pitFailChance` 0.08 iken motorun kendi varsayılanı `?? 0.04`,
-    // brifing için doğruluk 0.7/bant 0.3 iken `briefFor`in kendi varsayılanı
-    // 1/0.05. Bu YÜZDEN her alan yalnızca O ROL GERÇEKTEN dolu ise
-    // uygulanır; hiç kimseyi işe almamış bir takım BUGÜNKÜ gibi davranmaya
-    // devam eder (Requirement 7). Mekanik'in iki etkisi (reliabilityBonus,
-    // upgradeBonus) ve stratejist'in assistantErrorScale'i skill-40'ta zaten
-    // BUGÜNKÜ varsayılanla özdeş (0 katkı / çarpan 1) olduğu için onları
-    // koşulsuz uygulamak da güvenlidir, ama tutarlılık için AYNI kapı
-    // kullanılıyor.
+    // İNSAN SAHİPLİ HER TAKIM İÇİN ÜÇ ROL DE UYGULANIR, rol dolu olsun ya da
+    // olmasın — BOŞ KOLTUK SKILL 40'TIR, `staffEffects`in KENDİ varsayılanı
+    // (`staff.ts`'in kendi docblock'u: "an empty seat means the role runs on
+    // defaults"). Bu, önceki (rol bazında kapılı) sürümün TERSİDİR: o sürüm
+    // hiç personeli olmayan bir takımı motorun kendi sabit varsayılanlarına
+    // (`pitFailChance ?? 0.04`, `briefFor`in `accuracy=1`) bırakıyordu — ki bu
+    // sayılar `staffEffects`in skill-40 sayılarından (0.08, 0.70) DAHA İYİDİR.
+    // Sonuç: personelsiz bir takım oyundaki EN İYİ stratejistin brifingini
+    // BEDAVA alıyordu ve 90 altı HER stratejist/pit şefi işe almak takımı
+    // KÖTÜLEŞTİRİYORDU — istemcinin özgün tasarımının ("boş koltuk kötüdür,
+    // işe almak bu yüzden önemlidir") tam tersi. Karar (oturumda verildi):
+    // yalnızca İNSAN SAHİPLİ takımlar için `staffEffects` üç rolde de KOŞULSUZ
+    // uygulanır; AI takımları (bu döngüye hiç girmez) motorun kendi
+    // varsayılanlarını kullanmaya devam eder — istemcinin özgün tasarımının
+    // sunucudaki karşılığı.
+    //
+    // SAHİPLİK `managed`E DEĞİL `user_id`YE göre belirlenir (yukarıdaki
+    // `humanTeamKeys` yorumu) — bu döngüye zaten yalnızca `managed !== 'ai'`
+    // (dolayısıyla `user_id is not null`, bkz. `002_lobby.sql`'in
+    // `lobby_seats_owner_check`i) koltuklar girdiği için `humanTeamKeys.has`
+    // burada her zaman doğrudur; kontrol yine de AÇIKÇA yazılır ki "insan mı"
+    // sorusunun TEK kaynağı her yerde aynı kalsın.
     const roster = staffByTeam[seat.teamKey] ?? {};
-    const effects = staffEffects(roster);
+    const isHumanOwned = humanTeamKeys.has(seat.teamKey);
+    const effects = isHumanOwned ? staffEffects(roster) : undefined;
 
     let reliability = reliabilityFor(factoryLevelsByTeam.get(seat.teamKey) ?? {});
-    if (roster.mechanic) reliability = Math.min(1, reliability + effects.reliabilityBonus);
+    if (effects) reliability = Math.min(1, reliability + effects.reliabilityBonus);
 
     entries[seat.teamKey] = {
       // Tezgahta duran geliştirme pişen statı yarıya indirir...
@@ -306,11 +323,11 @@ export async function buildFrozenEntries(
       // DONAN KARAR: check-in yapan oyuncu kendi yarışını sürer, yapmayanı
       // asistan devralır. Bu, yarış boyunca bir daha SORULMAZ.
       managed: seat.managed,
-      ...(roster.strategist ? { assistantErrorScale: effects.assistantErrorScale } : {}),
-      ...(roster.pitCrew ? { pitSecondsSaved: effects.pitSecondsSaved, pitFailChance: effects.pitFailChance } : {}),
+      ...(effects ? { assistantErrorScale: effects.assistantErrorScale } : {}),
+      ...(effects ? { pitSecondsSaved: effects.pitSecondsSaved, pitFailChance: effects.pitFailChance } : {}),
     };
     risks[seat.teamKey] = choices?.qualiRisk ?? DEFAULT_RISK;
-    if (roster.strategist) {
+    if (effects) {
       briefParams[seat.teamKey] = { accuracy: effects.briefAccuracy, forecastBand: effects.forecastBand };
     }
   }
