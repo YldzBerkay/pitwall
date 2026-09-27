@@ -124,10 +124,23 @@ describe('rosters freeze into the race recipe', () => {
     const withReal = replayRace({ seed, round: 3, snapshot, decisions: [] });
     const withDefault = replayRace({ seed, round: 3, snapshot: { ...snapshot, rosters: {} }, decisions: [] });
 
+    // Bitiş SIRASI değil, aracın tüm durumu karşılaştırılır. Sıra kararsız bir
+    // ölçüttü: aurelia güçlü bir takım, ve rastgele lobi kimliğinden türeyen
+    // tohum onu zaten birinci bitirttiğinde hızı artırmak sırayı değiştirmiyordu
+    // — test, kadrolar motora ulaştığı hâlde düşüyordu. Hız her turun süresini
+    // değiştirir; tur süreleri ve toplam süre her tohumda farklıdır.
+    const real = withReal.cars.find((c) => carId(c) === 'aurelia:0');
+    const dflt = withDefault.cars.find((c) => carId(c) === 'aurelia:0');
+    assert.ok(real && dflt, 'aurelia:0 missing from the race');
     assert.notDeepEqual(
-      withReal.cars.map((c) => `${carId(c)}@${c.position}`),
-      withDefault.cars.map((c) => `${carId(c)}@${c.position}`),
+      withReal.cars,
+      withDefault.cars,
       'a driver 49 points faster than the default left the race identical — rosters are not reaching the engine',
+    );
+    assert.notEqual(
+      real.totalSec,
+      dflt.totalSec,
+      'aurelia:0 covered the race in exactly the same time at pace 99 as at its default — the stat is not reaching the engine',
     );
   });
 
