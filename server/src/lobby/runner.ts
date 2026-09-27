@@ -197,20 +197,30 @@ export async function standingsBeforeRound(
  * iki süreç de "yok" görür ve ikisi de tarifi kurar. Burada ikinci yazma
  * veritabanından FIRLAR — `startRun`ın sözleşmesi de budur.
  */
-export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> {
-  const { lobbyId, seasonNo, roundNo, now } = input;
-
-  const seed = deriveSeed(lobbyId, seasonNo, roundNo);
-  const track = trackForRound(roundNo);
-  const weather = weatherFor(track, seed);
-
+/**
+ * Katılımın DONMASI — bir koltuğun o anki gerçeğini (araç, hafta sonu
+ * seçimleri, güvenilirlik, kim sürüyor) tek bir `Entries` haritasına çevirir.
+ *
+ * `startRaceFor` (ışıklar sönerken) ve pratik seansı dondurma (`practice.ts`,
+ * her FP anında) AYNI donma biçimine ihtiyaç duyar: ikisi de "bu an için
+ * araç ve seçimler ne" sorusuna aynı cevabı vermeli, aksi halde pratik
+ * sıralaması yarışın kullandığı araçtan BAŞKA bir araca göre kurulmuş olurdu.
+ * Bu yüzden mantık BURADA tek yerde durur, `practice.ts` onu İTHAL EDER —
+ * `server/README.md`nin "shared'in kuralları asla tekrar yazılmaz" ilkesinin
+ * server-içi karşılığı: bir dondurma biçimi de iki kez yazılmaz.
+ *
+ * `pitLaneStarts`/`risks` BİLEREK YOK: ikisi de sıralama/yarışa özgü (grid
+ * cezası, sıralama riski) ve pratikte anlamsız — pratik yalnızca bir tur
+ * sıralaması üretir, ızgara kurmaz.
+ */
+export async function buildFrozenEntries(lobbyId: string, now: Date): Promise<{ entries: Entries; risks: Record<string, QualiRisk> }> {
   // Parc fermé tek çağrıda iki çıktı verir ve ikisi de tarife girer: `byTeam`
   // katılımın aracını belirler, `pitLaneStarts` grid cezasını.
   const verdict = await evaluateParcFerme(lobbyId, now);
   const seats = await loadSeats(lobbyId);
   // IŞIKLAR SÖNERKEN TEK SEFER OKUNUR — `managed` ile birebir aynı gerekçeyle
   // (aşağıdaki "DONAN KARAR" yorumu): bundan sonra satır değişse de bu
-  // yarışı etkilemez, yalnızca BİR SONRAKİ `startRaceFor` çağrısını.
+  // yarışı etkilemez, yalnızca BİR SONRAKİ çağrıyı.
   const weekendChoices = await loadWeekendChoices(lobbyId);
   const economies = await loadLobbyEconomy(lobbyId);
   const factoryLevelsByTeam = new Map(economies.map((e) => [e.teamKey, e.factoryLevels]));
@@ -251,6 +261,23 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
     };
     risks[seat.teamKey] = choices?.qualiRisk ?? DEFAULT_RISK;
   }
+
+  return { entries, risks };
+}
+
+export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> {
+  const { lobbyId, seasonNo, roundNo, now } = input;
+
+  const seed = deriveSeed(lobbyId, seasonNo, roundNo);
+  const track = trackForRound(roundNo);
+  const weather = weatherFor(track, seed);
+
+  const { entries, risks } = await buildFrozenEntries(lobbyId, now);
+  // Pit yolu cezası donma biçiminin PARÇASI DEĞİL: `buildFrozenEntries`
+  // pratikle paylaşılan ortak kısım, ceza yalnızca yarışa özgü — bu yüzden
+  // `evaluateParcFerme` burada AYRICA çağrılıyor (aynı `now`, aynı lobi;
+  // `parcFerme.ts`in kendisi saf okuma, iki kez çağırmak tarifi değiştirmez).
+  const verdict = await evaluateParcFerme(lobbyId, now);
 
   // Cezalı araçların serbest lastiğini burada dolduruyoruz: `parcFerme.ts`
   // bilerek boş bırakıyor (saat/tohum orada yok), telafiyi verecek yer burası.
