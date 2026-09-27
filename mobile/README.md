@@ -136,6 +136,50 @@ Bunun `.tsx` dosyalarına DEĞİL slice'lara yazılmasının iki nedeni var:
    taranabilir (`no-local-race.test.ts`'in 4b testi `RaceWeekScreen`'in
    `weekend.phase`/`WeekendPhase`/`localPhase`e hiç dokunmadığını tarar).
 
+## Antrenman, casusluk ve kariyer artık sunucudan (Faz 3b-1)
+
+Üçü de aynı "istemcide yerel yedek yok" ilkesini takip ediyor —
+`docs/FEATURES.md`'nin "Faz 3b-1" bölümüne bakın, sunucu tarafının tam
+gerekçesi için.
+
+- **Antrenman** (`lib/api/practice.ts`, `raceSlice.ts`, `PracticePanel.tsx`,
+  `mobile/test/practice-from-server.test.ts`): FP1/FP2/FP3'ün klasmanı
+  `GET /lobby/practice`ten okunur, `/race/live` soketi bir seans donduğunda
+  yeni bir çerçeve yayınlar (`raceSocket.ts`). İstemci hiçbir zaman kendi
+  antrenman sonucunu hesaplamaz — seans henüz donmadıysa panel "henüz yok"
+  gösterir, uydurma bir zaman tablosu ÇİZMEZ.
+- **Casusluk** (`lib/api/economy.ts`, `store/slices/espionageDisplay.ts`,
+  `mobile/test/espionage-from-server.test.ts`, 11 test, gerçek `node:http`
+  sunucusuyla): eski `espionageSlice.ts` (missions/upgradeBoosts/intelNews/
+  aiBonus/yerel `resolveIntel`) TAMAMEN SİLİNDİ. `displayEspionage` — saf
+  selector, `factoryDisplay.ts`'in aynısı — mevcut görevi, garaj-gizleme
+  durumunu ve bekleme süresini `SlotState`ten okur, kalan süre/bekleme
+  sunucunun monotonik saatinden türetilir (`economyClock.ts`), asla
+  `Date.now()`'dan değil. `{kind:'no-lobby'}` koltuksuzken, asla yerel bir
+  yedek değil. **Eski "bekleyen yükseltme çarpanları" ve "istihbarat haber
+  günlüğü" panelleri geri getirilmedi, İCAT EDİLMEDİ** — sunucu bir haber
+  günlüğü tutmuyor (bkz. `docs/FEATURES.md`'nin "hâlâ açık" listesi);
+  bekleyen çarpan artık `DevelopmentScreen.tsx`'te yükseltme seçilirken
+  ayrı bir yerde gösteriliyor (`factoryDisplay.ts`'in `spyBoosts`
+  okuması).
+- **Kariyer** (`lib/api/career.ts`, `store/slices/careerApiSlice.ts`,
+  `careerDisplay.ts`, `ProfileScreen.tsx`, `mobile/test/career-from-server.test.ts`):
+  Profil ekranı artık `gameStore.ts`'in eski yerel `career` alanını DEĞİL,
+  `GET /economy/career`i okuyor — o yerel alan hâlâ hareket ediyordu (sezon
+  öncesi test panelinin +5'i), yani "henüz hiçbir şey yok" değil, "yanlış
+  ama inandırıcı görünen bir sayı" idi. `RaceResultSheet.tsx` bir yarışın
+  kazandığı başarımları ve kariyer puanına kattığını (`GET /economy/
+  settlement`in `achievements`/`careerScore` alanları) gösteriyor — yalnızca
+  KAZANILAN başarımlar listelenir, sunucu bir reddin (ör. Clean Sweep'in
+  neden verilmediğinin) nedenini hiç expose etmediği için ekran da bir
+  neden UYDURMUYOR.
+
+**Doğrulanmamış/tek-lobi sınırı**: bu üçünün de testleri tek bir lobi/tek
+bir seans senaryosunu doğruluyor (gerçek sunucuya karşı, sahte olmadan) —
+birden çok lobide aynı anda açık casusluk görevi/antrenman seansı olan bir
+oyuncunun ekranları arası tutarlılığı ayrı bir uçtan uca senaryoyla
+sınanmadı.
+
 ## Lobisiz/solo oyun kalktı
 
 Sunucu artık yarışın TEK otoritesi olduğu için istemcinin lobi dışında

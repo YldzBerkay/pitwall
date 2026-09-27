@@ -40,8 +40,8 @@
 - ✅ **Ticaret**: kadro 2–6, satışta %20 menajer komisyonu. 62/88 bir genci 1.977'ye alıp 76'ya çıkarıp satmak +1.185 RP; tek antrenman koltuğu sezona ~1 çevirme sığdırır, yani ticaret ikincil gelir
 - ✅ Şampiyona tablosu artık **sunucudan okunuyor** (`GET /lobby/standings`), dondurulmuş yerel bir tohum değil — bkz. aşağıdaki "İstemci — sunucunun görünümü" bölümü
 - ⬜ **Sezon sonu ödülü ve sıfırlama, sürücü yaşlanması deliberately ertelendi** (Faz 3b): hepsi `ageDrivers`'a bağlıydı, onu çağıran yerel `settleRaceWeekend` söküldü — bkz. aşağıdaki deferred liste
-- 🔶 Hedefler: sıralama ve puan hedefi; rütbe puanı kapısı (tam / 0 / negatif) — hesaplaması hâlâ yerelde tanımlı ama onu tetikleyen yerel yarış sonu akışı gitti, bkz. Başarımlar notu
-- ⬜ **Başarımlar deliberately ertelendi** (Faz 3b): `scoreWeekend`'in çağrıldığı tek yer yerel `settleRaceWeekend`'di, o söküldüğü için sonuç sayfasındaki başarım kartı ve rütbe çipi artık hiçbir yarıştan sonra dolmuyor — `RankIcon`/Skia ikonları koda hâlâ duruyor, yalnızca beslenmiyorlar
+- 🔶 Hedefler: sıralama ve puan hedefi hâlâ `judgeTargets`te tanımlı ve **sunucuda** çalışıyor (`scoreWeekend`, bkz. aşağıdaki "Faz 3b-1" bölümü); rütbe puanı kapısı (tam / 0 / negatif) — `users.rank_points`'e yazan formül henüz yok, Faz 3b-2'nin (sezon hedefi) işi
+- ✅ **Başarımlar ve kariyer — Faz 3b-1'de sunucuya geri döndü**: `scoreWeekend`/`recordWeekend` artık her yarış muhasebesinde (`economy/settle.ts`) çağrılıyor, sonuç sayfasının başarım kartı ve profildeki kariyer/rütbe çipi yeniden doluyor. Ayrıntı için aşağıdaki "Faz 3b-1" bölümüne bakın.
 - ✅ **Altın**: sabit kur 1 Altın = 50 RP, hızlandırma saat başı 5 Altın. Paketler 60/180/500 (₺49,99/₺129,99/₺299,99). `goldPrices`'taki her satırın `rpPrices`'ta karşılığı var — **sadece Altın'la açılan hiçbir şey yok**. Altın→RP dönüşümüne günlük 6 Altın tavanı (bedava reklam Altını ekonomiyi şişirmesin)
 - ✅ AdMob ödüllü reklam ve mağaza ödemesi adaptörleri (`lib/monetization/*`); ödül yalnızca SDK onayında verilir. 🔶 Mağazada SKU oluşturma ve üretim reklam kimlikleri kalan dış iş
 - ✅ **Denge kapısı**: `npm run econ` (`scripts/econ-check.ts`) — 68 kontrol, sezon simülasyonu dahil. Yalın kadro sezonu 91/88/90 (ort 89.7), P3, 12 geliştirme ile bitirir; elit kadro 22 puan geride kalır
@@ -271,28 +271,91 @@ hesaplayan yerel motor) tamamen söktü. Bugün itibarıyla istemci sunucunun
 ### Kapsam dışı bırakılan altı özellik — bilerek ertelendi, unutulmadı değil
 
 Yerel muhasebenin (`settleRaceWeekend`) sökülmesi, onu çağıran altı şeyi de
-durdurdu. Kullanıcının açık onayıyla Faz 3b'ye ertelendi:
+durdurdu. Kullanıcının açık onayıyla Faz 3b'ye ertelendi. **Faz 3b-1 ikisini
+geri getirdi** (bkz. aşağıdaki "Faz 3b-1" bölümü); kalan dördü hâlâ açık:
 
-- ⬜ **Başarımlar** (`scoreWeekend`) — sonuç sayfasının başarım kartı ve
-  rütbe çipi artık dolmuyor
-- ⬜ **Kariyer kaydı** (`recordWeekend`) — profil rütbesi fiilen donuyor
+- ✅ ~~Başarımlar~~ — Faz 3b-1'de sunucuya döndü (`scoreWeekend`, her yarış
+  muhasebesinde)
+- ✅ ~~Kariyer kaydı~~ — Faz 3b-1'de sunucuya döndü (`recordWeekend`,
+  kullanıcı başına `user_careers`)
 - ⬜ **Sürücü sakatlanması** — `injuries`e artık hiçbir yerden yazılmıyor,
   "SAKAT" satırları hiç tetiklenemez
 - ⬜ **Maaş düşümü** — personel ve sürücü maaşları hiçbir yerden ödenmeden
   düşmüyor
-- ⬜ **Casusluk raporları HİÇ çözülmüyor** (düzeltildi: bu, önce "yeni görev
-  açılınca hâlâ çalışıyor" diye yazılmıştı — yanlıştı). `resolveIntel`'in tek
-  çağıranı `espionageSlice.ts:83`, o da `skipMission` içinde: yani rapor almanın
-  tek yolu altın ödeyip görevi atlamak. Normal başlatılıp süresi dolan bir görev
-  sonsuza kadar `outcome`'suz kalıyor ve yeni görev açılmasını da engelliyor
-  (`startMission` bekleyen görev varsa `'pending'` dönüyor). Faz 3b'de
-  muhasebeye bağlanacak; o güne kadar casusluk fiilen kilitli.
+- ✅ ~~Casusluk raporları hiç çözülmüyordu~~ — Faz 3b-1'de düzeltildi:
+  sonuç artık **sunucuda** hesaplanıyor (`resolveMission`, güçlendirilmiş bir
+  tohumla), süresi dolan bir görev claim edilince çözülüyor ve yeni görev
+  açılabiliyor. Bkz. aşağıdaki "Faz 3b-1" bölümü.
 - ⬜ **Sürücü yaşlanması ve kış** — `ageDrivers`, araç regresyonu,
   geliştirme merdiveni sıfırlaması, `transferNews`, padok başlık şeridi
 
 Hâlâ tamamen istemci tarafında ve sunucu karşılığı hiç olmayan: **sürücü
 piyasası** ve **personel sistemi**. Sezon öncesi test paneli de bir lobi
 dışında hâlâ çalışıyor — küçük bir tutarsızlık, karar bekliyor.
+
+## Faz 3b-1 — Antrenman, casusluk, başarımlar, kariyer
+
+Spec: [2026-09-27-faz3b1-antrenman-casusluk-kariyer.md](superpowers/specs/2026-09-27-faz3b1-antrenman-casusluk-kariyer.md).
+Sunucunun kendi elinde zaten olan üç şeyi geri getirdi — sürücülerin
+sunucuda yaşamasını gerektiren her şey (sürücü pazarı, personel, maaşlar,
+sakatlıklar, yaşlanma, rütbe puanı) Faz 3b-2'de.
+
+- ✅ **Antrenman geri geldi, sunucuda zamanlanmış** (`server/src/lobby/practice.ts`):
+  FP1/FP2/FP3, `open` fazı boyunca ışıklardan T−18/12/6 saat önce (sprint
+  hafta sonu: tek seans, T−12 sa). Her seans başladığı andaki katılımı
+  DONDURUR (`runner.ts`'in ışıklar sönerken yaptığının aynısı, aynı
+  `buildFrozenEntries`); sonuç saklanmaz, istek anında tarifin (tohum +
+  dondurulmuş katılım) SAF bir türevi olarak hesaplanır. Süpürme döngüsüne
+  bağlı (`sweep.ts`'in `sweepOnce`ı — bkz. aşağıdaki "İki ders"in 1. maddesi):
+  gerçekten prodüksiyonda çalışıyor, yalnızca testte değil.
+- ✅ **Casusluk artık kilitli değil, sonucu sunucuda** (`server/src/economy/jobs.ts`
+  `applySpyEffect`, `shared/src/espionage.ts` `resolveMission`): eskiden
+  istemcinin yerel kopyası hiç çözülmüyordu (`resolveIntel`'in tek çağıranı
+  `skipMission`) ve çözülmeyen görev yenisini de blokluyordu. Sonuç şimdi
+  sunucuda, güçlendirilmiş bir tohumla (lobi + sezon + casusluk yapan takım —
+  eskiden yalnızca tur + hedef adının uzunluğuydu, iki oyuncu anlaşıp sonucu
+  önceden kestirebilirdi) hesaplanıyor; istemcinin gönderdiği hiçbir `outcome`
+  alanı okunmuyor. Başlangıç ücreti (`FREE_AGENT_RP`/Altın) tahsil ediliyor,
+  garaj gizleme görevi `blocked` sonucuna düşürüyor, yakalanınca hedef takım
+  ödüllendiriliyor, ve her yarış muhasebesinde insan koltuklara karşı rakip
+  casusluk girişimi bir kez çalışıyor (`settle.ts` `runRivalEspionage`).
+  Başarılı istihbarat sonraki yükseltmeye `SPY_BOOST` (×1.5) çarpanı ekliyor,
+  Development ekranında yükseltme seçilirken görünüyor (`spyBoosts`).
+- ✅ **Başarımlar ve kariyer, yarış muhasebesinde** (`server/src/economy/
+  weekendAchievements.ts`, `careerRepo.ts`): her insan (ya da asistanla
+  sürülen) koltuk için `scoreWeekend`/`recordWeekend` aynı transaction'da
+  çalışıyor — RP ödemesiyle, `markSettled` idempotency kapısının ARKASINDA,
+  yani aynı yarış kariyeri iki kez ilerletmiyor. Kariyer `user_careers`te
+  KULLANICI başına (bir oyuncu 3-5 lobide oynar, hepsi aynı satıra katlanır).
+  Sonuç ekranı kazanılan başarımları ve kariyer puanına kattığını gösteriyor
+  (`GET /economy/settlement`), profil ekranı kariyeri okuyor (`GET /economy/career`).
+  **Kariyer puanı `users.rank_points`e YAZMIYOR** — ikisi kasıtlı olarak ayrı
+  sayı, rütbe puanı Faz 3b-2'nin (sezon hedefi) işi.
+- `server/test/faz3b1-invariants.test.ts` — spec §6'nın sekiz kapısının
+  (antrenman herkese aynı, seans başında donma, casusluk sonucu istemciden
+  gelmiyor, casusluk artık kilitlenmiyor, başarılı istihbarat yükseltmeyi
+  yalnızca bir kez büyütüyor, yakalanma cezası bildirilen=düşülen, kariyer
+  idempotent, Clean Sweep hesaplanabiliyor) her biri kaynakta bozulup testin
+  gerçekten kırmızıya döndüğü, sonra geri konulduğu ölçülmüş bir turla
+  kapanış kanıtı.
+
+**Hâlâ açık, bilerek ertelendi:**
+
+- ⬜ **Sprint yarışı sunucuda koşmuyor** — sprint hafta sonu yalnızca ana
+  yarışı sunucuda koşturuyor; sprint'in kendi sonucu doğrulanamadığı için
+  Clean Sweep sprint hafta sonlarında bilerek REDDEDİLİYOR
+  (`weekendAchievements.ts` `denyCleanSweep`), icat edilmiş bir "kaybetti"
+  verisi uydurmak yerine.
+- ⬜ **Clean Sweep neden reddedildiği istemciye hiç anlatılmıyor** — sonuç
+  ekranı yalnızca KAZANILAN başarımları listeliyor, bir reddin nedenini asla
+  (`RaceResultSheet.tsx`'in kendi notu: sunucu bunu hiç expose etmiyor).
+- ⬜ **İstihbarat haber günlüğü gitti** — sunucu her claim'in sonucunu
+  (`outcome`/`fine`) dönüyor ama bir GEÇMİŞ tutmuyor; eski istemcinin
+  "intel news" panelinin sunucu karşılığı yok, `PaddockScreen.tsx`'ten
+  kaldırıldı (icat edilmiş bir yerel geçmiş yerine).
+- ⬜ **Faz 3b-2 kapsamı**: sürücü pazarı, personel, maaşlar, sakatlıklar,
+  sürücü yaşlanması, rütbe puanı, sezon hedefi — hepsi sürücülerin sunucuda
+  yaşamasını gerektiriyor.
 
 ## Kapsam dışı / sırada
 - ⬜ Google/Apple/Facebook'un mobil istemciye bağlanması (native SDK + cihaz testi gerektiriyor)

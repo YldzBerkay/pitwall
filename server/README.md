@@ -146,15 +146,30 @@ okumasını sağlıyor — bkz. aşağıdaki "Paylaşılan paket".
 `GET /economy/state?lobbyId=` `/economy/action`in döndürdüğü tam anlık
 görüntünün (rp/gold/car/factory/jobs/teamValue/caps/`serverNow`) SOĞUK BAŞLANGIÇ
 karşılığı — oyuncu hiçbir eylem yapmadan uygulamayı açtığında ekranın
-göstereceği ilk kare buradan gelir.
+göstereceği ilk kare buradan gelir. Faz 3b-1'den beri slot ayrıca `hide`
+(garaj gizleme durumu, `{hidden, untilRound}` ya da `null`), `spyCooldownUntil`
+(son claim edilen casus görevinden `SPY_COOLDOWN_MS` sonrası, ISO an) ve
+`spyBoosts` (bekleyen istihbarat çarpanları, stat başına — örn. `{motor: 1.5}`,
+başarılı bir görevden sonra sıradaki o statın yükseltmesi seçilene kadar
+görünür kalır) taşır.
 
 `GET /economy/settlement?lobbyId=&round=&season=` (season opsiyonel, verilmezse
 lobinin güncel sezonu) bir yarışın ödeme DÖKÜMÜNÜ okur: `position`, `prize`,
 `sponsorIncome`, `briefBonus`, `bonusesEarned`, `streaksBroken`, `expired`
-(bu turda kapanan sponsorluk pozisyonları). Henüz ödenmemiş bir round bir hata
+(bu turda kapanan sponsorluk pozisyonları), `rivalSpy` (bu tur bu koltuğa karşı
+denenen rakip casusluk — `{team, success}` ya da hiç denenmediyse `null`,
+Faz 3b-1), `achievements` (bu hafta sonu kazanılan başarım anahtarları, AI
+koltuğu için her zaman boş dizi) ve `careerScore` (o hafta sonunun kariyer
+puanına kattığı miktar, negatif olabilir). Henüz ödenmemiş bir round bir hata
 değil — `{ settlement: null }` ile 200 döner, tıpkı henüz kazanılmamış bir
 başarım gibi. Ayrıntı için aşağıdaki "Yarış" bölümünün "Muhasebe" alt
 başlığına bakın.
+
+`GET /economy/career` (Faz 3b-1) — imzalı kullanıcının KENDİ kariyerini okur.
+Diğer okumaların aksine `?lobbyId=` almaz: kariyer bir lobiye değil kullanıcıya
+aittir (`user_careers`, `user_id` birincil anahtar) — bir oyuncu aynı anda 3-5
+lobide oynar, hepsi aynı satıra katlanır. Hiç yarış bitirmemiş bir kullanıcı
+için hata değil, boş bir kariyer (`emptyCareer()`) döner.
 
 ### `POST /economy/action`
 
@@ -167,8 +182,9 @@ seçilir:
 |---|---|---|
 | `startUpgrade` | `label` (`motor\|aero\|grip`) | Araç geliştirmesi başlatır, RP düşer |
 | `startTraining` | `driverIdx` | Sürücü antrenmanı başlatır |
-| `startSpyMission` | (serbest, olduğu gibi saklanır) | Casusluk görevi başlatır |
-| `claimUpgrade` / `claimTraining` / `claimSpyReport` | `jobId` | Biten işi teslim alır, etkisini uygular |
+| `startSpyMission` | `targetTeam`, `stat` (`motor\|aero\|grip`), `agent` (`free\|premium`) | Casusluk görevi başlatır — `startedRound`/`season` istekten DEĞİL, lobinin o anki satırından okunup saklanır (bkz. aşağıdaki "Casusluk" bölümü) |
+| `hideGarage` | `days` (`1\|3\|7`) | Garajı gizler — 1 gün RP, 3/7 gün Altın; rakip casusluk girişimlerini bu süre boyunca `blocked`'a düşürür |
+| `claimUpgrade` / `claimTraining` / `claimSpyReport` | `jobId` | Biten işi teslim alır, etkisini uygular. `claimSpyReport` yanıta ayrıca `spyResult` (`outcome`/`targetTeam`/`stat`/`fine`) ekler — istekteki hiçbir alan bu sonucu etkilemez |
 | `skipUpgrade` / `skipTraining` / `skipSpy` | `jobId` | Kalan süreyi Altınla atlar |
 | `upgradeFactory` | `code` | Fabrika departmanını bir seviye yükseltir |
 | `convertGoldToRp` | `gold` | Altını RP'ye çevirir (günlük tavan içinde) |
@@ -199,6 +215,53 @@ sökük başlar (parc fermé cezası, Faz 3a-2) — motor bu mekaniği devreye
 sokmak için işin claim'e kadar uygulanmamış kalmasını garanti etmek
 zorunda, o kadar. Ayrıntı ve eşzamanlılık kanıtı için `src/economy/jobs.ts`'in
 docblock'una ve `server/test/economy-jobs.test.ts`'e bakın.
+
+### Casusluk (Faz 3b-1) — güven sınırı ve tohum
+
+Sonuç istemciden gelmez: `startSpyMission` yalnızca `targetTeam`/`stat`/
+`agent`i doğrular ve saklar, `startedRound`/`season`i (`missionSeed`'in bir
+parçası) İSTEKTEN değil lobinin o anki `round_no`/`season_no`'sundan okuyup
+o anda dondurur. Sonuç `claimSpyReport` çağrıldığında, tamamen sunucunun
+elindeki değerlerden (`shared/src/espionage.ts` `resolveMission`) rastgele
+gelir; isteğin gövdesinde bir `outcome`/`fine` alanı olsa bile hiç okunmaz
+(`server/test/faz3b1-invariants.test.ts` gate 3).
+
+Tohum (`missionSeed`) `startedRound` + `targetTeam.length` + `agent`in
+YANINA `lobbyId`/`season`/`ownTeam`i de katar. Eski tohum yalnızca ilk üçünü
+kullanıyordu — aynı turda aynı uzunlukta bir hedefe aynı ajanla giden HERKES
+aynı sonucu alıyordu (öğrenilebilir, ve yakalanma hedefe araç puanı
+kazandırdığından beri iki oyuncu arasında puan aktarmaya da yarayan
+deterministik bir kanaldı). Yeni tohum artık lobiye ve casusluk yapan takıma
+özel.
+
+Garaj gizleme (`hideGarage`, `garage_hides` tablosu) bir görevi `blocked`
+sonucuna düşürür — hedefin gizli olup olmadığı CLAIM anında, o anki
+`round_no`'ya göre okunur (görev BAŞLADIĞINDA değil), yani başlangıçla claim
+arasında açılıp kapanan bir gizleme "canlı" haliyle sayılır. Yakalanma hedef
+takımın spiyonlanan statını `RIVAL_GAIN` kadar kalıcı yükseltir — 2007
+casusluk skandalının kaybeden tarafa verdiği gibi bir kazanım.
+
+Rakip casusluk (istemcinin eski `aiBonus`'unun sunucu karşılığı) bir
+oyuncunun işi DEĞİL, ambiyans bir olay: `economy/settle.ts`'in
+`runRivalEspionage`'ı her muhasebede, şampiyonanın ilk dördündeki her insan
+koltuğa karşı bir kez çalışır ve sonucu (`{team, success}` ya da hiç
+denenmediyse yok) o koltuğun `race_settlement_payouts` satırına yazar
+(`GET /economy/settlement`in `rivalSpy` alanı) — böylece oyuncu kendisine
+karşı yapılan bir girişimi en azından SONRADAN öğrenebilir.
+
+### Kariyer (`src/economy/careerRepo.ts`, Faz 3b-1)
+
+`user_careers` — `user_id` birincil anahtarlı, LOBİYE değil KULLANICIYA ait
+tek satır (bir oyuncu 3-5 lobide oynar, hepsi aynı satıra katlanır). Her
+insan (ya da asistanla sürülen) koltuğun hafta sonu başarımları
+(`weekendAchievements.ts`'in `scoreSeatWeekend`i, `shared/src/achievements.ts`'
+in `scoreWeekend`/`recordWeekend`ini SARAR, yeniden yazmaz) yarış
+muhasebesiyle AYNI transaction'da, `markSettled` kapısının ARKASINDA
+kaydedilir — aynı yarış kariyeri iki kez ilerletemez, yarım kalan bir
+muhasebe kariyeri de RP kadar geri alır. AI koltuğu için hiçbir satır
+yazılmaz (arkasında kullanıcı yok). Kariyer puanı `users.rank_points`e
+YAZMAZ — ikisi kasıtlı olarak ayrı sayı, rütbe puanı Faz 3b-2'nin (sezon
+hedefi) işi.
 
 ### Altın musluğu iki yoldan doluyor
 
@@ -235,7 +298,7 @@ sessizce olur — `server/test/shared-purity.test.ts` bunu kaynak ağacı
 `src/identity/ip-region-v4.bin` hâlâ üretilmiş dosyalar; yukarıdaki
 "Üretici script'ler" bölümüne bakın.
 
-### Altı sözleşme — bu fazda ortaya çıktı, koda göçmeden önce buraya yazıldı
+### Sekiz sözleşme — bu fazda ortaya çıktı, koda göçmeden önce buraya yazıldı
 
 1. **`now` sadece route'ta `new Date()` ile örneklenir, istekten asla
    okunmaz.** `src/economy/jobs.ts` kasıtlı olarak saati kendisi hiç okumaz
@@ -289,6 +352,33 @@ sessizce olur — `server/test/shared-purity.test.ts` bunu kaynak ağacı
    tarama var: dosyanın METNİ hiçbir `setInterval` çağrısı içermemeli
    (`mobile/test/no-local-race.test.ts`, testler 1a/1b). Kırılma/geri-koyma
    kanıtı sırasında ilk tarama geçti, yalnızca metin taraması yakaladı.
+7. **Fonksiyon var, testi geçiyor, ama üretimde onu çağıran hiçbir şey
+   yok.** Bu kod tabanında DÖRT kez oldu, hepsi aynı biçimde: bir modül
+   yazılıp birim testiyle kanıtlandı, ama onu gerçek bir tetikleyiciye
+   (bir süpürme döngüsü, bir rota) BAĞLAMAK ayrı bir adım olarak unutuldu.
+   (a) `openRace`/`hub.publish` (`runner.ts`/`live.ts`) — `sweep.ts` yazılana
+   kadar `src/index.ts` bunları hiç çağırmıyordu, lobi başına yarış YALNIZCA
+   testte vardı (bkz. `sweep.ts`'in kendi docblock'u). (b) Bu fazda:
+   `freezeDuePracticeSessions` (`practice.ts`) 4812b9b'de yazılıp test
+   edildi, ama `sweep.ts`'in `sweepOnce`ı onu HİÇ çağırmıyordu — 58f90d4
+   düzeltene kadar hiçbir seans üretimde asla dondurulmayacaktı, testler
+   fonksiyonu DOĞRUDAN çağırdığı için bu fark hiç görünmüyordu. (c) Yine bu
+   fazda: `loadCareer` (`careerRepo.ts`) fd40e21'de yazılıp test edildi, ama
+   onu okuyan bir rota yoktu — profil ekranı stale bir yerel `career`
+   değerini göstermeye devam ediyordu, ta ki 20de5cc `GET /economy/career`i
+   ekleyip istemciyi ona bağlayana kadar. GENEL DERS: bir fonksiyonun testi
+   yeşilse "çalışıyor" demek değildir — "üretimde bir yol var mı, o yol bu
+   fonksiyona gerçekten uğruyor mu" ayrı, doğrulanması gereken bir sorudur.
+8. **Sunucu bir değeri hesaplıyor ve çöpe atıyor.** İstemciyi sunucuya
+   taşıyan HER göç bunu en az bir kez yaşadı: imzalı sponsorluklar, muhasebe
+   dökümü, casusluk sonucu (`applySpyEffect` outcome/fine, 4909227'de
+   hesaplanıp `claimSpyReport`'ta atılıyordu, ta ki 8b05761 `spyResult`
+   olarak yanıta eklenene kadar), casusluk bekleme süresi (aynı şekilde
+   `spyCooldownUntil` olarak 8b05761'de eklendi) ve bekleyen yükseltme
+   çarpanı (`spy_state`, 58e16e1'de `spyBoosts` olarak eklendi). GENEL DERS:
+   bir ekranı sunucuya taşımadan ÖNCE, sunucunun o ekranın ihtiyacı olan
+   HER ŞEYİ zaten expose edip etmediğini kontrol et — "sunucu zaten
+   hesaplıyor" ile "istemci onu okuyabiliyor" aynı şey değil.
 
 Bilinen bir sınır: `grantGold` kendi transaction'ını açar ve çağıranınkine
 katılamaz. Bugün bu sorun değil çünkü satın alma yolunun günlük tavanı yok
@@ -507,6 +597,43 @@ Claim YOK: yarış kazancı, oyuncunun uygulamayı açıp açmamasından bağım
 kazanılır ve ödenir — fabrika/antrenman işlerindeki claim adımı burada
 mekaniğin sınırını sessizce silerdi.
 
+Faz 3b-1'den beri aynı transaction, aynı `markSettled` kapısının ARKASINDA,
+her insan koltuğun hafta sonu başarımlarını ve kariyerini de yazar — bkz.
+yukarıdaki "Kariyer" bölümü ve `weekendAchievements.ts`.
+
+### Antrenman — FP1/FP2/FP3 (`src/lobby/practice.ts`, Faz 3b-1)
+
+Faz 3a-3'ün istemci-motoru sökümünde kazara giden antrenman geri geldi,
+ama farklı bir biçimde: `open` fazı boyunca, ışıklardan (T) T−18/12/6 saat
+önce (sprint hafta sonu: tek seans, T−12 sa) LOBİ BAŞINA, HERKESİN AYNI
+seansı gördüğü, zamanlanmış oturumlar — oyuncunun istediği an çalıştırdığı
+bir seans değil (diğer takımların o anki setup'ı herkese aynı anda görünsün
+diye).
+
+Yarışın kendi ilkesinin küçük ölçekli kopyası: bir seansın SONUCU
+saklanmaz, yalnızca onu üretecek TARİF (`practice_runs`: tohum + seans
+numarası + o an dondurulmuş katılım) saklanır, sonuç istek anında
+`derivePracticeResult` ile SAF bir türetme olarak hesaplanır — aynı tarif
+her zaman aynı klasmanı verir (`server/test/faz3b1-invariants.test.ts` gate 1).
+Katılım, yarışın ışıklar sönerken kullandığı AYNI `buildFrozenEntries`'le
+dondurulur (`runner.ts`'ten ithal edilir, tekrar yazılmaz) — bir seans
+başladıktan sonra setup değişse bile o seansın sonucu asla değişmez (gate 2).
+Tek seferlik donma garantisi `practice_runs`'ın kendi `insert ... on conflict
+do nothing`'inde: iki eşzamanlı çağıran da denese, yalnızca biri kazanır,
+hiçbiri hata almaz — ayrıca şemanın kendi tetikleyicisi (`practice_run_reject_
+recipe_update`) bir seansın snapshot'ının SONRADAN güncellenmesini de veritabanı
+seviyesinde reddeder.
+
+Süpürme döngüsüne bağlı: `sweep.ts`'in `sweepOnce`ı her atışta
+`freezeDuePracticeSessions`'ı çağırır (evre ilerlemesinden SONRA, kirasız —
+pratik seansının "kim sürüyor" diye bir sorusu yok). Bu satır önemli çünkü
+tam bu türden bir kopukluk bu fazda GERÇEKTEN yaşandı: fonksiyon yazılıp
+test edildikten sonra süpürmeye BAĞLANMAMIŞ halde bir görev olarak kaldı —
+bkz. aşağıdaki "Sekiz sözleşme"nin 7. maddesi.
+
+`GET /lobby/practice?id=` tamamlanmış seansları döner (üyelik yeterli,
+`/lobby/standings` gibi — bir takıma değil bütün lobiye ait bir klasman).
+
 ### `GET /lobby/standings`
 
 Lobinin GÜNCEL şampiyona tablosu. Ayrı saklanmaz; yarışın kendisi gibi
@@ -567,9 +694,9 @@ bir istemciye kendi lobisininkinden BAŞKA bir yarış verirlerdi
 (`test/legacy-gone.test.ts` bunların 404 döndüğünü, yeni ailenin ayakta
 olduğunu doğrular). Yerlerini aşağıdaki lobi başına yarış uçları aldı.
 Kimlik (`/auth/*`, `/onboarding/bootstrap`, `/me`), ekonomi
-(`/economy/action`, `/economy/state`, `/economy/settlement`) ve Altın
-(`/gold/*`) uçları yukarıdaki kendi bölümlerinde, lobi/slot uçları
-(`/slots`, `/lobby/*`, `/invites`) aşağıda ayrı bir tabloda.
+(`/economy/action`, `/economy/state`, `/economy/settlement`, `/economy/career`)
+ve Altın (`/gold/*`) uçları yukarıdaki kendi bölümlerinde, lobi/slot uçları
+(`/slots`, `/lobby/*`, `/invites`, `/lobby/practice`) aşağıda ayrı bir tabloda.
 
 ### Sponsorlar (`src/economy/sponsorRoutes.ts` — hepsi `Authorization: Bearer <token>` ister)
 
@@ -607,6 +734,7 @@ sayılır.
 | POST | `/lobby/invite` | `lobbyId, nickname` | Tam `Takma#1234` etiketiyle davet; kısmi arama yok |
 | GET | `/invites` | — | Bekleyen davetler ve o an boş takımlar |
 | GET | `/lobby/standings` | `?id=` | Lobinin güncel şampiyona tablosu — tariften türetilir, ayrı saklanmaz |
+| GET | `/lobby/practice` | `?id=` | Tamamlanmış FP1/FP2/FP3 seansları — tariften türetilir, ayrı saklanmaz (Faz 3b-1) |
 
 Kurucusu takım seçmemiş lobi hiçbir havuzda görünmez (§3.2). Bir önizleme
 kartının gösterdiği insan/AI sayıları ve boş takım listesi **gerçek koltuk
