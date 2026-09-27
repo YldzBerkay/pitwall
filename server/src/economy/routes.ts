@@ -181,6 +181,10 @@ export function registerEconomyRoutes(router: Router): void {
           rivalSpy: payout.rivalSpyTeam !== undefined && payout.rivalSpySuccess !== undefined
             ? { team: payout.rivalSpyTeam, success: payout.rivalSpySuccess }
             : null,
+          // Bu hafta sonu kazanılan başarımlar + kariyer skoruna kattığı
+          // miktar — AI koltuğu için her zaman boş/sıfır (bkz. `settle.ts`).
+          achievements: payout.achievementsEarned,
+          careerScore: payout.careerScore,
         },
       },
     };

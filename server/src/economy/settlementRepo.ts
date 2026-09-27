@@ -10,6 +10,7 @@
  */
 import type { PoolClient } from 'pg';
 import { query } from '../db/pool.ts';
+import type { AchievementKey } from '@pitwall/shared/achievements';
 
 /** One seat's earnings from one race, broken into the parts a screen shows. */
 export interface SeatSettlementBreakdown {
@@ -38,6 +39,10 @@ export interface SeatSettlementBreakdown {
    */
   rivalSpyTeam?: string;
   rivalSpySuccess?: boolean;
+  /** This weekend's earned achievements — empty for an AI-run seat (see `settle.ts`). */
+  achievementsEarned: AchievementKey[];
+  /** What this weekend added to the seat's user's career score — 0 for an AI-run seat. */
+  careerScore: number;
 }
 
 interface PayoutRow {
@@ -51,6 +56,8 @@ interface PayoutRow {
   expired_slots: string[];
   rival_spy_team: string | null;
   rival_spy_success: boolean | null;
+  achievements_earned: string[];
+  career_score: number;
 }
 
 function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
@@ -65,6 +72,8 @@ function toBreakdown(row: PayoutRow): SeatSettlementBreakdown {
     expiredSlots: row.expired_slots,
     rivalSpyTeam: row.rival_spy_team ?? undefined,
     rivalSpySuccess: row.rival_spy_success ?? undefined,
+    achievementsEarned: row.achievements_earned as AchievementKey[],
+    careerScore: row.career_score,
   };
 }
 
@@ -83,12 +92,14 @@ export async function insertSettlementPayout(
   await client.query(
     `insert into race_settlement_payouts
        (lobby_id, season_no, round_no, team_key, position, prize, sponsor_income, brief_bonus,
-        bonuses_earned, streaks_broken, expired_slots, rival_spy_team, rival_spy_success)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        bonuses_earned, streaks_broken, expired_slots, rival_spy_team, rival_spy_success,
+        achievements_earned, career_score)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       lobbyId, seasonNo, roundNo, payout.teamKey, payout.position, payout.prize,
       payout.sponsorIncome, payout.briefBonus, payout.bonusesEarned, payout.streaksBroken,
       payout.expiredSlots, payout.rivalSpyTeam ?? null, payout.rivalSpySuccess ?? null,
+      payout.achievementsEarned, payout.careerScore,
     ],
   );
 }
@@ -106,7 +117,7 @@ export async function loadSettlementPayout(
 ): Promise<SeatSettlementBreakdown | null> {
   const res = await query<PayoutRow>(
     `select team_key, position, prize, sponsor_income, brief_bonus, bonuses_earned, streaks_broken, expired_slots,
-            rival_spy_team, rival_spy_success
+            rival_spy_team, rival_spy_success, achievements_earned, career_score
      from race_settlement_payouts
      where lobby_id = $1 and season_no = $2 and round_no = $3 and team_key = $4`,
     [lobbyId, seasonNo, roundNo, teamKey],

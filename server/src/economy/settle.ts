@@ -40,7 +40,7 @@
  * (server/README.md).
  */
 import type { PoolClient } from 'pg';
-import { finishRace, weatherFor, type FinishEntry } from '@pitwall/shared/raceEngine';
+import { finishRace, weatherFor, type FinishEntry, type TimedEntry } from '@pitwall/shared/raceEngine';
 import { racePrize, settleRace as settleSponsorships } from '@pitwall/shared/sponsors';
 import { briefFor, briefCompliance, BRIEF_RP_EACH, type WeekendChoices } from '@pitwall/shared/brief';
 import { trackForRound } from '@pitwall/shared/tracks';
@@ -49,11 +49,15 @@ import { rivalAttempt, RIVAL_GAIN } from '@pitwall/shared/espionage';
 import { withTransaction } from '../db/pool.ts';
 import { loadDecisions, loadRun, markSettled } from '../lobby/raceRepo.ts';
 import { loadSeats, type Seat } from '../lobby/lobbyRepo.ts';
-import { replayRace } from '../lobby/replay.ts';
+import { replayRace, qualifyingForRecipe } from '../lobby/replay.ts';
+import { loadPracticeRuns, derivePracticeResult, practiceCount } from '../lobby/practice.ts';
 import { addRp, bumpCarStat, loadLobbyEconomy, type CarStats } from './repo.ts';
 import { isGarageHidden } from './espionageRepo.ts';
 import { deleteDeal, loadTeamSponsorships, setStreak } from './sponsorshipRepo.ts';
 import { insertSettlementPayout } from './settlementRepo.ts';
+import { scoreSeatWeekend, recordSeatWeekend } from './weekendAchievements.ts';
+import { loadCareerForUpdate, saveCareer } from './careerRepo.ts';
+import type { AchievementKey } from '@pitwall/shared/achievements';
 
 const CAR_STAT_FIELDS: (keyof CarStats)[] = ['motor', 'aero', 'grip'];
 
@@ -157,6 +161,16 @@ export interface SeatPayout {
    * `009_settlement_expired_slots.sql`).
    */
   expiredSlots: string[];
+  /**
+   * Bu hafta sonu kazanılan başarımlar — yalnızca İNSAN (ya da asistanla
+   * sürülen, yani sahibi olan) koltuklar için doldurulur; AI koltuğu için
+   * her zaman boş dizi (`scoreWeekend` AI koltuk için hiç ÇAĞRILMAZ, bkz.
+   * `weekendAchievements.ts`).
+   */
+  achievementsEarned: AchievementKey[];
+  /** O hafta sonunun kariyer skoruna kattığı miktar — negatif olabilir
+   *  (collapsed ceza, bkz. `013_career.sql`). AI koltuğu için 0. */
+  careerScore: number;
 }
 
 export interface RaceSettlement {
@@ -300,6 +314,27 @@ export async function settleRace(
       c, lobbyId, seasonNo, roundNo, seats, positionOf, economies.map((e) => e.teamKey),
     );
 
+    // ── Başarımlar + kariyer (bkz. `weekendAchievements.ts`'in kendi
+    // docblock'u) ────────────────────────────────────────────────────────────
+    // Sıralama ve pratik BİR KEZ, bütün koltuklar için ORTAK türetilir —
+    // yalnızca `teamKey`e göre BAKILAN dilim koltuktan koltuğa değişir
+    // (`weekendAchievements.ts` `teamGridSlots`/`buildPracticeTuple`).
+    // `qualifyingForRecipe` tarifin (tohum + snapshot) SAF bir fonksiyonu,
+    // `replayRace`in zaten içeride bir kez hesapladığı AYNI ızgarayı üretir
+    // (bkz. o dosyanın kendi docblock'u) — burada ikinci bir yarış koşulmaz.
+    const qualifying = qualifyingForRecipe({ seed: run.seed, round: roundNo, snapshot: run.snapshot });
+    // AYNI BAĞLANTI: `loadPracticeRuns` işlemin ORTASINDA çağrılıyor, `c`
+    // verilmezse havuzdan ikinci bir bağlantı istemek kilitlenebilirdi
+    // (bkz. dosyanın başındaki "AYNI BAĞLANTI" notları).
+    const practiceRuns = await loadPracticeRuns(lobbyId, seasonNo, roundNo, c);
+    const sessionCount = practiceCount(track.sprint);
+    const practiceSessions: (TimedEntry[] | undefined)[] = [];
+    for (let i = 1; i <= sessionCount; i += 1) {
+      const found = practiceRuns.find((r) => r.sessionNo === i);
+      practiceSessions.push(found ? derivePracticeResult(found).order : undefined);
+    }
+    const seatByTeam = new Map(seats.map((s) => [s.teamKey, s]));
+
     const payouts: SeatPayout[] = [];
     for (const econ of economies) {
       // Ekonomi satırı olan ama tabloda olmayan bir takım olamaz (tablo 11
@@ -357,6 +392,11 @@ export async function settleRace(
       // yaptığı gibi (gameStore.ts `settleRaceWeekend`), yani zayıf bir
       // stratejistin YANLIŞ çağrısını izlemek hiçbir şey kazandırmaz.
       let briefBonus = 0;
+      // `weekendAchievements.ts`'in `briefFollowed`ine giden HAM sayı (RP'ye
+      // çevrilmeden önceki uyum adedi) — `scoreWeekend`in kendi `BRIEF_SCORE_
+      // EACH`i `settle.ts`'in `BRIEF_RP_EACH`inden AYRI bir sabit (kariyer skoru
+      // RP değildir), o yüzden burada çarpılmadan taşınır.
+      let briefFollowed: number | undefined;
       const entry = run.snapshot.entries[econ.teamKey];
       if (entry) {
         const items = briefFor(track, weather, entry.setup);
@@ -366,12 +406,42 @@ export async function settleRace(
           risk: run.snapshot.risks[econ.teamKey] ?? 'safe',
           bias: entry.setup.bias ?? 0,
         };
-        briefBonus = briefCompliance(items, choices) * BRIEF_RP_EACH;
+        briefFollowed = briefCompliance(items, choices);
+        briefBonus = briefFollowed * BRIEF_RP_EACH;
         rp += briefBonus;
       }
 
       await deps.addRp(c, lobbyId, econ.teamKey, rp);
       const rival = rivalResults.get(econ.teamKey);
+
+      // ── Bu koltuğun hafta sonu başarımları + (varsa) kariyeri ────────────
+      // Yalnızca SAHİPLİ koltuk (`user_id` dolu — insan ya da asistanla
+      // sürülen; `lobby_seats_owner_check`, 002_lobby.sql): AI koltuğunun
+      // arkasında bir kullanıcı yok, kariyer KULLANICIYA ait olduğu için
+      // yazacak kimse yok (bkz. `013_career.sql`'in kendi notu).
+      const seat = seatByTeam.get(econ.teamKey);
+      let achievementsEarned: AchievementKey[] = [];
+      let careerScore = 0;
+      if (seat?.userId) {
+        const weekend = scoreSeatWeekend({
+          race: result,
+          qualifyingGrid: qualifying.grid,
+          practiceSessions,
+          sprint: track.sprint,
+          briefFollowed,
+        }, econ.teamKey);
+        achievementsEarned = weekend.earned;
+        careerScore = weekend.score;
+        // AYNI İŞLEM: kariyer okuma-yaz-satırı (`for update` kilidiyle) da bu
+        // transaction'ın parçası — `markSettled` kapısından SONRA, `addRp`yle
+        // birlikte. Ortada bir şey patlarsa RP nasıl geri alınıyorsa kariyer
+        // de öyle geri alınır; ikinci bir muhasebe (`AlreadySettledError`)
+        // buraya HİÇ ulaşmaz, yani kariyer de tıpkı RP gibi YALNIZCA BİR KEZ
+        // ilerler.
+        const career = await loadCareerForUpdate(c, seat.userId);
+        const nextCareer = recordSeatWeekend(career, weekend, result, econ.teamKey);
+        await saveCareer(c, seat.userId, nextCareer);
+      }
       // AYNI BAĞLANTI, AYNI İŞLEM: döküm `markSettled` kapısından SONRA ve
       // `addRp`yle TAM OLARAK aynı taahhütte yazılır (bkz. `settlementRepo.ts`
       // docblock'u) — ortada bir şey patlarsa ikisi birlikte geri alınır,
@@ -382,10 +452,11 @@ export async function settleRace(
       await insertSettlementPayout(c, lobbyId, seasonNo, roundNo, {
         teamKey: econ.teamKey, position, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
         expiredSlots, rivalSpyTeam: rival?.team, rivalSpySuccess: rival?.success,
+        achievementsEarned, careerScore,
       });
       payouts.push({
         teamKey: econ.teamKey, position, rp, prize, sponsorIncome, briefBonus, bonusesEarned, streaksBroken,
-        expiredSlots,
+        expiredSlots, achievementsEarned, careerScore,
       });
     }
 

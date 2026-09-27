@@ -47,6 +47,7 @@ import {
   type PracticeResult,
   type Rosters,
 } from '@pitwall/shared/raceEngine';
+import type { PoolClient } from 'pg';
 import { query } from '../db/pool.ts';
 import { buildFrozenEntries, deriveSeed } from './runner.ts';
 
@@ -104,30 +105,39 @@ function mapRow(row: PracticeRunRow): PracticeRun {
   };
 }
 
-/** Donmuş bir pratik seansını okur; henüz donmamışsa `null`. */
+/**
+ * Donmuş bir pratik seansını okur; henüz donmamışsa `null`.
+ *
+ * `client` OPSİYONEL: çoğu çağıran (rota, süpürme) işlem dışı, bare pool
+ * yeterli. `economy/settle.ts` ise bunu KENDİ işleminin ortasında çağırır —
+ * orada `client` verilir, aksi halde havuzdan ikinci bir bağlantı istemek bu
+ * bağlantı zaten işlemin içindeyken kilitlenebilirdi (bkz. `settle.ts`
+ * `loadTeamSponsorships` çağrısının aynı gerekçesi).
+ */
 export async function loadPracticeRun(
-  lobbyId: string, seasonNo: number, roundNo: number, sessionNo: 1 | 2 | 3,
+  lobbyId: string, seasonNo: number, roundNo: number, sessionNo: 1 | 2 | 3, client?: PoolClient,
 ): Promise<PracticeRun | null> {
-  const res = await query<PracticeRunRow>(
-    `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
+  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
        from practice_runs
-      where lobby_id = $1 and season_no = $2 and round_no = $3 and session_no = $4`,
-    [lobbyId, seasonNo, roundNo, sessionNo],
-  );
+      where lobby_id = $1 and season_no = $2 and round_no = $3 and session_no = $4`;
+  const res = client
+    ? await client.query<PracticeRunRow>(sql, [lobbyId, seasonNo, roundNo, sessionNo])
+    : await query<PracticeRunRow>(sql, [lobbyId, seasonNo, roundNo, sessionNo]);
   return res.rows[0] ? mapRow(res.rows[0]) : null;
 }
 
-/** Bir lobinin donmuş her pratik seansı, seans numarasına göre sıralı. */
+/** Bir lobinin donmuş her pratik seansı, seans numarasına göre sıralı.
+ *  `client` için yukarıdaki `loadPracticeRun`la aynı gerekçe. */
 export async function loadPracticeRuns(
-  lobbyId: string, seasonNo: number, roundNo: number,
+  lobbyId: string, seasonNo: number, roundNo: number, client?: PoolClient,
 ): Promise<PracticeRun[]> {
-  const res = await query<PracticeRunRow>(
-    `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
+  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
        from practice_runs
       where lobby_id = $1 and season_no = $2 and round_no = $3
-      order by session_no asc`,
-    [lobbyId, seasonNo, roundNo],
-  );
+      order by session_no asc`;
+  const res = client
+    ? await client.query<PracticeRunRow>(sql, [lobbyId, seasonNo, roundNo])
+    : await query<PracticeRunRow>(sql, [lobbyId, seasonNo, roundNo]);
   return res.rows.map(mapRow);
 }
 

@@ -24,7 +24,7 @@ import { loadLobbyEconomy, addRp } from '../src/economy/repo.ts';
 import { startRaceFor } from '../src/lobby/runner.ts';
 import { settleRace, AlreadySettledError } from '../src/economy/settle.ts';
 import { insertSponsorship, loadTeamSponsorships } from '../src/economy/sponsorshipRepo.ts';
-import { replayRace, type RaceSnapshot } from '../src/lobby/replay.ts';
+import { replayRace, qualifyingForRecipe, type RaceSnapshot } from '../src/lobby/replay.ts';
 import { deriveSeed } from '../src/lobby/runner.ts';
 import { weatherFor, finishRace, type FinishEntry, type TacticPreset, type QualiRisk } from '@pitwall/shared/raceEngine';
 import type { CompoundKey } from '@pitwall/shared/carCustomisation';
@@ -35,6 +35,9 @@ import {
   type Sponsorship,
 } from '@pitwall/shared/sponsors';
 import { briefFor, briefCompliance, BRIEF_RP_EACH, type BriefItem, type WeekendChoices } from '@pitwall/shared/brief';
+import { emptyCareer, type Career } from '@pitwall/shared/achievements';
+import { scoreSeatWeekend, recordSeatWeekend } from '../src/economy/weekendAchievements.ts';
+import { loadCareer } from '../src/economy/careerRepo.ts';
 
 /**
  * A team's race-day finish, judged the same way the client judges its own
@@ -76,6 +79,11 @@ const ASSISTANT = SEAT_LADDER[1];
 /** Hiç sahiplenilmemiş koltuk: yarışı AI sürer, ama ekonomisi yine de vardır. */
 const AI_SEAT = SEAT_LADDER[2];
 
+/** The human seat's user id, per lobby created by `makeLobby` — kept aside so
+ *  callers that need it (career tests) don't have to re-plumb it through
+ *  every helper that currently only returns a `lobbyId`. */
+const humanUserIdByLobby = new Map<string, string>();
+
 async function makeLobby(label = 'Settle'): Promise<string> {
   const owner = await createUserWithIdentity({
     base: 'GridHunter', provider: 'google', providerUid: `g-${label}-${++seq}-${Date.now()}`, emailHash: null,
@@ -86,12 +94,13 @@ async function makeLobby(label = 'Settle'): Promise<string> {
     rankMin: 1, rankMax: 10, guestsCanInvite: false, midSeasonJoin: true,
   });
   createdLobbies.push(lobby.id);
-  await claimSeat(lobby.id, HUMAN, 'human', `${label}-h-${seq}`);
+  const humanUserId = await claimSeat(lobby.id, HUMAN, 'human', `${label}-h-${seq}`);
   await claimSeat(lobby.id, ASSISTANT, 'assistant', `${label}-a-${seq}`);
+  humanUserIdByLobby.set(lobby.id, humanUserId);
   return lobby.id;
 }
 
-async function claimSeat(lobbyId: string, teamKey: string, managed: 'human' | 'assistant', tag: string) {
+async function claimSeat(lobbyId: string, teamKey: string, managed: 'human' | 'assistant', tag: string): Promise<string> {
   const user = await createUserWithIdentity({
     base: 'Racer', provider: 'google', providerUid: `g-${tag}-${Date.now()}`, emailHash: null,
   });
@@ -101,6 +110,47 @@ async function claimSeat(lobbyId: string, teamKey: string, managed: 'human' | 'a
      where lobby_id = $1 and team_key = $2`,
     [lobbyId, teamKey, user.id, managed],
   );
+  return user.id;
+}
+
+/** Same as `claimSeat`, but seats a CALLER-SUPPLIED user — for the "one
+ *  career across two lobbies" test, where the same user must occupy a seat
+ *  in two different lobbies rather than a fresh user per seat. */
+async function claimSeatForUser(lobbyId: string, teamKey: string, userId: string, managed: 'human' | 'assistant') {
+  await query(
+    `update lobby_seats set user_id = $3, managed = $4, joined_at = now()
+     where lobby_id = $1 and team_key = $2`,
+    [lobbyId, teamKey, userId, managed],
+  );
+}
+
+/**
+ * The weekend achievements settle.ts SHOULD compute for one seat, worked out
+ * independently (via the same, already unit-tested, `scoreSeatWeekend`
+ * building blocks) from the race/qualifying/brief data these fixtures never
+ * freeze any practice for — so every practice slot reads as "missing", the
+ * same as any `raceReady` lobby that never ran a practice sweep.
+ */
+function expectedWeekend(seed: number, snapshot: RaceSnapshot, teamKey: string) {
+  const race = predictRace(seed, snapshot);
+  const qualifying = qualifyingForRecipe({ seed, round: 1, snapshot });
+  const entry = snapshot.entries[teamKey];
+  let briefFollowed: number | undefined;
+  if (entry) {
+    const track = trackForRound(1);
+    const weather = weatherFor(track, seed);
+    const items = briefFor(track, weather, entry.setup);
+    const choices: WeekendChoices = {
+      raceCompound: entry.setup.compound, tactics: entry.tactics,
+      risk: snapshot.risks[teamKey] ?? 'safe', bias: entry.setup.bias ?? 0,
+    };
+    briefFollowed = briefCompliance(items, choices);
+  }
+  return scoreSeatWeekend({
+    race, qualifyingGrid: qualifying.grid,
+    practiceSessions: [undefined, undefined, undefined],
+    sprint: false, briefFollowed,
+  }, teamKey);
 }
 
 /** Lobideki her takımın RP'si, takım anahtarına göre. */
@@ -597,5 +647,169 @@ describe('race settlement — the earning loop', () => {
     }
     const afterStreak = (await loadTeamSponsorships(lobbyId, HUMAN)).find((s) => s.dealId === 'fail-deal')!.streak;
     assert.equal(afterStreak, beforeStreak, 'yarım muhasebe seriyi de yazdı');
+  });
+});
+
+describe('race settlement — achievements and career', () => {
+  before(async () => { await runMigrations(); });
+  after(async () => {
+    for (const id of createdLobbies) await query('delete from lobbies where id = $1', [id]);
+    for (const id of createdUsers) await query('delete from users where id = $1', [id]);
+    await closePool();
+  });
+
+  it("stores this weekend's achievements alongside the human seat's settlement breakdown", async () => {
+    const { lobbyId, seed, snapshot } = await raceReady('AchStore');
+    const expected = expectedWeekend(seed, snapshot, HUMAN);
+
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const row = await query<{ achievements_earned: string[]; career_score: number }>(
+      `select achievements_earned, career_score from race_settlement_payouts
+       where lobby_id = $1 and season_no = 1 and round_no = 1 and team_key = $2`,
+      [lobbyId, HUMAN],
+    );
+    assert.equal(row.rowCount, 1);
+    assert.deepEqual(new Set(row.rows[0].achievements_earned), new Set(expected.earned));
+    assert.equal(row.rows[0].career_score, expected.score);
+  });
+
+  it("advances the seat's user's career — races, and any wins/podiums/poles earned", async () => {
+    const { lobbyId, seed, snapshot } = await raceReady('AchCareer');
+    const userId = humanUserIdByLobby.get(lobbyId)!;
+    const expected = expectedWeekend(seed, snapshot, HUMAN);
+    const race = predictRace(seed, snapshot);
+
+    const before = await loadCareer(userId);
+    assert.deepEqual(before, emptyCareer(), 'kariyer daha yarışmadan boş olmalı');
+
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const after = await loadCareer(userId);
+    const wanted = recordSeatWeekend(emptyCareer(), expected, race, HUMAN);
+    assert.deepEqual(after, wanted);
+    assert.equal(after.races, 1);
+    assert.equal(after.wins, expected.earned.includes('win') ? 1 : 0);
+    assert.equal(after.podiums, expected.earned.includes('podium') ? 1 : 0);
+    assert.equal(after.poles, expected.earned.includes('pole') ? 1 : 0);
+  });
+
+  it('settling the same race twice advances the career exactly once', async () => {
+    const { lobbyId } = await raceReady('AchTwice');
+    const userId = humanUserIdByLobby.get(lobbyId)!;
+
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const afterFirst = await loadCareer(userId);
+
+    await assert.rejects(
+      () => settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() }),
+      AlreadySettledError,
+    );
+
+    const afterSecond = await loadCareer(userId);
+    assert.deepEqual(afterSecond, afterFirst, 'ikinci muhasebe kariyeri ikinci kez ilerletti');
+    assert.equal(afterSecond.races, 1);
+  });
+
+  it('a failure mid-settlement leaves the career unchanged', async () => {
+    const { lobbyId } = await raceReady('AchFail');
+    const userId = humanUserIdByLobby.get(lobbyId)!;
+    const before = await loadCareer(userId);
+
+    let credits = 0;
+    await assert.rejects(
+      () => settleRace(
+        { lobbyId, seasonNo: 1, roundNo: 1, now: new Date() },
+        {
+          addRp: async (client, l, t, amount) => {
+            credits += 1;
+            if (credits > 1) throw new Error('boom');
+            await addRp(client, l, t, amount);
+          },
+        },
+      ),
+      /boom/,
+    );
+
+    const after = await loadCareer(userId);
+    assert.deepEqual(after, before, 'yarım muhasebe kariyeri de ilerletti');
+    assert.deepEqual(after, emptyCareer());
+  });
+
+  it('an AI-run seat gets no career row and no achievements', async () => {
+    const { lobbyId } = await raceReady('AchAi');
+
+    const seatRow = await query<{ user_id: string | null }>(
+      `select user_id from lobby_seats where lobby_id = $1 and team_key = $2`,
+      [lobbyId, AI_SEAT],
+    );
+    assert.equal(seatRow.rows[0].user_id, null, 'AI koltuğunun bir kullanıcısı var — kurulum testin varsaydığı gibi değil');
+
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const payoutRow = await query<{ achievements_earned: string[]; career_score: number }>(
+      `select achievements_earned, career_score from race_settlement_payouts
+       where lobby_id = $1 and season_no = 1 and round_no = 1 and team_key = $2`,
+      [lobbyId, AI_SEAT],
+    );
+    assert.deepEqual(payoutRow.rows[0].achievements_earned, []);
+    assert.equal(payoutRow.rows[0].career_score, 0);
+
+    const careerRows = await query(
+      `select 1 from user_careers uc
+        join lobby_seats ls on ls.user_id = uc.user_id
+       where ls.lobby_id = $1 and ls.team_key = $2`,
+      [lobbyId, AI_SEAT],
+    );
+    assert.equal(careerRows.rowCount, 0, 'AI koltuğu için bir kariyer satırı yaratılmış');
+  });
+
+  it('a user seated in two lobbies accumulates one career across both', async () => {
+    const owner = await createUserWithIdentity({
+      base: 'TwoSeats', provider: 'google', providerUid: `g-twoseats-${++seq}-${Date.now()}`, emailHash: null,
+    });
+    createdUsers.push(owner.id);
+
+    async function lobbyFor(label: string): Promise<{ lobbyId: string; seed: number; snapshot: RaceSnapshot }> {
+      const creator = await createUserWithIdentity({
+        base: 'GridHunter', provider: 'google', providerUid: `g-${label}-${++seq}-${Date.now()}`, emailHash: null,
+      });
+      createdUsers.push(creator.id);
+      const lobby = await createLobby(creator.id, {
+        region: 'EU', visibility: 'private', aiDifficulty: 'normal',
+        rankMin: 1, rankMax: 10, guestsCanInvite: false, midSeasonJoin: true,
+      });
+      createdLobbies.push(lobby.id);
+      await claimSeatForUser(lobby.id, HUMAN, owner.id, 'human');
+      const { seed, snapshot } = await startRaceFor({ lobbyId: lobby.id, seasonNo: 1, roundNo: 1, now: new Date() });
+      return { lobbyId: lobby.id, seed, snapshot };
+    }
+
+    const first = await lobbyFor('TwoA');
+    const second = await lobbyFor('TwoB');
+
+    await settleRace({ lobbyId: first.lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const afterFirst = await loadCareer(owner.id);
+    assert.equal(afterFirst.races, 1, 'ilk lobinin yarışı kariyere işlenmedi');
+
+    await settleRace({ lobbyId: second.lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const afterSecond = await loadCareer(owner.id);
+    assert.equal(afterSecond.races, 2, 'iki lobi TEK kariyeri paylaşmıyor');
+
+    const wantedFirst = recordSeatWeekend(emptyCareer(), expectedWeekend(first.seed, first.snapshot, HUMAN), predictRace(first.seed, first.snapshot), HUMAN);
+    const wantedBoth = recordSeatWeekend(wantedFirst, expectedWeekend(second.seed, second.snapshot, HUMAN), predictRace(second.seed, second.snapshot), HUMAN);
+    assert.deepEqual(afterSecond, wantedBoth);
+  });
+
+  it('never writes rank_points — that is a later phase, driven by the season objective', async () => {
+    const { lobbyId } = await raceReady('AchRankPoints');
+    const userId = humanUserIdByLobby.get(lobbyId)!;
+
+    const before = await query<{ rank_points: number }>('select rank_points from users where id = $1', [userId]);
+
+    await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+
+    const after = await query<{ rank_points: number }>('select rank_points from users where id = $1', [userId]);
+    assert.equal(after.rows[0].rank_points, before.rows[0].rank_points, 'rank_points bu görevde YAZILMAMALI');
   });
 });
