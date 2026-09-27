@@ -518,6 +518,17 @@ export interface QualifyingResult {
   redRuined: [boolean, boolean];
 }
 
+/**
+ * `teamKey`'s two 1-based grid slots (lead driver first), 0 for a car that
+ * never ran under that key. `QualifyingResult.playerGrid`'s own formula,
+ * generalised from the hardcoded `playerTeam.key` so the server can read any
+ * of the eleven seats' grid slot without restating it.
+ */
+export function teamGridSlots(grid: readonly TimedEntry[], teamKey: string): [number, number] {
+  const slot = (idx: 0 | 1) => grid.findIndex((e) => e.teamKey === teamKey && e.driverIdx === idx) + 1;
+  return [slot(0), slot(1)];
+}
+
 /** Aggressive: a better lap on average, but roughly one in seven goes in the wall. */
 const AGGRESSIVE_GAIN = 3;
 const AGGRESSIVE_MISTAKE = 0.15;
@@ -557,8 +568,7 @@ export function simulateQualifying(input: QualifyingInput): QualifyingResult {
   });
   timed.sort((a, b) => a.sec - b.sec);
 
-  const slot = (idx: 0 | 1) => timed.findIndex((e) => isPlayerEntry(e) && e.driverIdx === idx) + 1;
-  return { grid: timed, playerGrid: [slot(0), slot(1)], mistakes, red: stoppage, redRuined };
+  return { grid: timed, playerGrid: teamGridSlots(timed, playerTeam.key), mistakes, red: stoppage, redRuined };
 }
 
 // ── Tyres over a race distance ─────────────────────────────────────────────
@@ -1203,6 +1213,31 @@ export interface RaceResult {
   control: { yellow: number; vsc: number; sc: number; red: number };
 }
 
+/**
+ * Both of `teamKey`'s cars' finishing positions (lead driver first), 0 for a
+ * DNF or a car that never ran under that key. The per-seat building block
+ * `teamPlayerFinish` and `finishRace`'s own `playerFinishes` are both built
+ * from.
+ */
+export function teamFinishes(order: readonly FinishEntry[], teamKey: string): [number, number] {
+  const finishOf = (idx: 0 | 1): number => {
+    const car = order.find((e) => e.teamKey === teamKey && e.driverIdx === idx);
+    return car && !car.dnf ? car.position : 0;
+  };
+  return [finishOf(0), finishOf(1)];
+}
+
+/**
+ * `teamKey`'s best CLASSIFIED finish this race, 0 if both cars retired (or
+ * never ran). This is `RaceResult.playerFinish`'s own formula, generalised
+ * from the hardcoded `playerTeam.key` to an arbitrary team so the server can
+ * score any of the eleven seats without restating it.
+ */
+export function teamPlayerFinish(order: readonly FinishEntry[], teamKey: string): number {
+  const classified = teamFinishes(order, teamKey).filter((p) => p > 0);
+  return classified.length ? Math.min(...classified) : 0;
+}
+
 export function finishRace(state: RaceState): RaceResult {
   const winner = state.cars[0];
   const order: FinishEntry[] = state.cars.map((c) => ({
@@ -1218,17 +1253,12 @@ export function finishRace(state: RaceState): RaceResult {
     stops: c.stops,
     gapSec: c.dnf ? undefined : round3(c.totalSec - winner.totalSec),
   }));
-  const finishOf = (idx: 0 | 1): number => {
-    const car = order.find((e) => e.teamKey === playerTeam.key && e.driverIdx === idx);
-    return car && !car.dnf ? car.position : 0;
-  };
-  const playerFinishes: [number, number] = [finishOf(0), finishOf(1)];
-  const classified = playerFinishes.filter((p) => p > 0);
+  const playerFinishes: [number, number] = teamFinishes(order, playerTeam.key);
   const pole = state.cars.find((c) => c.gridPosition === 1) ?? state.cars[0];
   const wet = state.weather.wetAtStart || state.weather.rainFromLap !== undefined;
   return {
     order,
-    playerFinish: classified.length ? Math.min(...classified) : 0,
+    playerFinish: teamPlayerFinish(order, playerTeam.key),
     playerFinishes,
     standings: (state.session === 'sprint' ? applySprintPoints : applyRacePoints)(
       state.standings, order.filter((e) => !e.dnf).map((e) => e.teamKey),

@@ -1,0 +1,342 @@
+{
+  "order": [
+    {
+      "teamKey": "aurelia",
+      "driverIdx": 0,
+      "driver": "M. Calvani",
+      "position": 1,
+      "gridPosition": 1,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 0
+    },
+    {
+      "teamKey": "aurelia",
+      "driverIdx": 1,
+      "driver": "E. Duarte",
+      "position": 2,
+      "gridPosition": 2,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 0.35
+    },
+    {
+      "teamKey": "silberpfad",
+      "driverIdx": 0,
+      "driver": "J. Hallström",
+      "position": 3,
+      "gridPosition": 3,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 0.7
+    },
+    {
+      "teamKey": "silberpfad",
+      "driverIdx": 1,
+      "driver": "T. Brecht",
+      "position": 4,
+      "gridPosition": 4,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 1.05
+    },
+    {
+      "teamKey": "bravado",
+      "driverIdx": 0,
+      "driver": "R. Vandermeer",
+      "position": 5,
+      "gridPosition": 5,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 1.4
+    },
+    {
+      "teamKey": "bravado",
+      "driverIdx": 1,
+      "driver": "K. Osei",
+      "position": 6,
+      "gridPosition": 6,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 1.75
+    },
+    {
+      "teamKey": "northgate",
+      "driverIdx": 0,
+      "driver": "O. Lindqvist",
+      "position": 7,
+      "gridPosition": 7,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 2.1
+    },
+    {
+      "teamKey": "northgate",
+      "driverIdx": 1,
+      "driver": "S. Mbeki",
+      "position": 8,
+      "gridPosition": 8,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 2.45
+    },
+    {
+      "teamKey": "ravensworth",
+      "driverIdx": 0,
+      "driver": "D. Achterberg",
+      "position": 9,
+      "gridPosition": 9,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 2.8
+    },
+    {
+      "teamKey": "ravensworth",
+      "driverIdx": 1,
+      "driver": "L. Moreau",
+      "position": 10,
+      "gridPosition": 10,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 3.15
+    },
+    {
+      "teamKey": "bosphorus",
+      "driverIdx": 0,
+      "driver": "A. Kayacan",
+      "position": 11,
+      "gridPosition": 11,
+      "dnf": true,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0
+    },
+    {
+      "teamKey": "bosphorus",
+      "driverIdx": 1,
+      "driver": "N. Ferreira",
+      "position": 12,
+      "gridPosition": 12,
+      "dnf": true,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0
+    },
+    {
+      "teamKey": "ridgeline",
+      "driverIdx": 0,
+      "driver": "P. Novák",
+      "position": 13,
+      "gridPosition": 13,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 4.2
+    },
+    {
+      "teamKey": "ridgeline",
+      "driverIdx": 1,
+      "driver": "H. Tanaka",
+      "position": 14,
+      "gridPosition": 14,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 4.55
+    },
+    {
+      "teamKey": "castellan",
+      "driverIdx": 0,
+      "driver": "F. Okonkwo",
+      "position": 15,
+      "gridPosition": 15,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 4.9
+    },
+    {
+      "teamKey": "castellan",
+      "driverIdx": 1,
+      "driver": "V. Sandoval",
+      "position": 16,
+      "gridPosition": 16,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 5.25
+    },
+    {
+      "teamKey": "verano",
+      "driverIdx": 0,
+      "driver": "C. Bellandi",
+      "position": 17,
+      "gridPosition": 17,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 5.6
+    },
+    {
+      "teamKey": "verano",
+      "driverIdx": 1,
+      "driver": "Y. Demirağ",
+      "position": 18,
+      "gridPosition": 18,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 5.95
+    },
+    {
+      "teamKey": "falkirk",
+      "driverIdx": 0,
+      "driver": "G. Whitlock",
+      "position": 19,
+      "gridPosition": 19,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 6.3
+    },
+    {
+      "teamKey": "falkirk",
+      "driverIdx": 1,
+      "driver": "I. Petrov",
+      "position": 20,
+      "gridPosition": 20,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 6.65
+    },
+    {
+      "teamKey": "orenda",
+      "driverIdx": 0,
+      "driver": "B. Sorensen",
+      "position": 21,
+      "gridPosition": 21,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 7
+    },
+    {
+      "teamKey": "orenda",
+      "driverIdx": 1,
+      "driver": "Z. Haddad",
+      "position": 22,
+      "gridPosition": 22,
+      "dnf": false,
+      "lapsLed": 0,
+      "bestLapSec": null,
+      "stops": 0,
+      "gapSec": 7.35
+    }
+  ],
+  "playerFinish": 0,
+  "playerFinishes": [
+    0,
+    0
+  ],
+  "standings": [
+    {
+      "teamKey": "aurelia",
+      "points": 43,
+      "position": 1
+    },
+    {
+      "teamKey": "silberpfad",
+      "points": 27,
+      "position": 2
+    },
+    {
+      "teamKey": "bravado",
+      "points": 18,
+      "position": 3
+    },
+    {
+      "teamKey": "northgate",
+      "points": 10,
+      "position": 4
+    },
+    {
+      "teamKey": "ravensworth",
+      "points": 3,
+      "position": 5
+    },
+    {
+      "teamKey": "bosphorus",
+      "points": 0,
+      "position": 6
+    },
+    {
+      "teamKey": "ridgeline",
+      "points": 0,
+      "position": 7
+    },
+    {
+      "teamKey": "castellan",
+      "points": 0,
+      "position": 8
+    },
+    {
+      "teamKey": "verano",
+      "points": 0,
+      "position": 9
+    },
+    {
+      "teamKey": "falkirk",
+      "points": 0,
+      "position": 10
+    },
+    {
+      "teamKey": "orenda",
+      "points": 0,
+      "position": 11
+    }
+  ],
+  "wet": false,
+  "pole": {
+    "teamKey": "aurelia",
+    "driverIdx": 0,
+    "driver": "M. Calvani"
+  },
+  "laps": 58,
+  "session": "race",
+  "control": {
+    "yellow": 0,
+    "vsc": 0,
+    "sc": 0,
+    "red": 0
+  }
+}

@@ -6,20 +6,20 @@
  * ── NEDEN BURASI shared'İ TEKRAR YAZMIYOR, TAMAMLIYOR ──────────────────────
  * `RaceResult.playerFinish` (`finishRace`, raceEngine.ts) ve
  * `QualifyingResult.playerGrid` (`simulateQualifying`) TEK bir sabit takıma
- * göre hesaplanır: `shared/src/teams.ts` `playerTeam` — ikisi de bir `teamKey`
- * PARAMETRESİ almaz. Oysa `scoreWeekend`/`judgeTargets`/`recordWeekend` bir
- * `teamKey` alır, ama hedef/ceza/bitiş-bonusu/DNF hesabı için `race.
- * playerFinish`i OKUR. Sonuç: bu ikisi lobideki 11 koltuktan yalnızca
- * `playerTeam.key`e sahip OLANI için doğru çalışır; kalan onu, KENDİ bitiş
- * sırası yerine sabit takımın bitiş sırasıyla ödüllendirir/cezalandırırdı.
+ * göre hesaplanır: `shared/src/teams.ts` `playerTeam`. Oysa
+ * `scoreWeekend`/`judgeTargets`/`recordWeekend` bir `teamKey` alır, ama
+ * hedef/ceza/bitiş-bonusu/DNF hesabı için `race.playerFinish`i OKUR. Sonuç:
+ * bu ikisi lobideki 11 koltuktan yalnızca `playerTeam.key`e sahip OLANI için
+ * doğru çalışır; kalan onu, KENDİ bitiş sırası yerine sabit takımın bitiş
+ * sırasıyla ödüllendirir/cezalandırırdı.
  *
- * `teamPlayerFinish`/`teamGridSlots` aşağıda, `finishRace`/`simulateQualifying`
- * içindeki AYNI formülü (birebir, satır satır) rastgele bir `teamKey` için
- * yeniden üretir — shared'in KURALINI değiştirmiyor, yalnızca hangi arabaya
- * baktığını düzeltiyor. `teamRace` bu düzeltilmiş değeri taşıyan bir
- * `RaceResult` KLONU üretir (`playerFinish` üzerine yazılmış); `scoreWeekend`
- * ve `recordWeekend`e verilen budur — shared'in kendisi hiç değişmedi, hiç
- * dokunulmadı.
+ * `shared/src/raceEngine.ts` artık `teamPlayerFinish`/`teamGridSlots`'u
+ * KENDİSİ export ediyor — `finishRace`/`simulateQualifying` da KENDİ
+ * `playerFinish`/`playerGrid`'i için bunları çağırıyor. Burası yalnızca
+ * import ediyor; ikinci bir tanım YOK (bkz. `race-team-finish-formula.test.ts`
+ * bunu garanti eden tarama testi). `teamRace` bu düzeltilmiş değeri taşıyan
+ * bir `RaceResult` KLONU üretir (`playerFinish` üzerine yazılmış);
+ * `scoreWeekend` ve `recordWeekend`e verilen budur.
  *
  * ── SPRINT HAFTA SONU ───────────────────────────────────────────────────────
  * `WeekendFacts.sprint`/`sprintGrid` doldurulamaz: sprint yarışının kendi
@@ -42,7 +42,10 @@
  * hafta sonunun 2. ve 3. slotu gibi) diye vakumsal-doğru sayıyor — eksik bir
  * seansı öyle işaretlemek Clean Sweep'i SESSİZCE ve YANLIŞLIKLA açardı.
  */
-import type { RaceResult, TimedEntry } from '@pitwall/shared/raceEngine';
+import {
+  teamPlayerFinish, teamGridSlots,
+  type RaceResult, type TimedEntry,
+} from '@pitwall/shared/raceEngine';
 import {
   scoreWeekend, recordWeekend, achievementByKey,
   type Career, type WeekendAchievements, type WeekendFacts,
@@ -53,27 +56,10 @@ export const MISSING_PRACTICE_MARKER: TimedEntry = {
   teamKey: '__missing_practice_session__', driverIdx: 0, driver: '', sec: 0,
 };
 
-/**
- * A team's best CLASSIFIED finish this race, 0 if both cars retired — the
- * exact contract `RaceResult.playerFinish` documents, generalised from the
- * hardcoded `playerTeam.key` `finishRace` uses to an arbitrary `teamKey`.
- * NOT the same number `settle.ts`'s own `teamRaceFinish` computes (that one
- * returns a sponsor-judging sentinel, `teamCount * 2`, for a total DNF —
- * a deliberately different contract for a deliberately different reader).
- */
-export function teamPlayerFinish(order: RaceResult['order'], teamKey: string): number {
-  const classified = order.filter((e) => e.teamKey === teamKey && !e.dnf).map((e) => e.position);
-  return classified.length ? Math.min(...classified) : 0;
-}
-
-/** A team's two grid slots (lead driver first), generalised from
- *  `simulateQualifying`'s own hardcoded-to-`playerTeam` `slot()`. */
-export function teamGridSlots(grid: readonly TimedEntry[], teamKey: string): [number, number] {
-  const slot = (idx: 0 | 1) => grid.findIndex((e) => e.teamKey === teamKey && e.driverIdx === idx) + 1;
-  return [slot(0), slot(1)];
-}
-
-/** `race`, with `playerFinish` corrected for `teamKey` (see file docblock). */
+/** `race`, with `playerFinish` corrected for `teamKey` (see file docblock).
+ *  NOT the same number `settle.ts`'s own `teamRaceFinish` computes (that one
+ *  returns a sponsor-judging sentinel, `teamCount * 2`, for a total DNF —
+ *  a deliberately different contract for a deliberately different reader). */
 export function teamRace(race: RaceResult, teamKey: string): RaceResult {
   return { ...race, playerFinish: teamPlayerFinish(race.order, teamKey) };
 }

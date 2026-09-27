@@ -14,10 +14,10 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { RaceResult, FinishEntry, TimedEntry } from '@pitwall/shared/raceEngine';
+import { teamPlayerFinish, teamGridSlots, type RaceResult, type FinishEntry, type TimedEntry } from '@pitwall/shared/raceEngine';
 import { achievementByKey, type WeekendAchievements } from '@pitwall/shared/achievements';
 import {
-  scoreSeatWeekend, buildPracticeTuple, denyCleanSweep, teamPlayerFinish, teamGridSlots,
+  scoreSeatWeekend, buildPracticeTuple, denyCleanSweep,
   MISSING_PRACTICE_MARKER,
 } from '../src/economy/weekendAchievements.ts';
 

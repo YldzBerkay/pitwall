@@ -1,0 +1,476 @@
+{
+  "qualifying": {
+    "grid": [
+      {
+        "teamKey": "ridgeline",
+        "driverIdx": 0,
+        "driver": "P. Novák",
+        "sec": 73.815
+      },
+      {
+        "teamKey": "bravado",
+        "driverIdx": 0,
+        "driver": "R. Vandermeer",
+        "sec": 73.925
+      },
+      {
+        "teamKey": "ravensworth",
+        "driverIdx": 1,
+        "driver": "L. Moreau",
+        "sec": 73.954
+      },
+      {
+        "teamKey": "bravado",
+        "driverIdx": 1,
+        "driver": "K. Osei",
+        "sec": 74.066
+      },
+      {
+        "teamKey": "bosphorus",
+        "driverIdx": 0,
+        "driver": "A. Kayacan",
+        "sec": 74.073
+      },
+      {
+        "teamKey": "aurelia",
+        "driverIdx": 0,
+        "driver": "M. Calvani",
+        "sec": 74.159
+      },
+      {
+        "teamKey": "ravensworth",
+        "driverIdx": 0,
+        "driver": "D. Achterberg",
+        "sec": 74.185
+      },
+      {
+        "teamKey": "silberpfad",
+        "driverIdx": 0,
+        "driver": "J. Hallström",
+        "sec": 74.187
+      },
+      {
+        "teamKey": "aurelia",
+        "driverIdx": 1,
+        "driver": "E. Duarte",
+        "sec": 74.301
+      },
+      {
+        "teamKey": "bosphorus",
+        "driverIdx": 1,
+        "driver": "N. Ferreira",
+        "sec": 74.343
+      },
+      {
+        "teamKey": "northgate",
+        "driverIdx": 0,
+        "driver": "O. Lindqvist",
+        "sec": 74.381
+      },
+      {
+        "teamKey": "northgate",
+        "driverIdx": 1,
+        "driver": "S. Mbeki",
+        "sec": 74.482
+      },
+      {
+        "teamKey": "castellan",
+        "driverIdx": 0,
+        "driver": "F. Okonkwo",
+        "sec": 74.576
+      },
+      {
+        "teamKey": "silberpfad",
+        "driverIdx": 1,
+        "driver": "T. Brecht",
+        "sec": 74.584
+      },
+      {
+        "teamKey": "verano",
+        "driverIdx": 0,
+        "driver": "C. Bellandi",
+        "sec": 74.593
+      },
+      {
+        "teamKey": "orenda",
+        "driverIdx": 1,
+        "driver": "Z. Haddad",
+        "sec": 74.684
+      },
+      {
+        "teamKey": "verano",
+        "driverIdx": 1,
+        "driver": "Y. Demirağ",
+        "sec": 74.748
+      },
+      {
+        "teamKey": "falkirk",
+        "driverIdx": 0,
+        "driver": "G. Whitlock",
+        "sec": 74.819
+      },
+      {
+        "teamKey": "orenda",
+        "driverIdx": 0,
+        "driver": "B. Sorensen",
+        "sec": 74.843
+      },
+      {
+        "teamKey": "castellan",
+        "driverIdx": 1,
+        "driver": "V. Sandoval",
+        "sec": 74.848
+      },
+      {
+        "teamKey": "falkirk",
+        "driverIdx": 1,
+        "driver": "I. Petrov",
+        "sec": 75.067
+      },
+      {
+        "teamKey": "ridgeline",
+        "driverIdx": 1,
+        "driver": "H. Tanaka",
+        "sec": 75.088
+      }
+    ],
+    "playerGrid": [
+      5,
+      10
+    ],
+    "mistakes": [
+      false,
+      false
+    ],
+    "redRuined": [
+      false,
+      false
+    ]
+  },
+  "race": {
+    "order": [
+      {
+        "teamKey": "bravado",
+        "driverIdx": 0,
+        "position": 1,
+        "gridPosition": 2,
+        "dnf": false,
+        "lapsLed": 50,
+        "bestLapSec": 73.736,
+        "stops": 2,
+        "gapSec": 0
+      },
+      {
+        "teamKey": "bosphorus",
+        "driverIdx": 0,
+        "position": 2,
+        "gridPosition": 5,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 73.748,
+        "stops": 2,
+        "gapSec": 8.371
+      },
+      {
+        "teamKey": "aurelia",
+        "driverIdx": 0,
+        "position": 3,
+        "gridPosition": 6,
+        "dnf": false,
+        "lapsLed": 5,
+        "bestLapSec": 73.433,
+        "stops": 2,
+        "gapSec": 8.657
+      },
+      {
+        "teamKey": "bosphorus",
+        "driverIdx": 1,
+        "position": 4,
+        "gridPosition": 10,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.298,
+        "stops": 2,
+        "gapSec": 27.2
+      },
+      {
+        "teamKey": "ravensworth",
+        "driverIdx": 1,
+        "position": 5,
+        "gridPosition": 3,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 73.885,
+        "stops": 2,
+        "gapSec": 55.189
+      },
+      {
+        "teamKey": "ridgeline",
+        "driverIdx": 1,
+        "position": 6,
+        "gridPosition": 22,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.309,
+        "stops": 2,
+        "gapSec": 69.081
+      },
+      {
+        "teamKey": "castellan",
+        "driverIdx": 0,
+        "position": 7,
+        "gridPosition": 13,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.569,
+        "stops": 2,
+        "gapSec": 75.819
+      },
+      {
+        "teamKey": "bravado",
+        "driverIdx": 1,
+        "position": 8,
+        "gridPosition": 4,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.629,
+        "stops": 2,
+        "gapSec": 76.857
+      },
+      {
+        "teamKey": "ridgeline",
+        "driverIdx": 0,
+        "position": 9,
+        "gridPosition": 1,
+        "dnf": false,
+        "lapsLed": 23,
+        "bestLapSec": 74.406,
+        "stops": 2,
+        "gapSec": 77.008
+      },
+      {
+        "teamKey": "orenda",
+        "driverIdx": 0,
+        "position": 10,
+        "gridPosition": 19,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.045,
+        "stops": 2,
+        "gapSec": 77.408
+      },
+      {
+        "teamKey": "aurelia",
+        "driverIdx": 1,
+        "position": 11,
+        "gridPosition": 9,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.34,
+        "stops": 2,
+        "gapSec": 93.86
+      },
+      {
+        "teamKey": "northgate",
+        "driverIdx": 0,
+        "position": 12,
+        "gridPosition": 11,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.523,
+        "stops": 1,
+        "gapSec": 99.222
+      },
+      {
+        "teamKey": "orenda",
+        "driverIdx": 1,
+        "position": 13,
+        "gridPosition": 16,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.801,
+        "stops": 2,
+        "gapSec": 99.622
+      },
+      {
+        "teamKey": "verano",
+        "driverIdx": 0,
+        "position": 14,
+        "gridPosition": 15,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.502,
+        "stops": 2,
+        "gapSec": 100.022
+      },
+      {
+        "teamKey": "silberpfad",
+        "driverIdx": 1,
+        "position": 15,
+        "gridPosition": 14,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.218,
+        "stops": 2,
+        "gapSec": 100.422
+      },
+      {
+        "teamKey": "northgate",
+        "driverIdx": 1,
+        "position": 16,
+        "gridPosition": 12,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.26,
+        "stops": 2,
+        "gapSec": 100.822
+      },
+      {
+        "teamKey": "falkirk",
+        "driverIdx": 1,
+        "position": 17,
+        "gridPosition": 21,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.359,
+        "stops": 2,
+        "gapSec": 101.222
+      },
+      {
+        "teamKey": "falkirk",
+        "driverIdx": 0,
+        "position": 18,
+        "gridPosition": 18,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.109,
+        "stops": 2,
+        "gapSec": 101.622
+      },
+      {
+        "teamKey": "silberpfad",
+        "driverIdx": 0,
+        "position": 19,
+        "gridPosition": 8,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 74.37,
+        "stops": 2,
+        "gapSec": 102.022
+      },
+      {
+        "teamKey": "verano",
+        "driverIdx": 1,
+        "position": 20,
+        "gridPosition": 17,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.888,
+        "stops": 2,
+        "gapSec": 102.422
+      },
+      {
+        "teamKey": "castellan",
+        "driverIdx": 1,
+        "position": 21,
+        "gridPosition": 20,
+        "dnf": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.086,
+        "stops": 2,
+        "gapSec": 102.822
+      },
+      {
+        "teamKey": "ravensworth",
+        "driverIdx": 0,
+        "position": 22,
+        "gridPosition": 7,
+        "dnf": true,
+        "injured": false,
+        "lapsLed": 0,
+        "bestLapSec": 75.975,
+        "stops": 0
+      }
+    ],
+    "playerFinish": 2,
+    "playerFinishes": [
+      2,
+      4
+    ],
+    "standings": [
+      {
+        "teamKey": "bosphorus",
+        "points": 30,
+        "position": 1
+      },
+      {
+        "teamKey": "bravado",
+        "points": 29,
+        "position": 2
+      },
+      {
+        "teamKey": "aurelia",
+        "points": 15,
+        "position": 3
+      },
+      {
+        "teamKey": "ravensworth",
+        "points": 10,
+        "position": 4
+      },
+      {
+        "teamKey": "ridgeline",
+        "points": 10,
+        "position": 5
+      },
+      {
+        "teamKey": "castellan",
+        "points": 6,
+        "position": 6
+      },
+      {
+        "teamKey": "orenda",
+        "points": 1,
+        "position": 7
+      },
+      {
+        "teamKey": "silberpfad",
+        "points": 0,
+        "position": 8
+      },
+      {
+        "teamKey": "northgate",
+        "points": 0,
+        "position": 9
+      },
+      {
+        "teamKey": "verano",
+        "points": 0,
+        "position": 10
+      },
+      {
+        "teamKey": "falkirk",
+        "points": 0,
+        "position": 11
+      }
+    ],
+    "wet": false,
+    "fastestLap": {
+      "teamKey": "aurelia",
+      "sec": 73.433,
+      "lap": 31
+    },
+    "pole": {
+      "teamKey": "ridgeline",
+      "driverIdx": 0
+    },
+    "laps": 78,
+    "session": "race",
+    "control": {
+      "yellow": 6,
+      "vsc": 1,
+      "sc": 1,
+      "red": 0
+    }
+  }
+}
