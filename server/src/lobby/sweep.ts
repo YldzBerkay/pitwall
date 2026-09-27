@@ -64,6 +64,7 @@ import { advanceDuePhases } from './phase.ts';
 import { acquireDueLobbies, releaseLease } from './lease.ts';
 import { openRace, type OpenedRace } from './runner.ts';
 import { rolloverRace } from './rollover.ts';
+import { freezeDuePracticeSessions } from './practice.ts';
 
 /** Bir atışın rapor edeceği kadarı — testin göreceği tek şey. */
 export interface SweepResult {
@@ -179,6 +180,22 @@ export function createRaceSweep(ownerId: string, hub: LiveHub, options: RaceSwee
     // `openRace` bağlılığı yok — aşağıdaki devralma adımından bağımsız.
     for (const advance of advances) {
       hub.publishPhase(advance.lobbyId, advance.to, advance.seasonNo, advance.roundNo);
+    }
+
+    // PRATİK DONMASI: `advanceDuePhases`TEN SONRA, kirasız ve `driving`den
+    // bağımsız (`freezeDuePracticeSessions`in kendi kapısı `where phase =
+    // 'open'`, bkz. `practice.ts`). Normal zamanlamada bu sıranın hiçbir
+    // önemi yok: FP1/FP2/FP3 ışıklardan 18/12/6 saat önce donar, `checkin`
+    // penceresi ışıklardan yalnızca 5 dakika önce açılır (`phase.ts`
+    // `CHECKIN_WINDOW_MS`), yani bir lobi her zaman rahatça `open`ken donar.
+    // Sıra yalnızca yarışı GEÇMİŞ bir ana zorlayan (testteki gibi) bir lobi
+    // için önemli: böyle bir lobi bu ATIŞTA zaten `checkin`/`live`e geçmiş
+    // olabilir, ki bu doğru — süpürmenin görevi geriye dönük pratik seansları
+    // icat etmek değil, yalnızca hâlâ `open` olan lobiler için vakti gelmiş
+    // seansları dondurmak.
+    const practiceResult = await freezeDuePracticeSessions(now);
+    for (const session of practiceResult.sessions) {
+      hub.publishPractice(session.lobbyId, session.seasonNo, session.roundNo, session.sessionNo);
     }
 
     let ticked = 0;

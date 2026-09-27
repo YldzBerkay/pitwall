@@ -200,10 +200,23 @@ export async function freezePracticeSession(
   return res.rowCount === 1;
 }
 
+/** Bu çağrının GERÇEKTEN dondurduğu bir seans — `sweep.ts`in bunu hangi
+ *  lobiye, hangi seansa duyuracağını bilmesi için (`hub.publishPractice`). */
+export interface FrozenPracticeSession {
+  lobbyId: string;
+  seasonNo: number;
+  roundNo: number;
+  sessionNo: 1 | 2 | 3;
+}
+
 export interface PracticeSweepResult {
   /** Bu çağrının GERÇEKTEN dondurduğu seans sayısı (başkasının önceden
    *  dondurduğu ya da henüz vakti gelmemiş seanslar sayılmaz). */
   frozen: number;
+  /** Aynı sayıyı taşıyan, ama `sweep.ts`in duyuru atması için yeterli
+   *  ayrıntıya sahip liste — `frozen` geriye dönük UYUMLU kalsın diye ayrı
+   *  bir alan, üstüne yazılan bir alan DEĞİL. */
+  sessions: FrozenPracticeSession[];
 }
 
 /**
@@ -229,6 +242,7 @@ export async function freezeDuePracticeSessions(now: Date): Promise<PracticeSwee
   );
 
   let frozen = 0;
+  const sessions: FrozenPracticeSession[] = [];
   for (const row of res.rows) {
     const track = trackForRound(row.round_no);
     const offsets = practiceOffsetsMs(track.sprint);
@@ -245,8 +259,11 @@ export async function freezeDuePracticeSessions(now: Date): Promise<PracticeSwee
       const already = await loadPracticeRun(row.id, row.season_no, row.round_no, sessionNo);
       if (already) continue;
       const ok = await freezePracticeSession(row.id, row.season_no, row.round_no, sessionNo, now);
-      if (ok) frozen += 1;
+      if (ok) {
+        frozen += 1;
+        sessions.push({ lobbyId: row.id, seasonNo: row.season_no, roundNo: row.round_no, sessionNo });
+      }
     }
   }
-  return { frozen };
+  return { frozen, sessions };
 }

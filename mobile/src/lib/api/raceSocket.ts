@@ -149,6 +149,20 @@ export interface RaceSocketState {
   seasonNo?: number;
   /** See `seasonNo`. */
   roundNo?: number;
+  /** The server's most recent practice-session-completed announcement
+   * (`server/src/lobby/live.ts`'s `publishPractice`, fired from
+   * `sweep.ts`'s freeze-then-announce wiring) — a bare event, never the
+   * timesheet itself (mirrors `phase`'s own "announce, don't carry the
+   * recipe" shape; the actual sessions are read separately, via `GET
+   * /lobby/practice`). A NEW object every time a `practice` frame arrives
+   * (even for the same `sessionNo`, though the server never re-announces an
+   * already-frozen session) so a listener can tell "a fresh event just
+   * arrived" apart from "nothing changed" by reference. Preserved across
+   * every `lap`/`state`/`phase` frame (none of which carry this field, so
+   * none can clobber it even by accident — same structural guarantee
+   * `phase`/`qualifying` already get) and across disconnects. `undefined`
+   * until the first practice session of the weekend completes. */
+  practiceEvent?: { seasonNo: number; roundNo: number; sessionNo: 1 | 2 | 3 };
 }
 
 export interface RaceSocketOptions {
@@ -198,6 +212,7 @@ type IncomingFrame =
   | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
   | { type: 'phase'; lobbyId: string; phase: LobbyPhase; seasonNo: number; roundNo: number }
+  | { type: 'practice'; lobbyId: string; seasonNo: number; roundNo: number; sessionNo: 1 | 2 | 3 }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
 
@@ -231,6 +246,10 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
   let phase: LobbyPhase | undefined;
   let seasonNo: number | undefined;
   let roundNo: number | undefined;
+  // Separate from everything else for the same reason `phase` is: a
+  // 'practice' frame carries no `race`/`phase` keys at all to clobber them
+  // with, and no other frame carries a `sessionNo` to clobber THIS with.
+  let practiceEvent: RaceSocketState['practiceEvent'];
   let socket: MinimalWebSocket | null = null;
   let reconnectAttempt = 0;
   let reconnectTimer: number | null = null;
@@ -238,7 +257,7 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
   const listeners = new Set<(state: RaceSocketState) => void>();
 
   function snapshot(): RaceSocketState {
-    return { status, race, qualifying, phase, seasonNo, roundNo };
+    return { status, race, qualifying, phase, seasonNo, roundNo, practiceEvent };
   }
 
   function notify(): void {
@@ -309,6 +328,15 @@ export function createRaceSocket(options: RaceSocketOptions, deps: RaceSocketDep
         phase = frame.phase;
         seasonNo = frame.seasonNo;
         roundNo = frame.roundNo;
+        frameArrived();
+        return;
+      }
+      case 'practice': {
+        if (frame.lobbyId !== options.lobbyId) return;
+        // A NEW object every time, even if a caller somehow re-sent the same
+        // `sessionNo` — see `RaceSocketState.practiceEvent`'s doc comment on
+        // why identity (not just value) matters for a listener.
+        practiceEvent = { seasonNo: frame.seasonNo, roundNo: frame.roundNo, sessionNo: frame.sessionNo };
         frameArrived();
         return;
       }

@@ -41,6 +41,7 @@ import {
 } from './lobbyRepo.ts';
 import { ensureSlots, listSlots, unlockSlot, SLOT_PRICE_GOLD } from './slotRepo.ts';
 import { standingsBeforeRound } from './runner.ts';
+import { loadPracticeRuns, derivePracticeResult } from './practice.ts';
 import { query } from '../db/pool.ts';
 
 /**
@@ -402,6 +403,52 @@ async function handleGetStandings(ctx: RequestContext): Promise<RouteResult> {
   return { status: 200, body: { standings } };
 }
 
+// ── Practice ───────────────────────────────────────────────────────────────
+
+/**
+ * A lobby's completed practice sessions, derived on demand from the frozen
+ * recipe (`practice.ts`'s `derivePracticeResult`) — never stored, never
+ * mutated by this read (same shape of guarantee `handleGetStandings` above
+ * already gives; this route calls neither `freezePracticeSession` nor
+ * anything else that writes).
+ *
+ * Membership only, exactly like `/lobby/standings`: a practice timesheet
+ * belongs to the whole lobby (everyone sees the SAME classification for a
+ * session, whichever seat they hold), not to one team, so there is nothing
+ * here for a `findOwnTeamKey`-style lookup to narrow further — only the
+ * caller's OWN `lobby_seats` row (via the session) decides whether they may
+ * read at all. Two different seated players therefore get byte-identical
+ * `sessions`: `derivePracticeResult` is a pure, seeded function of the
+ * frozen recipe, so replaying it twice for the same run always agrees.
+ *
+ * Only the derived `PracticeResult` (a lap-time sheet: team, driver, best
+ * lap) ever leaves this route — the frozen `entries_snapshot` itself (the
+ * recipe `derivePracticeResult` was built from) is read here purely to feed
+ * that derivation and is never put on the wire.
+ */
+async function handleGetPractice(ctx: RequestContext): Promise<RouteResult> {
+  const user = await requireSession(ctx);
+  if (!user) return unauthorized();
+
+  const lobbyId = ctx.url.searchParams.get('id') ?? '';
+  if (!lobbyId) return { status: 400, body: { error: 'invalid_request' } };
+
+  const lobby = await loadLobby(lobbyId);
+  if (!lobby) return { status: 404, body: { error: 'lobby_not_found' } };
+
+  const seats = await loadSeats(lobby.id);
+  const seated = seats.some((s) => s.userId === user.id);
+  if (!seated) return forbidden();
+
+  const runs = await loadPracticeRuns(lobby.id, lobby.seasonNo, lobby.roundNo);
+  const sessions = runs.map((run) => ({
+    sessionNo: run.sessionNo,
+    wet: run.wet,
+    result: derivePracticeResult(run),
+  }));
+  return { status: 200, body: { sessions } };
+}
+
 export function registerLobbyRoutes(router: Router): void {
   router.get('/slots', handleGetSlots);
   router.post('/slots/unlock', handleUnlockSlot);
@@ -412,4 +459,5 @@ export function registerLobbyRoutes(router: Router): void {
   router.post('/lobby/invite', handleInvite);
   router.get('/invites', handleGetInvites);
   router.get('/lobby/standings', handleGetStandings);
+  router.get('/lobby/practice', handleGetPractice);
 }

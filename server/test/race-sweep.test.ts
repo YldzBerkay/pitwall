@@ -28,6 +28,7 @@ import { RACE_TICK_MS } from '../src/lobby/runner.ts';
 import { createLiveHub, LIVE_PATH, type LiveHub } from '../src/lobby/live.ts';
 import { createRaceSweep } from '../src/lobby/sweep.ts';
 import { CHECKIN_WINDOW_MS } from '../src/lobby/phase.ts';
+import { FP1_OFFSET_MS } from '../src/lobby/practice.ts';
 import { trackForRound } from '@pitwall/shared/tracks';
 
 const createdLobbies: string[] = [];
@@ -428,6 +429,53 @@ describe('race sweep — the loop that drives everything', () => {
       assert.equal('standings' in openPhase, false);
       assert.equal('entries' in openPhase, false);
       assert.equal('rosters' in openPhase, false);
+
+      await client.close();
+    });
+
+    // ── 9. Bir pratik seansı donduğunda abone HABER ALIR ────────────────────
+    //
+    // `freezeDuePracticeSessions` (`practice.ts`) bugüne kadar süpürmenin
+    // hiçbir yerinden çağrılmıyordu — yalnızca `practice.test.ts` doğrudan
+    // çağırıyordu. Bu test onu `sweepOnce`e bağlar ve donma anını, yarışın
+    // faz geçişleriyle AYNI kanaldan (`hub.publishPractice`), yarış hiç
+    // sürmezken bile aboneye ulaştığını kanıtlar — `open→checkin` testinin
+    // (yukarıdaki 7 numaralı test) pratik karşılığı.
+
+    it('a subscribed client is told when a practice session completes, with no race ticking', async () => {
+      const sweep = createRaceSweep('owner-8', hub);
+      const { lobbyId, token } = await makeLobby('practice-complete');
+      const t0 = new Date();
+      // FP1'in tam vakti şimdi, ama ışıklara (next_race_at) hâlâ
+      // FP1_OFFSET_MS kadar var — checkin penceresinin (5 dk) çok ötesinde,
+      // yani bu atışta HİÇBİR faz geçişi olmamalı, yalnızca FP1 donmalı.
+      await query(
+        `update lobbies set phase = 'open', season_no = 1, round_no = $2,
+                            next_race_at = $3, race_owner = null, race_lease_until = null
+          where id = $1`,
+        [lobbyId, ROUND, new Date(t0.getTime() + FP1_OFFSET_MS)],
+      );
+
+      const { client, phase } = await subscribeClient(lobbyId, token);
+      assert.equal(phase.type, 'phase');
+      assert.equal(phase.phase, 'open');
+
+      const result = await sweep.sweepOnce(t0);
+      assert.equal(result.phaseAdvances, 0, 'bu atışta hiçbir faz geçişi olmamalıydı');
+      assert.equal(result.claimed, 0, 'bu atışta hiçbir yarış devralınmamalıydı');
+
+      const practiceMsg = await client.next();
+      assert.equal(practiceMsg.type, 'practice', 'pratik tamamlanma çerçevesi aboneye HİÇ ulaşmadı');
+      assert.equal(practiceMsg.lobbyId, lobbyId);
+      assert.equal(practiceMsg.sessionNo, 1);
+      assert.equal(practiceMsg.seasonNo, 1);
+      assert.equal(practiceMsg.roundNo, ROUND);
+      // Tarif (dondurulmuş katılım) hiçbir şekilde bu çerçevede olmamalı —
+      // yayının genel ilkesi (`live.ts`): çizim verisi taşınır, tarif değil.
+      assert.equal('entries' in practiceMsg, false, 'pratik çerçevesi entries taşıyor — tarif sızıyor');
+      assert.equal('standings' in practiceMsg, false);
+      assert.equal('rosters' in practiceMsg, false);
+      assert.equal('result' in practiceMsg, false, 'pratik çerçevesi klasmanın kendisini taşıyor — bu bir duyuru, veri değil');
 
       await client.close();
     });

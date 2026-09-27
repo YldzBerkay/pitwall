@@ -11,6 +11,11 @@ import {
   type WeekendChoicesInput,
 } from '@/lib/api/race';
 import {
+  practiceSessions as practiceApiCall,
+  type PracticeSession,
+  type PracticeSessionsResponse,
+} from '@/lib/api/practice';
+import {
   createRaceSocket,
   type ConnectionStatus,
   type LobbyPhase,
@@ -92,6 +97,18 @@ export interface RaceSliceState {
   seasonNo?: number;
   /** See `seasonNo`. */
   roundNo?: number;
+  /** Every practice session frozen so far this weekend, oldest first —
+   * fetched from `GET /lobby/practice` (`lib/api/practice.ts`) each time the
+   * socket's `practiceEvent` announces a newly-completed one (see
+   * `connectRace`'s `adopt` below). Starts empty (`[]`), never `undefined`:
+   * "no lobby" and "seated but nothing frozen yet" are different situations
+   * (`displayPractice` tells them apart), but neither one is a state a
+   * caller should have to guard against reading a field that isn't there
+   * yet. NEVER locally simulated — same "no local fallback" rule
+   * `data`/`qualifying` already follow; the old `PracticePanel.tsx` had its
+   * local `runPractice`/`simulatePractice` calls removed already, so there
+   * is no local sheet left to fall back to in the first place. */
+  practice: PracticeSession[];
   /** The most recent pit call's result, kept distinct from `data` so a
    * rejection (e.g. `lap_already_run`) can be shown to the player without
    * being swallowed into the race state. */
@@ -167,6 +184,7 @@ export interface RaceSliceInjected {
     input: WeekendChoicesInput,
   ) => Promise<ApiResult<RaceActionResponse>>;
   checkinApi?: (baseUrl: string, token: string, lobbyId: string) => Promise<ApiResult<RaceActionResponse>>;
+  practiceApi?: (baseUrl: string, token: string, lobbyId: string) => Promise<ApiResult<PracticeSessionsResponse>>;
   socketDeps?: RaceSocketDeps;
 }
 
@@ -186,6 +204,7 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
   const sendPit = injected.pitApi ?? pitApi;
   const sendWeekendChoices = injected.weekendChoicesApi ?? weekendChoicesApi;
   const sendCheckin = injected.checkinApi ?? checkinApi;
+  const sendPracticeSessions = injected.practiceApi ?? practiceApiCall;
 
   /** The session every server-bound call here needs; undefined while signed
    * out. Mirrors `lobbySlice.ts`'s own `session()` helper. */
@@ -205,7 +224,7 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
   };
 
   return {
-    race: { status: 'idle', data: null },
+    race: { status: 'idle', data: null, practice: [] },
 
     connectRace: (lobbyId) => {
       teardown();
@@ -226,6 +245,7 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
             phase: undefined,
             seasonNo: undefined,
             roundNo: undefined,
+            practice: [],
             lastPitOutcome: undefined,
           },
         }));
@@ -242,12 +262,38 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
           phase: undefined,
           seasonNo: undefined,
           roundNo: undefined,
+          practice: [],
           lastPitOutcome: undefined,
         },
       }));
 
       const newSocket = createSocket({ url: liveSocketUrl(auth.baseUrl), lobbyId, token: auth.token }, injected.socketDeps);
       socket = newSocket;
+
+      // Tracks the last `practiceEvent` object this connection has already
+      // reacted to (by IDENTITY, not value — see `RaceSocketState
+      // .practiceEvent`'s doc comment) so `adopt` below fetches exactly once
+      // per newly-announced session, not once per frame (every frame
+      // re-notifies listeners, `56245d6`'s fix — see the module doc comment
+      // at the top of `raceSocket.ts`).
+      let lastPracticeEvent: { seasonNo: number; roundNo: number; sessionNo: 1 | 2 | 3 } | undefined;
+
+      /** `GET /lobby/practice` — the announcement (`practiceEvent`) carries
+       * no timesheet of its own (mirrors `phase`'s own "announce, don't
+       * carry the recipe" shape), so a listener that wants the actual
+       * sessions fetches them here, exactly like `phase`'s counterpart on
+       * the server side (`server/src/lobby/routes.ts`'s `handleGetPractice`)
+       * would be read cold. Guarded by `lobbyId` so a slow response landing
+       * after `leaveRace`/a different `connectRace` never writes into the
+       * wrong lobby's slot. */
+      const fetchPractice = async (): Promise<void> => {
+        const current = session();
+        if (!current) return;
+        const res = await sendPracticeSessions(current.baseUrl, current.token, lobbyId);
+        if (!res.ok) return;
+        if (get().race.lobbyId !== lobbyId) return;
+        set((s) => ({ race: { ...s.race, practice: res.data.sessions } }));
+      };
 
       const adopt = (snapshot: {
         status: ConnectionStatus;
@@ -256,6 +302,7 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
         phase?: LobbyPhase;
         seasonNo?: number;
         roundNo?: number;
+        practiceEvent?: { seasonNo: number; roundNo: number; sessionNo: 1 | 2 | 3 };
       }) => {
         set((s) => ({
           race: {
@@ -268,6 +315,10 @@ export function createRaceSlice(set: SliceSet, get: SliceGet, injected: RaceSlic
             roundNo: snapshot.roundNo,
           },
         }));
+        if (snapshot.practiceEvent && snapshot.practiceEvent !== lastPracticeEvent) {
+          lastPracticeEvent = snapshot.practiceEvent;
+          void fetchPractice();
+        }
       };
 
       adopt(newSocket.getState());
@@ -459,6 +510,38 @@ export function displayPhase(
     return { kind: 'loading' };
   }
   return { kind: 'ready', phase: race.phase, seasonNo: race.seasonNo, roundNo: race.roundNo };
+}
+
+/**
+ * What the practice screen should show — the lobby's completed sessions
+ * (`race.practice`, fetched via `GET /lobby/practice` each time the socket's
+ * `practiceEvent` announces a new one) while this device is seated in a
+ * lobby, and a plain "no lobby" otherwise.
+ *
+ * NO LOCAL FALLBACK, and unlike `displayRace`/`displayQualifying` there is no
+ * local-sheet argument to fall back to at all: the old `PracticePanel.tsx`
+ * already had its local `runPractice`/`simulatePractice` calls removed when
+ * the server took over the weekend (see that file's own doc comment), so
+ * there is no second, locally-simulated timesheet left in this codebase to
+ * reach for. A caller with no lobby gets `{ kind: 'no-lobby' }` outright,
+ * never a fabricated sheet.
+ *
+ * `{ kind: 'ready', sessions: [] }` (seated, nothing frozen yet) is a real,
+ * distinct answer from `{ kind: 'no-lobby' }` — a screen can tell "you're in
+ * a lobby but FP1 hasn't run yet" apart from "there is no weekend to show"
+ * without a third `'loading'` state (unlike `displayPhase`): `race.practice`
+ * starts at a real, always-present `[]`, never `undefined`, so there is
+ * nothing here to distinguish "not yet arrived" from "arrived empty".
+ */
+export type PracticeDisplay =
+  | { kind: 'no-lobby' }
+  | { kind: 'ready'; sessions: PracticeSession[] };
+
+export function displayPractice(
+  race: Pick<RaceSliceState, 'lobbyId' | 'practice'>,
+): PracticeDisplay {
+  if (!race.lobbyId) return { kind: 'no-lobby' };
+  return { kind: 'ready', sessions: race.practice };
 }
 
 /**

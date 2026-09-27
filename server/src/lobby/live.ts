@@ -71,6 +71,7 @@ type Outgoing =
   | { type: 'state'; lobbyId: string; race: SerialisedRaceState | null }
   | { type: 'lap'; lobbyId: string; race: SerialisedRace }
   | { type: 'phase'; lobbyId: string; phase: LobbyPhase; seasonNo: number; roundNo: number }
+  | { type: 'practice'; lobbyId: string; seasonNo: number; roundNo: number; sessionNo: 1 | 2 | 3 }
   | { type: 'unsubscribed'; lobbyId: string }
   | { type: 'error'; error: string };
 
@@ -247,6 +248,21 @@ export interface LiveHub {
    * icat edilmiyor, mevcut abonelik zaten bunu sağlıyor.
    */
   publishPhase(lobbyId: string, phase: LobbyPhase, seasonNo: number, roundNo: number): void;
+  /**
+   * Bir pratik seansının DONDUĞUNU o lobinin odasına yolla — `sweep.ts`in
+   * `freezeDuePracticeSessions` çağrısının döndürdüğü her seans için çağırdığı
+   * kanal. `publishPhase` ile BİREBİR aynı gerekçe: bu da yarış hiç
+   * sürmüyorken (hafta sonunun `open` fazında) gerçekleşen bir olay, yani
+   * `publish`in tur akışına bağlı kalamaz.
+   *
+   * KASITLA yalnızca DUYURU: seansın kendi klasmanı (`PracticeResult`) burada
+   * TAŞINMAZ. `serialise()`in kendi ilkesiyle aynı — "istemcinin çizmesi için
+   * ne gerekiyorsa" değil, çünkü çizim verisi burada bile YOK; istemci bu
+   * duyuruyu aldığında `GET /lobby/practice`e (routes.ts) başvurup tam
+   * listeyi okur, `standings`/`entries`/`rosters`in asla bir yayın
+   * çerçevesine binmediği aynı disiplinle.
+   */
+  publishPractice(lobbyId: string, seasonNo: number, roundNo: number, sessionNo: 1 | 2 | 3): void;
   roomSize(lobbyId: string): number;
   hasRoom(lobbyId: string): boolean;
   /** Açık oda sayısı — sızıntı testinin baktığı sayaç. */
@@ -369,6 +385,15 @@ class Hub implements LiveHub {
     // soketin kendi kuyruğuna yazılır. Bu çerçeve tur içermez — turdan
     // bağımsız duyurulabilmesi işin bütün noktası (bkz. `sweep.ts`).
     const payload = JSON.stringify({ type: 'phase', lobbyId, phase, seasonNo, roundNo });
+    for (const socket of room) {
+      if (socket.readyState === 1) socket.send(payload);
+    }
+  }
+
+  publishPractice(lobbyId: string, seasonNo: number, roundNo: number, sessionNo: 1 | 2 | 3): void {
+    const room = this.rooms.get(lobbyId);
+    if (!room || room.size === 0) return;
+    const payload = JSON.stringify({ type: 'practice', lobbyId, seasonNo, roundNo, sessionNo });
     for (const socket of room) {
       if (socket.readyState === 1) socket.send(payload);
     }
