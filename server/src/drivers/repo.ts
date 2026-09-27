@@ -10,6 +10,7 @@
 import type { PoolClient } from 'pg';
 import { query } from '../db/pool.ts';
 import { teamByKey, type Driver, type DriverStats } from '@pitwall/shared/teams';
+import type { Rosters } from '@pitwall/shared/raceEngine';
 
 export type DriverPosition = 'seat_0' | 'seat_1' | 'reserve' | 'market';
 
@@ -112,4 +113,35 @@ export async function loadLobbyDrivers(lobbyId: string, client?: PoolClient): Pr
   const sql = `select * from lobby_drivers where lobby_id = $1`;
   const res = client ? await client.query<DriverRow>(sql, [lobbyId]) : await query<DriverRow>(sql, [lobbyId]);
   return res.rows.map(toLobbyDriver);
+}
+
+/**
+ * Every team's race-seat pair, as the race engine's `Rosters` shape — the
+ * live counterpart of `teams.ts`' fixed defaults. `driverOf` (raceEngine.ts)
+ * falls back to `rosters[teamKey]` for EVERY team, human-managed or AI, so
+ * this covers the whole grid, not just occupied seats. See `loadTeamDrivers`
+ * for the client rule.
+ *
+ * A team missing either race seat (should not happen once `seedTeamDrivers`
+ * has run for it) is left out entirely rather than half-filled — a half
+ * pair would let `driverOf` read `rosters[teamKey][1]` as `undefined` for
+ * one seat while the other reads live data, which is a worse failure than
+ * falling back to the team's default pair for both seats.
+ */
+export async function loadLobbyRosters(lobbyId: string, client?: PoolClient): Promise<Rosters> {
+  const drivers = await loadLobbyDrivers(lobbyId, client);
+  const byTeam = new Map<string, [Driver | undefined, Driver | undefined]>();
+  for (const d of drivers) {
+    if (!d.teamKey) continue; // market driver, unseated
+    if (d.position !== 'seat_0' && d.position !== 'seat_1') continue;
+    const idx = d.position === 'seat_0' ? 0 : 1;
+    const pair = byTeam.get(d.teamKey) ?? [undefined, undefined];
+    pair[idx] = d.driver;
+    byTeam.set(d.teamKey, pair);
+  }
+  const rosters: Rosters = {};
+  for (const [teamKey, pair] of byTeam) {
+    if (pair[0] && pair[1]) rosters[teamKey] = [pair[0], pair[1]];
+  }
+  return rosters;
 }

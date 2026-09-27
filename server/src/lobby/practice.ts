@@ -81,6 +81,7 @@ export interface PracticeRun {
   seed: number;
   wet: boolean;
   entries: Entries;
+  rosters: Rosters;
 }
 
 interface PracticeRunRow {
@@ -91,6 +92,7 @@ interface PracticeRunRow {
   seed: number;
   wet: boolean;
   entries_snapshot: Entries;
+  rosters_snapshot: Rosters;
 }
 
 function mapRow(row: PracticeRunRow): PracticeRun {
@@ -102,6 +104,7 @@ function mapRow(row: PracticeRunRow): PracticeRun {
     seed: row.seed,
     wet: row.wet,
     entries: row.entries_snapshot,
+    rosters: row.rosters_snapshot,
   };
 }
 
@@ -117,7 +120,7 @@ function mapRow(row: PracticeRunRow): PracticeRun {
 export async function loadPracticeRun(
   lobbyId: string, seasonNo: number, roundNo: number, sessionNo: 1 | 2 | 3, client?: PoolClient,
 ): Promise<PracticeRun | null> {
-  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
+  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot, rosters_snapshot
        from practice_runs
       where lobby_id = $1 and season_no = $2 and round_no = $3 and session_no = $4`;
   const res = client
@@ -131,7 +134,7 @@ export async function loadPracticeRun(
 export async function loadPracticeRuns(
   lobbyId: string, seasonNo: number, roundNo: number, client?: PoolClient,
 ): Promise<PracticeRun[]> {
-  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot
+  const sql = `select lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot, rosters_snapshot
        from practice_runs
       where lobby_id = $1 and season_no = $2 and round_no = $3
       order by session_no asc`;
@@ -145,19 +148,20 @@ export async function loadPracticeRuns(
  * Donmuş bir tarifi klasmana çevirir. SAF: veritabanı yok, saat yok — aynı
  * tarif her zaman aynı sonucu verir (Adım 5(a)'nın kanıtladığı şey tam bu).
  *
- * `aiBonus`/`rosters` `startRaceFor`daki gerekçeyle aynı sebepten boş: bu
- * kaynaklar henüz sunucuda saklanmıyor, boş bırakmak motorun varsayılanıyla
- * aynı sonucu verir.
+ * `rosters` DONMUŞ SATIRDAN gelir (`run.rosters`, `rosters_snapshot`) — yarışla
+ * aynı gerekçe: seans donduktan SONRAKİ bir antrenman/imza bu klasmanı
+ * ETKİLEMEMELİ. `aiBonus` `startRaceFor`daki gerekçeyle aynı sebepten hâlâ
+ * boş: o kaynak henüz sunucuda hiç saklanmıyor, boş bırakmak motorun
+ * varsayılanıyla aynı sonucu verir.
  */
 export function derivePracticeResult(run: PracticeRun): PracticeResult {
   const track = trackForRound(run.roundNo);
   const aiBonus: AiBonus = {};
-  const rosters: Rosters = {};
   return simulatePractice({
     track,
     entries: run.entries,
     aiBonus,
-    rosters,
+    rosters: run.rosters,
     wet: run.wet,
     session: run.sessionNo,
     round: run.roundNo,
@@ -197,15 +201,15 @@ export async function freezePracticeSession(
   // ışıklar sönerken `startRaceFor`in kendi `now`ı ne kadar hassassa
   // (süpürme döngüsünün tik aralığı kadar), pratik seansının donması da
   // AYNI hassasiyettedir; ikinci bir zaman kaynağı icat edilmedi.
-  const { entries } = await buildFrozenEntries(lobbyId, now);
+  const { entries, rosters } = await buildFrozenEntries(lobbyId, now);
 
   onBeforeInsert?.();
   const res = await query<{ session_no: number }>(
-    `insert into practice_runs (lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot)
-     values ($1, $2, $3, $4, $5, $6, $7)
+    `insert into practice_runs (lobby_id, season_no, round_no, session_no, seed, wet, entries_snapshot, rosters_snapshot)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      on conflict (lobby_id, season_no, round_no, session_no) do nothing
      returning session_no`,
-    [lobbyId, seasonNo, roundNo, sessionNo, seed, wet, JSON.stringify(entries)],
+    [lobbyId, seasonNo, roundNo, sessionNo, seed, wet, JSON.stringify(entries), JSON.stringify(rosters)],
   );
   return res.rowCount === 1;
 }

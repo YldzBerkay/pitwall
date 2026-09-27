@@ -33,6 +33,7 @@ import {
   type PitLaneStart,
   type QualiRisk,
   type RaceState,
+  type Rosters,
   type TacticPreset,
   type WeatherPlan,
 } from '@pitwall/shared/raceEngine';
@@ -41,6 +42,7 @@ import { trackForRound } from '@pitwall/shared/tracks';
 import { freshStandings } from '@pitwall/shared/season';
 import type { TeamStanding } from '@pitwall/shared/teams';
 import { query, withTransaction } from '../db/pool.ts';
+import { loadLobbyRosters } from '../drivers/repo.ts';
 import { loadLobbyEconomy } from '../economy/repo.ts';
 import { settleRace, type SettleDeps } from '../economy/settle.ts';
 import { renewLease, releaseLease } from './lease.ts';
@@ -212,12 +214,22 @@ export async function standingsBeforeRound(
  * `pitLaneStarts`/`risks` BİLEREK YOK: ikisi de sıralama/yarışa özgü (grid
  * cezası, sıralama riski) ve pratikte anlamsız — pratik yalnızca bir tur
  * sıralaması üretir, ızgara kurmaz.
+ *
+ * `rosters` DA BURADA DONUYOR — aynı gerekçeyle: pratik, yarışın koşacağı
+ * AYNI kadroya bakmalı (aksi halde FP sıralaması "bu pistte nerede
+ * duruyorum" sorusuna yarışın kullanacağından BAŞKA bir kadroyla cevap
+ * verirdi). `loadLobbyRosters` `lobby_drivers`in o ANKİ satırlarını okur —
+ * ışıklar sönerken/seans donarken bir kez, `now`la aynı çağrıda; bundan
+ * sonraki bir antrenman/imza bu tarifi asla etkilemez.
  */
-export async function buildFrozenEntries(lobbyId: string, now: Date): Promise<{ entries: Entries; risks: Record<string, QualiRisk> }> {
+export async function buildFrozenEntries(
+  lobbyId: string, now: Date,
+): Promise<{ entries: Entries; risks: Record<string, QualiRisk>; rosters: Rosters }> {
   // Parc fermé tek çağrıda iki çıktı verir ve ikisi de tarife girer: `byTeam`
   // katılımın aracını belirler, `pitLaneStarts` grid cezasını.
   const verdict = await evaluateParcFerme(lobbyId, now);
   const seats = await loadSeats(lobbyId);
+  const rosters = await loadLobbyRosters(lobbyId);
   // IŞIKLAR SÖNERKEN TEK SEFER OKUNUR — `managed` ile birebir aynı gerekçeyle
   // (aşağıdaki "DONAN KARAR" yorumu): bundan sonra satır değişse de bu
   // yarışı etkilemez, yalnızca BİR SONRAKİ çağrıyı.
@@ -262,7 +274,7 @@ export async function buildFrozenEntries(lobbyId: string, now: Date): Promise<{ 
     risks[seat.teamKey] = choices?.qualiRisk ?? DEFAULT_RISK;
   }
 
-  return { entries, risks };
+  return { entries, risks, rosters };
 }
 
 export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> {
@@ -272,7 +284,7 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
   const track = trackForRound(roundNo);
   const weather = weatherFor(track, seed);
 
-  const { entries, risks } = await buildFrozenEntries(lobbyId, now);
+  const { entries, risks, rosters } = await buildFrozenEntries(lobbyId, now);
   // Pit yolu cezası donma biçiminin PARÇASI DEĞİL: `buildFrozenEntries`
   // pratikle paylaşılan ortak kısım, ceza yalnızca yarışa özgü — bu yüzden
   // `evaluateParcFerme` burada AYRICA çağrılıyor (aynı `now`, aynı lobi;
@@ -290,12 +302,18 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
     entries,
     risks,
     standings: await standingsBeforeRound(lobbyId, seasonNo, roundNo),
-    // Rakip istihbaratının (casusluk) kalıcı AI bonusu ve lobiye özel pilot
-    // kadroları henüz sunucuda saklanmıyor. Boş bırakmak motorun varsayılanı
-    // ile aynı yarışı verir; ama alanlar TARİFTE durduğu için, kaynakları
-    // eklendiğinde bugün koşulan yarışlar değişmeden oynatılmaya devam eder.
+    // Rakip istihbaratının (casusluk) kalıcı AI bonusu henüz sunucuda
+    // saklanmıyor. Boş bırakmak motorun varsayılanı ile aynı yarışı verir;
+    // alan TARİFTE durduğu için, kaynak eklendiğinde bugün koşulan yarışlar
+    // değişmeden oynatılmaya devam eder.
     aiBonus: {},
-    rosters: {},
+    // Kadrolar artık `lobby_drivers`den gerçek: `buildFrozenEntries` yarış ve
+    // pratik için AYNI donmuş kadroyu üretiyor (bkz. onun docblock'u).
+    // Tohumlanmış kadro `teams.ts` varsayılanının BİREBİR AYNISI olduğu için
+    // (`drivers-repo.test.ts` "driver stats round-trip byte-identical"), bu
+    // satır bugün koşulan hiçbir yarışı DEĞİŞTİRMEZ — yalnızca bir sürücü
+    // antrenman/imza ile varsayılanından SAPTIĞINDA fark yaratır.
+    rosters,
     pitLaneStarts,
   };
 
