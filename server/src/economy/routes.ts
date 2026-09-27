@@ -30,6 +30,7 @@ import { query } from '../db/pool.ts';
 import { runAction, type ActionFailureCode } from './actions.ts';
 import { buildSlotState, SlotStateError } from './state.ts';
 import { loadSettlementPayout } from './settlementRepo.ts';
+import { loadCareer } from './careerRepo.ts';
 
 const STATUS_BY_CODE: Record<ActionFailureCode, number> = {
   unknown_action: 400,
@@ -188,6 +189,22 @@ export function registerEconomyRoutes(router: Router): void {
         },
       },
     };
+  });
+
+  // Salt okuma: hiçbir şey yazmaz. Diğer okumaların hepsinin aksine bir
+  // LOBİye değil YALNIZCA oturuma bağlıdır — kariyer `user_careers`te
+  // `user_id`ye ait tek bir satırdır, bir oyuncu aynı anda 3-5 lobide
+  // oynasa da (bkz. `013_career.sql`, `careerRepo.ts`). Bu yüzden burada
+  // `?lobbyId=` yok, `findOwnTeamKey` de yok: `loadCareer` doğrudan
+  // `verifySession`in döndürdüğü `userId`yi okur. Satır hiç yoksa
+  // (oyuncu daha hiç yarış bitirmediyse) `loadCareer` bunu bir hataya
+  // değil `emptyCareer()`e çevirir — "henüz yarışmadım" bir hata değil.
+  router.get('/economy/career', async (ctx: RequestContext): Promise<RouteResult> => {
+    const userId = await verifySession(ctx.bearer);
+    if (!userId) return unauthorized();
+
+    const career = await loadCareer(userId);
+    return { status: 200, body: { career } };
   });
 
   router.post('/economy/action', async (ctx: RequestContext): Promise<RouteResult> => {

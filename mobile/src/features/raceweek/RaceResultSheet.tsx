@@ -5,6 +5,7 @@ import { semanticColors } from '@/theme/colors';
 import { AppText, GlassCard, Cols } from '@/components/atoms';
 import { playerTeam } from '@pitwall/shared/teams';
 import { brandByKey } from '@pitwall/shared/sponsors';
+import { achievementByKey } from '@pitwall/shared/achievements';
 import { useGameStore } from '@/store/gameStore';
 import { displayRace } from '@/store/slices/raceSlice';
 import { displaySettlement } from '@/store/slices/settlementDisplay';
@@ -24,13 +25,19 @@ import { DriverCell, Pos, fmtGap } from './shared';
  * (`GET /economy/settlement` via `displaySettlement`), which it wrote in the
  * same transaction that paid the player.
  *
- * ── WHAT THIS SHEET NO LONGER SHOWS, AND WHY ──────────────────────────────
- * Achievements, the career record and the season summary came from
- * `settleRaceWeekend`'s call into `scoreWeekend`/`recordWeekend`/
- * `summariseSeason`. None of those exist server-side yet, so rather than
- * score a career off a race this device did not run, they are simply absent
- * until a later phase adds them to the server. See the commit that removed
- * the local engine for the full list.
+ * ── ACHIEVEMENTS ARE BACK, FROM THE SERVER ────────────────────────────────
+ * The season summary is still absent (no server-side `summariseSeason` yet).
+ * Achievements and the career score they added are not: the server now runs
+ * `scoreWeekend`/`recordWeekend` itself at settlement, in the same
+ * transaction as the payment (`server/src/economy/settle.ts`), and
+ * `GET /economy/settlement` hands the result back alongside the money
+ * (`payout.achievementsEarned`/`payout.careerScore`,
+ * `server/src/economy/settlementRepo.ts`). Only EARNED achievements are ever
+ * listed here — the server does not expose why an unearned one (Clean
+ * Sweep, most often) was denied, so this sheet does not guess at a reason
+ * either; see `shared/src/achievements.ts`'s `denyCleanSweep` for the two
+ * cases (a sprint weekend, a practice session never frozen) neither of
+ * which reaches this response.
  */
 export function RaceResultSheet() {
   const shell = useShellLayout();
@@ -71,6 +78,27 @@ export function RaceResultSheet() {
               : ''}
             {paid.expired.length ? ` · ${paid.expired.length} sözleşme bitti` : ''}
           </AppText>
+          {paid.achievements.length > 0 && (
+            <View className="flex-row flex-wrap gap-1.5">
+              {paid.achievements.map((key) => (
+                <View
+                  key={key}
+                  className="flex-row items-center gap-1 rounded-sm border px-1.5 py-0.5"
+                  style={{ borderColor: colors.accentLime }}
+                >
+                  <AppText variant="labelSmall" color={colors.accentLime} style={{ fontFamily: 'JetBrainsMono_700Bold' }}>
+                    {achievementByKey(key).glyph}
+                  </AppText>
+                  <AppText variant="labelSmall" color={colors.textPrimary}>
+                    {achievementByKey(key).label}
+                  </AppText>
+                </View>
+              ))}
+              <AppText variant="labelSmall" color={colors.textSecondary}>
+                · kariyere +{paid.careerScore} puan
+              </AppText>
+            </View>
+          )}
         </>
       ) : (
         <AppText variant="bodySmall" color={colors.textTertiary}>

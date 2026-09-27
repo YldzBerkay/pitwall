@@ -41,6 +41,7 @@
  * "we couldn't reach the server" are different sentences.
  */
 import { request, type ApiResult } from './identity';
+import type { AchievementKey } from '@pitwall/shared/achievements';
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
@@ -83,6 +84,14 @@ export interface SettlementBreakdown {
    * there is no start, no claim, nothing else to check.
    */
   rivalSpy: { team: string; success: boolean } | null;
+  /**
+   * This weekend's earned achievements, and what they added to the career
+   * score — computed server-side, in the same transaction as the payment
+   * (`server/src/economy/settle.ts`'s call into `@pitwall/shared/achievements`'s
+   * `scoreWeekend`/`recordWeekend`). Empty/zero for an AI-run seat.
+   */
+  achievements: AchievementKey[];
+  careerScore: number;
 }
 
 /** `settlement` is `null` for a round that has not been paid out yet. */

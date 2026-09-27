@@ -277,6 +277,21 @@ describe('GET /economy/settlement', () => {
     assert.equal(body.settlement.rivalSpy, null, 'no attempt this round must read as null, never a fabricated record');
   });
 
+  it("returns the weekend's achievements and the career score they added, alongside the money", async () => {
+    const owner = await makeUser();
+    const lobbyId = await makeLobby(owner.id);
+    await startRaceFor({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const settlement = await settleRace({ lobbyId, seasonNo: 1, roundNo: 1, now: new Date() });
+    const expected = settlement.payouts.find((p) => p.teamKey === HUMAN)!;
+
+    const { status, body } = await get(`/economy/settlement?lobbyId=${lobbyId}&round=1`, owner.token);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.settlement.achievements), 'achievements must be an array, even when empty');
+    assert.deepEqual(new Set(body.settlement.achievements), new Set(expected.achievementsEarned));
+    assert.equal(typeof body.settlement.careerScore, 'number');
+    assert.equal(body.settlement.careerScore, expected.careerScore);
+  });
+
   it('a missing lobbyId or round query param is 400 invalid_request, not a crash', async () => {
     const owner = await makeUser();
     const lobbyId = await makeLobby(owner.id);

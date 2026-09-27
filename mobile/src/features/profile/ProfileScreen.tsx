@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors, spacing } from '@/theme';
@@ -8,27 +8,66 @@ import { playerTeam } from '@pitwall/shared/teams';
 import {
   achievementDefs,
   nextRank,
-  rankFor,
   rankProgress,
   ranks,
   underdogMultiplier,
 } from '@pitwall/shared/achievements';
 import { strengthRank } from '@pitwall/shared/raceEngine';
 import { useGameStore } from '@/store/gameStore';
+import { displayCareer } from '@/store/slices/careerDisplay';
 import { useShellLayout } from '@/lib/useShellLayout';
 
-/** Team identity, rank, and the achievement ledger. */
+/**
+ * Team identity, rank, and the achievement ledger — all three read from the
+ * server's `user_careers` row (`GET /economy/career` via `displayCareer`),
+ * never `gameStore.ts`'s local `career` field. See `careerDisplay.ts`'s own
+ * doc comment for why: that local field still moves (the pre-season test
+ * programme's +5), so it is not an honest "nothing yet" — it is a
+ * plausible-looking wrong number.
+ */
 export function ProfileScreen() {
   const shell = useShellLayout();
-  const career = useGameStore((s) => s.career);
   const authUser = useGameStore((s) => s.auth.user);
+  const careerApi = useGameStore((s) => s.careerApi);
+  const hydrateCareer = useGameStore((s) => s.careerApi.hydrate);
+
+  useEffect(() => {
+    if (authUser) void hydrateCareer();
+  }, [authUser?.id, hydrateCareer]);
 
   const [showAll, setShowAll] = useState(false);
-  const rank = rankFor(career.score);
-  const next = nextRank(career.score);
-  const progress = rankProgress(career.score);
+  const display = displayCareer(authUser, careerApi);
   const gridRank = strengthRank(playerTeam.key);
   const multiplier = underdogMultiplier(playerTeam.key);
+
+  if (display.kind !== 'ready') {
+    return (
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{
+          paddingTop: shell.contentTop,
+          paddingLeft: shell.contentPaddingLeft,
+          paddingRight: shell.contentPaddingRight,
+          paddingBottom: shell.contentPaddingBottom,
+          gap: spacing.lg,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        <ScreenHeader icon="profile" title="Profil" subtitle="Başarımlar kariyer skoru verir, skor rütbeni belirler." />
+        <GlassCard>
+          <AppText variant="bodySmall" color={colors.textTertiary}>
+            {display.kind === 'not-signed-in'
+              ? 'Kariyerini görmek için giriş yap — takma ad, bölge ve kariyer skorun hesabına bağlıdır.'
+              : 'Kariyerin sunucudan alınıyor…'}
+          </AppText>
+        </GlassCard>
+      </ScrollView>
+    );
+  }
+
+  const { career, rank } = display;
+  const next = nextRank(career.score);
+  const progress = rankProgress(career.score);
 
   return (
     <ScrollView

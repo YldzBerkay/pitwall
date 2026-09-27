@@ -72,6 +72,8 @@ const SERVER_BREAKDOWN: SettlementBreakdown = {
   streaksBroken: ['aurora'],
   expired: ['sidepod'],
   rivalSpy: null,
+  achievements: ['podium'],
+  careerScore: 22,
 };
 
 type Store = SettlementApiSlice & SettlementApiSliceDeps;

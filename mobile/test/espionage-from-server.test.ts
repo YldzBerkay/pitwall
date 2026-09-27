@@ -378,6 +378,7 @@ test('11) a rival attempt against the player appears in what the client reads af
       season: 1, round: 4, position: 2, prize: 100, sponsorIncome: 0, briefBonus: 0,
       bonusesEarned: [], streaksBroken: [], expired: [],
       rivalSpy: { team: 'ridgeline', success: true },
+      achievements: [], careerScore: 0,
     },
   };
   await withServer(
