@@ -29,6 +29,8 @@ import { isGarageHidden } from './espionageRepo.ts';
 import { spendGold } from '../gold/repo.ts';
 import { skipCostGold, goldPrices } from '@pitwall/shared/economy';
 import { factoryEffects } from '@pitwall/shared/factory';
+import { staffEffects } from '@pitwall/shared/staff';
+import { loadStaffSeat } from '../staff/repo.ts';
 import { upgradeCostFor, upgradeDurationMs as sharedUpgradeDurationMs, UPGRADE_GAIN } from '@pitwall/shared/carCustomisation';
 import { trainingGain, driverStatKeys, type DriverStatKey } from '@pitwall/shared/driverMarket';
 import { overallOf, type Driver } from '@pitwall/shared/teams';
@@ -346,12 +348,22 @@ async function applyJobEffect(
     // (see loadTeamEconomy's doc comment).
     const economy = await loadTeamEconomy(lobbyId, teamKey, client);
     const effects = factoryEffects(economy?.factoryLevels ?? {});
+    // The chief mechanic's own bonus — `staffEffects`'s own docblock is
+    // clear that everything else in the game reads its effects rather than
+    // a skill number directly. At skill 40 (an empty seat) `upgradeBonus`
+    // is exactly 0, so an unstaffed team's upgrade gain is byte-identical
+    // to before this task — no gate needed the way the pit crew/brief
+    // fields need one in `runner.ts`'s `buildFrozenEntries` (see that
+    // function's own doc comment for why those two DO need one).
+    // MUST take `client` — same reason as the read two lines up.
+    const mechanic = await loadStaffSeat(lobbyId, teamKey, 'mechanic', client);
+    const mechanicBonus = staffEffects({ mechanic: mechanic?.member }).upgradeBonus;
     // A pending espionage boost on this exact stat (SPY_BOOST for a
     // successful mission, BAD_INTEL_FACTOR for a wrong one) multiplies this
     // one upgrade and is consumed here — `takePendingSpyBoost` clears it in
     // the same statement it reads it, so it can never apply twice.
     const boost = await takePendingSpyBoost(client, lobbyId, teamKey, stat as string);
-    const gain = (UPGRADE_GAIN + effects.upgradeGainBonus) * boost;
+    const gain = (UPGRADE_GAIN + effects.upgradeGainBonus + mechanicBonus) * boost;
     await bumpCarStat(client, lobbyId, teamKey, field, gain);
     await bumpUpgradesDone(client, lobbyId, teamKey, stat as string);
     return { stat, gain };

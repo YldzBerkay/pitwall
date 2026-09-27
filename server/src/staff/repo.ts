@@ -11,7 +11,7 @@
  */
 import type { PoolClient } from 'pg';
 import { query } from '../db/pool.ts';
-import type { StaffMember, StaffRole } from '@pitwall/shared/staff';
+import type { StaffMember, StaffRole, StaffRoster } from '@pitwall/shared/staff';
 
 interface StaffRow {
   lobby_id: string;
@@ -101,6 +101,73 @@ export async function loadTeamStaff(lobbyId: string, teamKey: string, client?: P
     ? await client.query<StaffRow>(sql, [lobbyId, teamKey])
     : await query<StaffRow>(sql, [lobbyId, teamKey]);
   return res.rows.map(toLobbyStaffRow);
+}
+
+/**
+ * A team's roster in `shared/src/staff.ts`'s own `StaffRoster` shape
+ * (`Partial<Record<StaffRole, StaffMember>>`), for feeding straight into
+ * `staffEffects` — the one place the server is allowed to read a skill
+ * number, since `staffEffects` is where skill turns into a game effect
+ * (`staff.ts`'s own docblock: "everything else in the game reads those
+ * effects rather than the skill directly").
+ */
+export async function loadTeamStaffRoster(lobbyId: string, teamKey: string, client?: PoolClient): Promise<StaffRoster> {
+  const rows = await loadTeamStaff(lobbyId, teamKey, client);
+  const roster: StaffRoster = {};
+  for (const row of rows) roster[row.role] = row.member;
+  return roster;
+}
+
+/**
+ * Every team's staff roster in one lobby, in one query — `buildFrozenEntries`
+ * walks every seat once at lights-out, and a per-seat `loadTeamStaff` query
+ * there would be an N+1 (same shape `loadLobbyEconomy` avoids for the
+ * economy table, see that function's own doc comment).
+ */
+export async function loadLobbyStaff(lobbyId: string, client?: PoolClient): Promise<Record<string, StaffRoster>> {
+  const sql = `select * from lobby_staff where lobby_id = $1`;
+  const res = client
+    ? await client.query<StaffRow>(sql, [lobbyId])
+    : await query<StaffRow>(sql, [lobbyId]);
+  const out: Record<string, StaffRoster> = {};
+  for (const row of res.rows) {
+    const lobbyRow = toLobbyStaffRow(row);
+    (out[lobbyRow.teamKey] ??= {})[lobbyRow.role] = lobbyRow.member;
+  }
+  return out;
+}
+
+/**
+ * Ticks every staff contract in a lobby down by one round — a settled
+ * race's worth. Rows whose contract would reach zero or below are DELETED
+ * (the member's contract lapsed; the role falls back to the shared 40-skill
+ * default the same way a never-hired seat does — `staffEffects` reads an
+ * absent roster entry via `?? DEFAULT_SKILL`, so a released/expired seat and
+ * a never-filled one are indistinguishable to it, by design).
+ *
+ * MUST be called with the settlement's own transaction `client` — see
+ * `economy/settle.ts`'s call site for why this has to land in the exact
+ * same commit as `markSettled`: that call is what makes ticking idempotent
+ * (settling the same race twice never reaches this a second time, because
+ * the second call throws `AlreadySettledError` before any write happens).
+ * Ticking outside that guard — on a timer, or before the `markSettled`
+ * check — would tick once per REQUEST rather than once per SETTLED race.
+ */
+export async function tickStaffContracts(client: PoolClient, lobbyId: string): Promise<void> {
+  // DELETE FIRST, then decrement what remains: `lobby_staff_contract_rounds_
+  // check` (bkz. migration) requires `contract_rounds > 0` at all times, so
+  // decrementing a contract already at 1 down to 0 in an UPDATE would
+  // violate the constraint mid-statement. Deleting every row that WOULD
+  // expire this tick, before the decrement ever runs, keeps every write
+  // inside the constraint's own invariant.
+  await client.query(
+    `delete from lobby_staff where lobby_id = $1 and contract_rounds <= 1`,
+    [lobbyId],
+  );
+  await client.query(
+    `update lobby_staff set contract_rounds = contract_rounds - 1, updated_at = now() where lobby_id = $1`,
+    [lobbyId],
+  );
 }
 
 /**

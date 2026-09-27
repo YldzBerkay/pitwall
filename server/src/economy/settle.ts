@@ -58,6 +58,7 @@ import { insertSettlementPayout } from './settlementRepo.ts';
 import { scoreSeatWeekend, recordSeatWeekend } from './weekendAchievements.ts';
 import { loadCareerForUpdate, saveCareer } from './careerRepo.ts';
 import type { AchievementKey } from '@pitwall/shared/achievements';
+import { tickStaffContracts } from '../staff/repo.ts';
 
 const CAR_STAT_FIELDS: (keyof CarStats)[] = ['motor', 'aero', 'grip'];
 
@@ -295,6 +296,13 @@ export async function settleRace(
       throw new AlreadySettledError(lobbyId, seasonNo, roundNo);
     }
 
+    // Personel sözleşmeleri: BİR YARIŞ TURU SETTLE OLDUĞUNDA bir kez iner.
+    // `markSettled` kapısından SONRA, aynı işlemde — ikinci bir muhasebe
+    // buraya HİÇ ulaşmaz (yukarıdaki `throw` onu daha bu satıra gelmeden
+    // durdurur), yani bu tik doğal olarak İDEMPOTENTTİR: settle etmeyi iki
+    // kez denemek sözleşmeyi bir kez indirir.
+    await tickStaffContracts(c, lobbyId);
+
     // Bir sonraki turun BAŞINDA hangi sözleşmeler düşer: istemcinin kendi
     // kuralı (gameStore.ts `settleRaceWeekend`, `sponsorships.filter((s) =>
     // s.expiresRound > nextRound)`) burada da BİREBİR aynı — bir tur erken
@@ -399,7 +407,15 @@ export async function settleRace(
       let briefFollowed: number | undefined;
       const entry = run.snapshot.entries[econ.teamKey];
       if (entry) {
-        const items = briefFor(track, weather, entry.setup);
+        // Brifing, ışıklar sönerken DONMUŞ stratejist parametreleriyle
+        // (`run.snapshot.briefParams`) okunur — settlement anındaki kadro
+        // BURADA HİÇ SORULMAZ. Parametre yoksa (o an stratejist yoktu)
+        // `briefFor`in kendi varsayılanları (doğruluk 1, bant 0.05) devreye
+        // girer, yani bugünkü davranışın birebir aynısı kalır.
+        const params = run.snapshot.briefParams?.[econ.teamKey];
+        const items = params
+          ? briefFor(track, weather, entry.setup, params.accuracy, 0, params.forecastBand)
+          : briefFor(track, weather, entry.setup);
         const choices: WeekendChoices = {
           raceCompound: entry.setup.compound,
           tactics: entry.tactics,

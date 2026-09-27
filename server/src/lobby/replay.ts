@@ -91,6 +91,20 @@ export interface RaceSnapshot {
    * verilmediğinde `startRace` bugünkü davranışının aynısını üretir.
    */
   pitLaneStarts?: Record<string, PitLaneStart>;
+  /**
+   * Stratejistin brifing parametreleri, ışıklar sönerken donmuş — yalnızca
+   * o an bir stratejisti OLAN takımlar için bir girdi taşır. TARİFİN
+   * PARÇASI OLMAK ZORUNDA, aynı `entries` gibi: `economy/settle.ts` bir
+   * takımın brifingini bu alandan okur, kendi anındaki (settlement anındaki)
+   * kadroyu asla yeniden sormaz — aksi halde ışıklar sönerken görülmeyen bir
+   * stratejist (ya da tam tersi, o zaman görülüp sonra kovulan biri) oyuncuyu
+   * hiç izlemediği bir brifinge göre yargılardı.
+   *
+   * İSTEĞE BAĞLI: bu alandan önce yazılmış tarifler onsuz duruyor;
+   * verilmediğinde `briefFor` bugünkü varsayılanlarını (doğruluk 1, bant
+   * 0.05) kullanır — bugünkü davranışın aynısı.
+   */
+  briefParams?: Record<string, { accuracy: number; forecastBand: number }>;
 }
 
 /** Günlüğe yazılan tek bir pit kararı. `lap`: kararın etki ettiği tur. */

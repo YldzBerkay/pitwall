@@ -45,6 +45,8 @@ import { query, withTransaction } from '../db/pool.ts';
 import { loadLobbyRosters } from '../drivers/repo.ts';
 import { loadLobbyEconomy } from '../economy/repo.ts';
 import { settleRace, type SettleDeps } from '../economy/settle.ts';
+import { loadLobbyStaff } from '../staff/repo.ts';
+import { staffEffects } from '@pitwall/shared/staff';
 import { renewLease, releaseLease } from './lease.ts';
 import { loadSeats } from './lobbyRepo.ts';
 import { evaluateParcFerme } from './parcFerme.ts';
@@ -222,9 +224,15 @@ export async function standingsBeforeRound(
  * ışıklar sönerken/seans donarken bir kez, `now`la aynı çağrıda; bundan
  * sonraki bir antrenman/imza bu tarifi asla etkilemez.
  */
+/** Frozen brief parameters for one team's strategist, entering `RaceSnapshot.briefParams`. */
+export interface BriefParams {
+  accuracy: number;
+  forecastBand: number;
+}
+
 export async function buildFrozenEntries(
   lobbyId: string, now: Date,
-): Promise<{ entries: Entries; risks: Record<string, QualiRisk>; rosters: Rosters }> {
+): Promise<{ entries: Entries; risks: Record<string, QualiRisk>; rosters: Rosters; briefParams: Record<string, BriefParams> }> {
   // Parc fermé tek çağrıda iki çıktı verir ve ikisi de tarife girer: `byTeam`
   // katılımın aracını belirler, `pitLaneStarts` grid cezasını.
   const verdict = await evaluateParcFerme(lobbyId, now);
@@ -236,9 +244,15 @@ export async function buildFrozenEntries(
   const weekendChoices = await loadWeekendChoices(lobbyId);
   const economies = await loadLobbyEconomy(lobbyId);
   const factoryLevelsByTeam = new Map(economies.map((e) => [e.teamKey, e.factoryLevels]));
+  // IŞIKLAR SÖNERKEN TEK SEFER OKUNUR (aynı gerekçe): bir koltuğun personeli
+  // bundan sonra değişse (yeni imza, kovulma, sözleşme bitişi) bu yarışı
+  // ETKİLEMEZ — yalnızca `entries`e ve `briefParams`e BURADA donan sayılar
+  // yarışın ve brifingin geri kalanını belirler.
+  const staffByTeam = await loadLobbyStaff(lobbyId);
 
   const entries: Entries = {};
   const risks: Record<string, QualiRisk> = {};
+  const briefParams: Record<string, BriefParams> = {};
   for (const seat of seats) {
     // Sahipsiz koltuk katılım LİSTESİNE HİÇ GİRMEZ: motorun sözleşmesinde
     // `entries`te olmayan takım AI'dır. Boş bir katılım yazmak, AI'yı oyuncu
@@ -260,7 +274,29 @@ export async function buildFrozenEntries(
       compound: choices?.compound ?? DEFAULT_COMPOUND,
       bias: choices?.bias ?? 0,
     };
-    const reliability = reliabilityFor(factoryLevelsByTeam.get(seat.teamKey) ?? {});
+
+    // Personel etkileri: `@pitwall/shared/staff`'ın `staffEffects`i TEK
+    // yerde tanımlı — burada asla tekrar yazılmaz, yalnızca İTHAL edilir
+    // (server/README.md "shared'in kuralları asla tekrar yazılmaz").
+    //
+    // ROL BAZINDA KAPI, hepsi-ya-da-hiçbiri DEĞİL: `staffEffects({})` boş bir
+    // rosterde bile (skill 40 varsayılanıyla) pit şefi ve brifing için
+    // BUGÜNKÜ motor/brifing varsayılanlarından FARKLI sayılar üretir — pit
+    // için `pitFailChance` 0.08 iken motorun kendi varsayılanı `?? 0.04`,
+    // brifing için doğruluk 0.7/bant 0.3 iken `briefFor`in kendi varsayılanı
+    // 1/0.05. Bu YÜZDEN her alan yalnızca O ROL GERÇEKTEN dolu ise
+    // uygulanır; hiç kimseyi işe almamış bir takım BUGÜNKÜ gibi davranmaya
+    // devam eder (Requirement 7). Mekanik'in iki etkisi (reliabilityBonus,
+    // upgradeBonus) ve stratejist'in assistantErrorScale'i skill-40'ta zaten
+    // BUGÜNKÜ varsayılanla özdeş (0 katkı / çarpan 1) olduğu için onları
+    // koşulsuz uygulamak da güvenlidir, ama tutarlılık için AYNI kapı
+    // kullanılıyor.
+    const roster = staffByTeam[seat.teamKey] ?? {};
+    const effects = staffEffects(roster);
+
+    let reliability = reliabilityFor(factoryLevelsByTeam.get(seat.teamKey) ?? {});
+    if (roster.mechanic) reliability = Math.min(1, reliability + effects.reliabilityBonus);
+
     entries[seat.teamKey] = {
       // Tezgahta duran geliştirme pişen statı yarıya indirir...
       setup: crippleSetup(base, pf.buildingLabel),
@@ -270,11 +306,16 @@ export async function buildFrozenEntries(
       // DONAN KARAR: check-in yapan oyuncu kendi yarışını sürer, yapmayanı
       // asistan devralır. Bu, yarış boyunca bir daha SORULMAZ.
       managed: seat.managed,
+      ...(roster.strategist ? { assistantErrorScale: effects.assistantErrorScale } : {}),
+      ...(roster.pitCrew ? { pitSecondsSaved: effects.pitSecondsSaved, pitFailChance: effects.pitFailChance } : {}),
     };
     risks[seat.teamKey] = choices?.qualiRisk ?? DEFAULT_RISK;
+    if (roster.strategist) {
+      briefParams[seat.teamKey] = { accuracy: effects.briefAccuracy, forecastBand: effects.forecastBand };
+    }
   }
 
-  return { entries, risks, rosters };
+  return { entries, risks, rosters, briefParams };
 }
 
 export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> {
@@ -284,7 +325,7 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
   const track = trackForRound(roundNo);
   const weather = weatherFor(track, seed);
 
-  const { entries, risks, rosters } = await buildFrozenEntries(lobbyId, now);
+  const { entries, risks, rosters, briefParams } = await buildFrozenEntries(lobbyId, now);
   // Pit yolu cezası donma biçiminin PARÇASI DEĞİL: `buildFrozenEntries`
   // pratikle paylaşılan ortak kısım, ceza yalnızca yarışa özgü — bu yüzden
   // `evaluateParcFerme` burada AYRICA çağrılıyor (aynı `now`, aynı lobi;
@@ -315,6 +356,11 @@ export async function startRaceFor(input: StartRaceInput): Promise<StartedRace> 
     // antrenman/imza ile varsayılanından SAPTIĞINDA fark yaratır.
     rosters,
     pitLaneStarts,
+    // Stratejistin brifing parametreleri: ışıklar sönerken donuyor, aynı
+    // `entries`/`rosters` gibi — settlement bu alanı okur, KENDİ ANINDAKİ
+    // kadroyu asla yeniden okumaz (bkz. `briefParams`'ın kendi docblock'u,
+    // `buildFrozenEntries`).
+    briefParams,
   };
 
   await withTransaction((client) =>
