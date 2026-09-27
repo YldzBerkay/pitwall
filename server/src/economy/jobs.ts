@@ -30,11 +30,18 @@ import { spendGold } from '../gold/repo.ts';
 import { skipCostGold, goldPrices } from '@pitwall/shared/economy';
 import { factoryEffects } from '@pitwall/shared/factory';
 import { upgradeCostFor, upgradeDurationMs as sharedUpgradeDurationMs, UPGRADE_GAIN } from '@pitwall/shared/carCustomisation';
+import { trainingGain, driverStatKeys, type DriverStatKey } from '@pitwall/shared/driverMarket';
+import { overallOf, type Driver } from '@pitwall/shared/teams';
+import { loadDriverRow, saveDriverAfterTraining } from '../drivers/repo.ts';
 import {
   resolveMission, SPY_RESOLVE_MS, SPY_COOLDOWN_MS, SPY_BOOST, BAD_INTEL_FACTOR,
   CAUGHT_FINE_SHARE, CAUGHT_FINE_MIN, FREE_AGENT_RP, RIVAL_GAIN, agentProfiles,
   type AgentKind, type SpyMission,
 } from '@pitwall/shared/espionage';
+
+/** Valid `DriverStatKey`s — `shared/driverMarket.ts`'s own enum, never
+ *  restated as a literal union here. */
+const TRAINING_STAT_KEYS = new Set<string>(driverStatKeys.map((k) => k.key));
 
 export type JobKind = 'upgrade' | 'training' | 'spy';
 
@@ -354,8 +361,60 @@ async function applyJobEffect(
     return applySpyEffect(client, lobbyId, teamKey, job);
   }
 
-  // training: nothing to write yet (later Phase 3b task) — return the payload.
+  if (job.kind === 'training') {
+    return applyTrainingEffect(client, lobbyId, teamKey, job);
+  }
+
   return job.payload;
+}
+
+/**
+ * Applies a claimed training job to the targeted race seat.
+ *
+ * `driverIdx`/`stat` are validated leniently, not with a `JobError` throw
+ * the way the upgrade branch does for a corrupted stat: unlike upgrades,
+ * training jobs existed (and are exercised by `economy-jobs.test.ts`'s own
+ * fixtures) BEFORE this feature ever stored a target, with a bare `{}` or
+ * `{ driverIdx }` payload — a job like that must keep claiming cleanly, it
+ * just has nothing to apply. Only 0/1 (a race seat) are resolved today; a
+ * reserve-squad index (2+) has no stable server-side identity yet (see
+ * `drivers/repo.ts`'s reserve rows, keyed by market id, not by position) and
+ * is out of scope here — it falls through to the same no-op.
+ */
+async function applyTrainingEffect(
+  client: PoolClient, lobbyId: string, teamKey: string, job: PendingJobRow,
+): Promise<Record<string, unknown>> {
+  const { driverIdx, stat } = job.payload as { driverIdx?: unknown; stat?: unknown };
+  const seat = driverIdx === 0 ? 'seat_0' as const : driverIdx === 1 ? 'seat_1' as const : undefined;
+  if (!seat || typeof stat !== 'string' || !TRAINING_STAT_KEYS.has(stat)) {
+    return job.payload;
+  }
+
+  // MUST take `client` — this runs inside claimJob's own transaction, and a
+  // bare-pool read while holding a connection can deadlock a full pool (see
+  // the upgrade branch's identical comment above, and `loadTeamDrivers`'s
+  // doc comment in `drivers/repo.ts`).
+  const row = await loadDriverRow(lobbyId, teamKey, seat, undefined, client);
+  if (!row || row.isStopgap) {
+    // Unseeded seat (older fixtures), or a stopgap filler — a temporary
+    // driver with no contract is not a signed driver to improve.
+    return { driverIdx, stat, gain: 0 };
+  }
+
+  const economy = await loadTeamEconomy(lobbyId, teamKey, client);
+  const effects = factoryEffects(economy?.factoryLevels ?? {});
+  const statKey = stat as DriverStatKey;
+  // shared's own rule (`trainingGain`), scaled by the driver academy's
+  // `trainingScale` — the SAME composition the mobile client already uses
+  // (`driverSlice.ts`'s `collectTraining`), never a private copy.
+  const gain = Math.round(trainingGain(row.driver, statKey) * effects.trainingScale * 100) / 100;
+  const stats = {
+    ...row.driver.stats,
+    [statKey]: Math.min(99, Math.round((row.driver.stats[statKey] + gain) * 100) / 100),
+  };
+  const updated: Driver = { ...row.driver, stats, skill: overallOf(stats) };
+  await saveDriverAfterTraining(client, lobbyId, row.id, updated);
+  return { driverIdx, stat, gain };
 }
 
 /**

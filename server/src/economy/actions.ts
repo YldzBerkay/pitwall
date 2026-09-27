@@ -28,6 +28,7 @@ import { isTeamKey } from '../lobby/grid.ts';
 import { departmentCost, factoryDepartments, DEPARTMENT_MAX_LEVEL } from '@pitwall/shared/factory';
 import { GOLD_TO_RP, GOLD_TO_RP_DAILY_CAP, goldPrices, rpPrices } from '@pitwall/shared/economy';
 import { agentProfiles, type MissionOutcome } from '@pitwall/shared/espionage';
+import { driverStatKeys } from '@pitwall/shared/driverMarket';
 
 export type ActionFailureCode =
   | 'unknown_action'
@@ -44,6 +45,7 @@ export type ActionFailureCode =
   | 'cooldown';
 
 const SPY_STAT_KEYS = new Set(['motor', 'aero', 'grip']);
+const TRAINING_STAT_KEYS = new Set<string>(driverStatKeys.map((k) => k.key));
 
 /**
  * A resolved spy mission's outcome, returned ALONGSIDE `state` (never
@@ -116,7 +118,17 @@ export async function runAction(input: RunActionInput): Promise<RunActionResult>
     case 'startTraining': {
       const driverIdx = body['driverIdx'];
       if (typeof driverIdx !== 'number') return fail('bad_payload');
-      const started = await startJob({ lobbyId, teamKey, kind: 'training', payload: { driverIdx }, now });
+      // `stat` is the seat/stat pair `claimJob`'s training branch (`jobs.ts`)
+      // actually resolves and improves. It is OPTIONAL here — a bare
+      // `{ driverIdx }` request (some existing fixtures never sent one)
+      // still starts a job, it just claims into a no-op, exactly as
+      // training already behaved before drivers lived on the server. A
+      // `stat` that IS present must be one of `shared/driverMarket.ts`'s own
+      // keys, never a client-invented string.
+      const stat = body['stat'];
+      if (stat !== undefined && (typeof stat !== 'string' || !TRAINING_STAT_KEYS.has(stat))) return fail('bad_payload');
+      const payload: Record<string, unknown> = typeof stat === 'string' ? { driverIdx, stat } : { driverIdx };
+      const started = await startJob({ lobbyId, teamKey, kind: 'training', payload, now });
       if (!started.ok) return fail(started.reason);
       return finish(lobbyId, teamKey, userId, now);
     }

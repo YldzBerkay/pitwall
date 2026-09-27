@@ -201,6 +201,26 @@ export async function saveDriverAfterSeason(client: PoolClient, lobbyId: string,
   );
 }
 
+/**
+ * Overwrites a driver's stats/skill after a CLAIMED training session — the
+ * training counterpart of `saveDriverAfterSeason` above. Deliberately never
+ * touches `age`: training moves one stat toward potential, it does not age
+ * anyone (see `@pitwall/shared/driverMarket`'s `trainingGain`/`ageOneSeason`,
+ * two separate rules).
+ *
+ * `client` MUST be `claimJob`'s own transaction client — same deadlock
+ * reason as `saveDriverAfterSeason` (a bare-pool write while holding a
+ * connection can deadlock a full pool).
+ */
+export async function saveDriverAfterTraining(client: PoolClient, lobbyId: string, driverId: string, driver: Driver): Promise<void> {
+  await client.query(
+    `update lobby_drivers
+        set stats = $3::jsonb, skill = $4, updated_at = now()
+      where lobby_id = $1 and id = $2`,
+    [lobbyId, driverId, JSON.stringify(driver.stats), driver.skill],
+  );
+}
+
 /** Every already-signed market id in this lobby — what `drivers/market.ts`
  *  subtracts from the freshly generated candidates to get "what's still on
  *  the table". */
