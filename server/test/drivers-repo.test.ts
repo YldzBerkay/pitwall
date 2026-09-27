@@ -61,9 +61,9 @@ describe('lobby_drivers repo', () => {
     await assert.rejects(
       () =>
         query(
-          `insert into lobby_drivers (lobby_id, id, team_key, position, name, number, skill, stats, age, potential)
+          `insert into lobby_drivers (lobby_id, id, team_key, position, name, number, skill, stats, age, potential, seasons_left, wage)
            values ($1, 'intruder', 'bosphorus', 'seat_0', 'X. Intruder', 99, 50,
-                   '{"pace":50,"consistency":50,"racecraft":50,"wet":50,"reaction":50,"dev":50}'::jsonb, 25, 60)`,
+                   '{"pace":50,"consistency":50,"racecraft":50,"wet":50,"reaction":50,"dev":50}'::jsonb, 25, 60, 2, 100)`,
           [lobbyId],
         ),
       /duplicate key|unique/i,

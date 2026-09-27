@@ -195,9 +195,18 @@ export async function createLobby(
 
 // ── Reads ──────────────────────────────────────────────────────────────────
 
-export async function loadLobby(lobbyId: string): Promise<Lobby | null> {
+/**
+ * `client` MUST be passed when called from inside a transaction — a
+ * bare-pool read while holding a checked-out connection can deadlock a full
+ * pool (see `loadLobbyEconomy`'s doc comment in `economy/repo.ts`; this
+ * exact deadlock was hit and fixed while wiring `drivers/market.ts`'s
+ * `marketFor`, which reads the lobby's season/round from inside the sign
+ * transaction).
+ */
+export async function loadLobby(lobbyId: string, client?: PoolClient): Promise<Lobby | null> {
   try {
-    const res = await query<LobbyRow>(`select ${LOBBY_COLUMNS} from lobbies where id = $1`, [lobbyId]);
+    const sql = `select ${LOBBY_COLUMNS} from lobbies where id = $1`;
+    const res = client ? await client.query<LobbyRow>(sql, [lobbyId]) : await query<LobbyRow>(sql, [lobbyId]);
     return res.rows[0] ? mapLobby(res.rows[0]) : null;
   } catch (err) {
     // A malformed uuid from an untrusted request body reads the same as

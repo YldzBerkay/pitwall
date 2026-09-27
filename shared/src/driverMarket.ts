@@ -146,9 +146,18 @@ const NAMES = ['L. Aydın', 'R. Castellanos', 'M. Ekholm', 'T. Obi', 'J. Fontain
 /**
  * This season's free agents: eight drivers, seeded by season, refreshed with
  * each round's number so the list turns over daily without repeating.
+ *
+ * `lobbyId` is folded into the seed for the same reason `developRosterSeason`
+ * takes one (see that function's docblock): the server runs many lobbies on
+ * the same (season, round) at once, and without a lobby-specific salt every
+ * one of them would see the exact same eight free agents — the same bug
+ * class `espionage.ts`'s `missionSeed` and the pre-fix winter-development
+ * seed both had. `lobbyId` is hashed with `strHash`, so a caller that never
+ * supplies one (the single-save mobile client) reproduces the old seed
+ * exactly.
  */
-export function driverMarket(season: number, round: number, takenNumbers: number[]): MarketDriver[] {
-  const random = rng(season * 5417 + round * 97 + 3);
+export function driverMarket(season: number, round: number, takenNumbers: number[], lobbyId?: string): MarketDriver[] {
+  const random = rng(season * 5417 + round * 97 + 3 + strHash(lobbyId ?? '') * 104729);
   const numbers = new NumberPool(takenNumbers);
   const out: MarketDriver[] = [];
   for (let i = 0; i < 8; i++) {

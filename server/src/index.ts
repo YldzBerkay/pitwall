@@ -21,6 +21,7 @@ import { registerLobbyRoutes } from './lobby/routes.ts';
 import { registerGoldRoutes } from './gold/routes.ts';
 import { registerEconomyRoutes } from './economy/routes.ts';
 import { registerSponsorRoutes } from './economy/sponsorRoutes.ts';
+import { registerDriverMarketRoutes } from './drivers/routes.ts';
 import { registerCheckinRoutes } from './lobby/checkin.ts';
 import { registerWeekendChoiceRoutes } from './lobby/weekendChoices.ts';
 import { createLiveHub, LIVE_PATH } from './lobby/live.ts';
@@ -37,6 +38,7 @@ registerLobbyRoutes(identityRouter);
 registerGoldRoutes(identityRouter);
 registerEconomyRoutes(identityRouter);
 registerSponsorRoutes(identityRouter);
+registerDriverMarketRoutes(identityRouter);
 registerCheckinRoutes(identityRouter);
 registerWeekendChoiceRoutes(identityRouter);
 

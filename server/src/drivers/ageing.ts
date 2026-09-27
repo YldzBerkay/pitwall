@@ -36,26 +36,88 @@
  * yalnızca hedef takım adının UZUNLUĞUNU taşıyordu, her lobi aynı sonucu
  * görüyordu). `developRosterSeason` artık `lobbyId`yi de alıyor.
  *
- * NEDEN YEDEK KADRO (henüz yok) YALNIZCA YAŞLANIYOR:
- * `drivers/repo.ts`in kendi notu: yedek kadro dolgusu Aşama B. Bugün
- * `lobby_drivers`ta `reserve` pozisyonunda hiçbir satır yok, ama şema onu
- * kabul ediyor. Böyle bir satır bir gün ortaya çıkarsa bu geçiş onu asıl
- * koltuklarla aynı çift-tabanlı `developRosterSeason`a SOKMAZ (o tam olarak
- * iki sürücülük bir çift bekliyor) — yalnızca `ageOneSeason` uygular, tıpkı
- * istemcinin kendi yedek kadrosuna yaptığı gibi (`driverSlice.ts` `squad:
- * state.squad.map(... ageOneSeason ...)`).
+ * NEDEN YEDEK KADRO YALNIZCA YAŞLANIYOR (GELİŞMİYOR):
+ * `lobby_drivers`ta artık `reserve` satırları var (Aşama B'nin pazar/imza
+ * işi) ama onları asıl koltuklarla aynı çift-tabanlı `developRosterSeason`a
+ * SOKMUYORUZ (o tam olarak iki sürücülük bir çift bekliyor) — yalnızca
+ * `ageOneSeason` uygular, tıpkı istemcinin kendi yedek kadrosuna yaptığı
+ * gibi (`driverSlice.ts` `squad: state.squad.map(... ageOneSeason ...)`).
+ *
+ * NEDEN SÖZLEŞME TİKİ AYNI GEÇİŞTE:
+ * Görev metni: "the winter pass from f50b6fd must tick [contracts]... That
+ * belongs in the same once-only rollover transaction." `tickContract` bu
+ * yüzden BURADA, her satırın yaş/gelişim yazmasıyla aynı döngüde, aynı
+ * `client`le çağrılıyor — `rolloverRace`in tek taahhüdü hem yaş/gelişimi
+ * hem sözleşmeyi taşır; ortada çöken bir süreç birini yapıp diğerini
+ * atlayan bir lobi bırakmaz.
+ *
+ * AI TAKIM: "sözleşmeler otomatik yenilenir, AI transfer penceresi gelene
+ * kadar" (görev metni) — bu geçiş `seasonsLeft`i asla sıfıra indirmez,
+ * her kışın sonunda taze bir döneme (`AI_RENEWAL_SEASONS`) sıfırlar. Tam
+ * `runTransferWindow` (poaching/rookie doldurma) BİLEREK ÇAĞRILMIYOR — görev
+ * metni "Do NOT build the AI transfer window" diyor.
+ *
+ * İNSAN TAKIM, YEDEK KADRO: sözleşmesi biten bir yedek kadro sürücüsü
+ * gerçekten AYRILIR — satır silinir ve `lobby_driver_signings`teki
+ * kimliği serbest bırakılır (`releaseMarketSigning`). Bu, "pazara döner"in
+ * gerçekten gözlemlenebilir hali: onu pazara SOKAN bir yazma yok (pazar hiç
+ * saklanmıyor, bkz. `drivers/market.ts`), ama artık "zaten imzalanmış"
+ * değil — o kimlik yeniden imzalanabilir hale gelir.
+ *
+ * İNSAN TAKIM, ASIL KOLTUK: bir yarış koltuğu asla BOŞ bırakılamaz, ve onu
+ * yeniden dolduracak mekanizma (poaching/rookie) tam olarak yukarıda
+ * BİLEREK dışarıda bırakılan AI transfer penceresidir. Bu yüzden bir koltuk
+ * sözleşmesi sıfıra indiğinde koltuk BOŞALTILMAZ — sürücü kalır, sözleşme
+ * "son yıl"da (`seasonsLeft = 1`) sabitlenir, taban altına asla inmez. Bu,
+ * görevin kendi ölçeğini aşmadan (poaching/rookie inşa etmeden) test
+ * edilebilir, dürüst bir ara durumdur; tam yerine koyma AI transfer
+ * penceresiyle birlikte gelecek bir görevdir.
  */
 import type { PoolClient } from 'pg';
 import { ageOneSeason, developRosterSeason } from '@pitwall/shared/driverMarket';
 import type { Driver } from '@pitwall/shared/teams';
-import { loadLobbyDrivers, saveDriverAfterSeason, type LobbyDriver } from './repo.ts';
+import {
+  loadLobbyDrivers, saveDriverAfterSeason, updateContract, deleteReserveDriver, releaseMarketSigning,
+  type LobbyDriver,
+} from './repo.ts';
 import { loadHumanTeamKeys } from '../lobby/lobbyRepo.ts';
+
+/** How long a renewed AI contract runs before the next automatic renewal. */
+const AI_RENEWAL_SEASONS = 2;
+
+/**
+ * Ticks one driver row's contract for the season now beginning. See the
+ * module docblock for what happens to each of the three cases (AI, human
+ * reserve, human race seat).
+ */
+async function tickContract(client: PoolClient, lobbyId: string, row: LobbyDriver, isHuman: boolean): Promise<void> {
+  if (!isHuman) {
+    await updateContract(client, lobbyId, row.id, { seasonsLeft: AI_RENEWAL_SEASONS, wage: row.contract.wage });
+    return;
+  }
+
+  const seasonsLeft = row.contract.seasonsLeft - 1;
+  if (seasonsLeft > 0) {
+    await updateContract(client, lobbyId, row.id, { seasonsLeft, wage: row.contract.wage });
+    return;
+  }
+
+  // Expired.
+  if (row.position === 'reserve') {
+    await deleteReserveDriver(client, lobbyId, row.id);
+    await releaseMarketSigning(client, lobbyId, row.id);
+    return;
+  }
+  // A race seat: see module docblock for why it is clamped, not vacated.
+  await updateContract(client, lobbyId, row.id, { seasonsLeft: 1, wage: row.contract.wage });
+}
 
 /**
  * Ages (and, for an AI-run team, develops) every driver in the lobby for the
- * season now beginning. MUST be called with the rollover's own transaction
- * `client`, inside the same `if (seasonRolled)` branch that regresses the
- * cars (`rollover.ts`) — see this module's doc comment.
+ * season now beginning, and ticks every driver's contract alongside it.
+ * MUST be called with the rollover's own transaction `client`, inside the
+ * same `if (seasonRolled)` branch that regresses the cars (`rollover.ts`) —
+ * see this module's doc comment.
  */
 export async function ageDriversForSeason(client: PoolClient, lobbyId: string, nextSeasonNo: number): Promise<void> {
   const [drivers, humanTeamKeys] = await Promise.all([
@@ -68,7 +130,7 @@ export async function ageDriversForSeason(client: PoolClient, lobbyId: string, n
   for (const row of drivers) {
     if (!row.teamKey) continue; // market: not signed to any roster yet — out of scope (Stage B)
     if (row.position === 'seat_0' || row.position === 'seat_1') seats.set(`${row.teamKey}:${row.position}`, row);
-    else rest.push(row); // reserve squad, once seeding creates it — see module doc
+    else rest.push(row); // reserve squad
   }
 
   const teamKeys = new Set([...seats.keys()].map((key) => key.slice(0, key.lastIndexOf(':'))));
@@ -76,14 +138,19 @@ export async function ageDriversForSeason(client: PoolClient, lobbyId: string, n
     const seat0 = seats.get(`${teamKey}:seat_0`);
     const seat1 = seats.get(`${teamKey}:seat_1`);
     if (!seat0 || !seat1) continue; // half a pair should not happen (see repo.ts) — nothing safe to write
-    const [next0, next1]: [Driver, Driver] = humanTeamKeys.has(teamKey)
+    const isHuman = humanTeamKeys.has(teamKey);
+    const [next0, next1]: [Driver, Driver] = isHuman
       ? [ageOneSeason(seat0.driver), ageOneSeason(seat1.driver)]
       : developRosterSeason([seat0.driver, seat1.driver], teamKey, nextSeasonNo, lobbyId);
     await saveDriverAfterSeason(client, lobbyId, seat0.id, next0);
     await saveDriverAfterSeason(client, lobbyId, seat1.id, next1);
+    await tickContract(client, lobbyId, seat0, isHuman);
+    await tickContract(client, lobbyId, seat1, isHuman);
   }
 
   for (const row of rest) {
+    const isHuman = row.teamKey ? humanTeamKeys.has(row.teamKey) : false;
     await saveDriverAfterSeason(client, lobbyId, row.id, ageOneSeason(row.driver));
+    await tickContract(client, lobbyId, row, isHuman);
   }
 }
